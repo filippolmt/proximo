@@ -1,0 +1,55 @@
+name: proximo
+
+services:
+  traefik:
+    # v3.6+ negotiates a Docker API version supported by Engine 28/29.
+    image: traefik:v3.6
+    restart: unless-stopped
+    command:
+      - --configfile=/etc/traefik/traefik.yml
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - dynamic:/etc/traefik/dynamic
+    labels:
+      - "proximo.role=traefik"
+
+  dns:
+    build:
+      context: .
+      dockerfile: dns.Dockerfile
+      args:
+        PROXIMO_REF: ${PROXIMO_REF:-latest}
+    restart: unless-stopped
+    environment:
+      PROXIMO_TLD: ${PROXIMO_TLD:-test}
+      PROXIMO_DNS_ADDR: ":5353"
+    ports:
+      - "127.0.0.1:__DNSPORT__:5353/udp"
+    labels:
+      - "proximo.role=dns"
+
+  watcher:
+    build:
+      context: .
+      dockerfile: watcher.Dockerfile
+      args:
+        PROXIMO_REF: ${PROXIMO_REF:-latest}
+    restart: unless-stopped
+    environment:
+      PROXIMO_CA_CERT: /ca/ca.pem
+      PROXIMO_CA_KEY: /ca/ca-key.pem
+      PROXIMO_DYNAMIC_DIR: /etc/traefik/dynamic
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./ca:/ca:ro
+      - dynamic:/etc/traefik/dynamic
+    labels:
+      - "proximo.role=watcher"
+
+volumes:
+  # Shared between the watcher (writes routes/certs) and Traefik (file provider).
+  dynamic: {}
