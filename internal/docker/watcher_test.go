@@ -64,37 +64,65 @@ func TestIsRoutedProximo(t *testing.T) {
 	}
 }
 
+func TestClassifyHosts(t *testing.T) {
+	// proximo path: enabled proximo.hosts wins.
+	if hosts, proximo, _ := classifyHosts(map[string]string{proximoHostsLabel: "app.test"}); !proximo || !slices.Equal(hosts, []string{"app.test"}) {
+		t.Errorf("proximo path = (%v, proximo=%v), want ([app.test], true)", hosts, proximo)
+	}
+	// proximo.enable=false falls back to the native rule (not the proximo path).
+	hosts, proximo, _ := classifyHosts(map[string]string{
+		proximoHostsLabel:             "parked.test",
+		proximoEnableLabel:            "false",
+		enableLabel:                   "true",
+		"traefik.http.routers.x.rule": "Host(`live.test`)",
+	})
+	if proximo || !slices.Equal(hosts, []string{"live.test"}) {
+		t.Errorf("enable=false = (%v, proximo=%v), want ([live.test], false)", hosts, proximo)
+	}
+	// Native path requires traefik.enable=true.
+	if hosts, _, _ := classifyHosts(map[string]string{"traefik.http.routers.w.rule": "Host(`x.test`)"}); len(hosts) != 0 {
+		t.Errorf("host rule without traefik.enable should not route, got %v", hosts)
+	}
+	// Stack containers are never routed.
+	if hosts, _, _ := classifyHosts(map[string]string{roleLabel: "traefik", proximoHostsLabel: "x.test"}); len(hosts) != 0 {
+		t.Errorf("stack container should not route, got %v", hosts)
+	}
+	// Invalid proximo hosts are surfaced for logging.
+	if _, _, invalid := classifyHosts(map[string]string{proximoHostsLabel: "ok.test, bad host!"}); !slices.Equal(invalid, []string{"bad host!"}) {
+		t.Errorf("invalid = %v, want [bad host!]", invalid)
+	}
+}
+
 func TestResolveBackendPortExplicit(t *testing.T) {
 	w := &Watcher{}
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"})
-	port, ok := w.resolveBackendPort(context.Background(), c)
+	port, ok := w.resolveBackendPort(context.Background(), c, "app")
 	if !ok || port != 8080 {
 		t.Fatalf("explicit port = (%d,%v), want (8080,true)", port, ok)
 	}
 
 	bad := makeSummary(map[string]string{proximoPortLabel: "nope"})
-	if _, ok := w.resolveBackendPort(context.Background(), bad); ok {
+	if _, ok := w.resolveBackendPort(context.Background(), bad, "bad"); ok {
 		t.Error("invalid explicit port should be rejected")
 	}
 }
 
 func TestPortFromExposed(t *testing.T) {
 	single := nat.PortSet{"3000/tcp": struct{}{}}
-	if p, ok := portFromExposed(single); !ok || p != 3000 {
-		t.Fatalf("single = (%d,%v), want (3000,true)", p, ok)
+	if p, n, ok := portFromExposed(single); !ok || p != 3000 || n != 1 {
+		t.Fatalf("single = (%d,%d,%v), want (3000,1,true)", p, n, ok)
 	}
 	// One TCP plus a UDP port still resolves to the single TCP port.
 	tcpAndUDP := nat.PortSet{"3000/tcp": struct{}{}, "53/udp": struct{}{}}
-	if p, ok := portFromExposed(tcpAndUDP); !ok || p != 3000 {
-		t.Fatalf("tcp+udp = (%d,%v), want (3000,true)", p, ok)
+	if p, n, ok := portFromExposed(tcpAndUDP); !ok || p != 3000 || n != 1 {
+		t.Fatalf("tcp+udp = (%d,%d,%v), want (3000,1,true)", p, n, ok)
 	}
-	none := nat.PortSet{}
-	if _, ok := portFromExposed(none); ok {
-		t.Error("zero ports should be ambiguous")
+	if _, n, ok := portFromExposed(nat.PortSet{}); ok || n != 0 {
+		t.Errorf("zero ports = (n=%d,ok=%v), want (0,false)", n, ok)
 	}
 	many := nat.PortSet{"80/tcp": struct{}{}, "8080/tcp": struct{}{}}
-	if _, ok := portFromExposed(many); ok {
-		t.Error("multiple TCP ports should be ambiguous")
+	if _, n, ok := portFromExposed(many); ok || n != 2 {
+		t.Errorf("multiple TCP ports = (n=%d,ok=%v), want (2,false)", n, ok)
 	}
 }
 

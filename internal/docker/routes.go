@@ -45,13 +45,12 @@ func Routes(ctx context.Context) ([]Route, error) {
 	return routes, nil
 }
 
-// routeHosts returns the hostnames a container serves: the proximo.hosts label
-// when present, otherwise the hosts declared in its native Traefik router rules.
+// routeHosts returns the hostnames a container serves, using the same
+// classification as the watcher (classifyHosts) so `proximo status` matches
+// what is actually routed.
 func routeHosts(labels map[string]string) []string {
-	if hosts := proximoHosts(labels); len(hosts) > 0 {
-		return hosts
-	}
-	return hostsFromLabels(labels)
+	hosts, _, _ := classifyHosts(labels)
+	return hosts
 }
 
 func primaryName(c container.Summary) string {

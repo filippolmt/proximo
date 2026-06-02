@@ -201,29 +201,26 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 // It returns ok=false when the container should not get a route/cert (e.g.
 // ambiguous port, or a native container with no Host rule).
 func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedContainer, bool) {
+	hosts, proximo, invalid := classifyHosts(c.Labels)
 	rc := routedContainer{name: primaryName(c), id: c.ID}
-
-	valid, invalid := splitHosts(c.Labels[proximoHostsLabel])
 	for _, h := range invalid {
 		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
 	}
-	if len(valid) > 0 && isProximoEnabled(c.Labels) {
-		port, ok := w.resolveBackendPort(ctx, c)
+	if len(hosts) == 0 {
+		return routedContainer{}, false
+	}
+	rc.hosts = hosts
+	rc.proximo = proximo
+
+	// Proximo routes are translated into Traefik dynamic config by the watcher,
+	// so they need a backend port; native traefik.* routes are configured by
+	// Traefik's Docker provider and only need a certificate.
+	if proximo {
+		port, ok := w.resolveBackendPort(ctx, c, rc.name)
 		if !ok {
 			return routedContainer{}, false
 		}
-		rc.hosts = valid
 		rc.port = port
-		rc.proximo = true
-		return rc, true
-	}
-
-	// Native Traefik path: hosts come from the router rule labels. Traefik's
-	// Docker provider configures the route; the watcher only needs the hosts to
-	// issue the certificate.
-	rc.hosts = hostsFromLabels(c.Labels)
-	if len(rc.hosts) == 0 {
-		return routedContainer{}, false
 	}
 	return rc, true
 }
@@ -232,8 +229,7 @@ func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedC
 // proximo.port when set; otherwise it inspects the container and returns the
 // single exposed TCP port. It returns ok=false (and logs) when the port is
 // absent and the container exposes zero or multiple TCP ports.
-func (w *Watcher) resolveBackendPort(ctx context.Context, c container.Summary) (int, bool) {
-	name := primaryName(c)
+func (w *Watcher) resolveBackendPort(ctx context.Context, c container.Summary, name string) (int, bool) {
 	if v := strings.TrimSpace(c.Labels[proximoPortLabel]); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil || p < 1 || p > 65535 {
@@ -252,17 +248,18 @@ func (w *Watcher) resolveBackendPort(ctx context.Context, c container.Summary) (
 	if info.Config != nil {
 		ports = info.Config.ExposedPorts
 	}
-	port, ok := portFromExposed(ports)
+	port, count, ok := portFromExposed(ports)
 	if !ok {
 		log.Printf("proximo watcher: container %s exposes %d TCP port(s); set %s to disambiguate",
-			name, countTCP(ports), proximoPortLabel)
+			name, count, proximoPortLabel)
 	}
 	return port, ok
 }
 
-// portFromExposed returns the single exposed TCP port, or ok=false when the set
-// contains zero or more than one TCP port.
-func portFromExposed(ports nat.PortSet) (int, bool) {
+// portFromExposed returns the single exposed TCP port (ok=true) and the number
+// of TCP ports found. ok is false when the set holds zero or more than one TCP
+// port; count then explains the ambiguity for logging.
+func portFromExposed(ports nat.PortSet) (port, count int, ok bool) {
 	var tcp []int
 	for p := range ports {
 		if p.Proto() == "tcp" {
@@ -270,19 +267,9 @@ func portFromExposed(ports nat.PortSet) (int, bool) {
 		}
 	}
 	if len(tcp) == 1 {
-		return tcp[0], true
+		return tcp[0], 1, true
 	}
-	return 0, false
-}
-
-func countTCP(ports nat.PortSet) int {
-	n := 0
-	for p := range ports {
-		if p.Proto() == "tcp" {
-			n++
-		}
-	}
-	return n
+	return 0, len(tcp), false
 }
 
 // syncDynamic writes one Traefik dynamic config file per proximo-routed
@@ -467,10 +454,36 @@ func isRouted(c container.Summary) bool {
 	if _, isStack := c.Labels[roleLabel]; isStack {
 		return false
 	}
-	if len(proximoHosts(c.Labels)) > 0 && isProximoEnabled(c.Labels) {
+	if isProximoRoute(c.Labels) {
 		return true
 	}
 	return strings.EqualFold(c.Labels[enableLabel], "true")
+}
+
+// isProximoRoute reports whether a container opts in via a non-empty, enabled
+// proximo.hosts label.
+func isProximoRoute(labels map[string]string) bool {
+	return len(proximoHosts(labels)) > 0 && isProximoEnabled(labels)
+}
+
+// classifyHosts is the single source of truth for a container's host-based
+// routing decision, shared by the watcher (buildRouted) and `proximo status`
+// (routeHosts) so the two never disagree. It returns the hostnames to route,
+// whether routing is via proximo.hosts (vs native traefik.* rules), and any
+// invalid proximo.hosts entries for the caller to log. Empty hosts means no
+// host-based route. Port resolution is intentionally left to the watcher.
+func classifyHosts(labels map[string]string) (hosts []string, proximo bool, invalid []string) {
+	if _, isStack := labels[roleLabel]; isStack {
+		return nil, false, nil
+	}
+	valid, invalid := splitHosts(labels[proximoHostsLabel])
+	if len(valid) > 0 && isProximoEnabled(labels) {
+		return valid, true, invalid
+	}
+	if strings.EqualFold(labels[enableLabel], "true") {
+		return hostsFromLabels(labels), false, invalid
+	}
+	return nil, false, invalid
 }
 
 // proximoHosts parses the proximo.hosts label into a clean host list:
@@ -525,16 +538,17 @@ func hostsFromLabels(labels map[string]string) []string {
 // assignSafeNames sets each container's safe name (sanitized filename / router
 // id), disambiguating collisions with a short container-ID suffix.
 func assignSafeNames(rcs []routedContainer) {
+	bases := make([]string, len(rcs))
 	counts := map[string]int{}
-	for _, rc := range rcs {
-		counts[sanitizeName(rc.name)]++
+	for i, rc := range rcs {
+		bases[i] = sanitizeName(rc.name)
+		counts[bases[i]]++
 	}
 	for i := range rcs {
-		base := sanitizeName(rcs[i].name)
-		if counts[base] > 1 {
-			rcs[i].safe = base + "-" + short(rcs[i].id)
+		if counts[bases[i]] > 1 {
+			rcs[i].safe = bases[i] + "-" + short(rcs[i].id)
 		} else {
-			rcs[i].safe = base
+			rcs[i].safe = bases[i]
 		}
 	}
 }

@@ -56,8 +56,24 @@ func TestRouteHosts(t *testing.T) {
 	}
 
 	// Falls back to Traefik rule hosts when no proximo label.
-	got = routeHosts(map[string]string{"traefik.http.routers.web.rule": "Host(`web.test`)"})
+	got = routeHosts(map[string]string{
+		"traefik.enable":                "true",
+		"traefik.http.routers.web.rule": "Host(`web.test`)",
+	})
 	if !slices.Equal(got, []string{"web.test"}) {
 		t.Fatalf("traefik fallback hosts = %v", got)
+	}
+
+	// proximo.enable=false: proximo.hosts is ignored and routing falls back to
+	// the native rule — matching what the watcher actually routes (no skew in
+	// `proximo status`).
+	got = routeHosts(map[string]string{
+		"proximo.hosts":               "parked.test",
+		"proximo.enable":              "false",
+		"traefik.enable":              "true",
+		"traefik.http.routers.x.rule": "Host(`live.test`)",
+	})
+	if !slices.Equal(got, []string{"live.test"}) {
+		t.Fatalf("enable=false should fall back to traefik hosts, got %v", got)
 	}
 }
