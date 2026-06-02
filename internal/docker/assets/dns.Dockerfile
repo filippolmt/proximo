@@ -5,6 +5,9 @@ ARG PROXIMO_REF=latest
 FROM golang:${GO_VERSION}-alpine AS build
 ARG PROXIMO_REF
 ENV CGO_ENABLED=0
+# git is required when `go install ...@<ref>` resolves through the VCS (e.g. a
+# branch ref, or when GOPROXY is direct); it is not present in the alpine image.
+RUN apk add --no-cache git
 RUN go install github.com/filippolmt/proximo/cmd/dnsserver@${PROXIMO_REF}
 
 FROM alpine:3.23
