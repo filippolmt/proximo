@@ -22,7 +22,8 @@ const (
 	// avoided because macOS mDNSResponder (Bonjour) already binds it.
 	DNSPort = 5354
 
-	// appDir is the per-user directory name used under os.UserConfigDir().
+	// appDir is the per-user directory name; the state home is $HOME/.proximo
+	// (a leading dot is prepended in homePath).
 	appDir = "proximo"
 )
 
@@ -52,17 +53,26 @@ func NormalizeTLD(raw string) (string, error) {
 	return tld, nil
 }
 
-// Dir returns (creating if needed) the per-user configuration directory.
+// Dir returns (creating if needed) the per-user state home at $HOME/.proximo.
 func Dir() (string, error) {
-	base, err := os.UserConfigDir()
+	dir, err := homePath()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(base, appDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// homePath resolves the state-home path ($HOME/.proximo) without creating it, so
+// callers that only need the location (RemoveHome) don't trigger side effects.
+func homePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "."+appDir), nil
 }
 
 // SubDir returns (creating if needed) a named subdirectory under Dir.
@@ -76,6 +86,25 @@ func SubDir(name string) (string, error) {
 		return "", err
 	}
 	return sub, nil
+}
+
+// DataDir returns (creating if needed) the directory holding the stack's
+// bind-mounted runtime data (Traefik routes/certs, Beszel metrics). It is the
+// host side of the data bind mounts the materialized compose declares.
+func DataDir() (string, error) {
+	return SubDir("data")
+}
+
+// RemoveHome deletes the entire ~/.proximo state home (CA, secret, config,
+// materialized stack, and bind-mounted data). uninstall calls it after the
+// stack is down and host trust/resolver are reversed, for a full reversal. It
+// resolves the path without creating it.
+func RemoveHome() error {
+	dir, err := homePath()
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(dir)
 }
 
 func filePath() (string, error) {

@@ -51,16 +51,17 @@ Full diagram and per-service detail: `docs/architecture.md`. Routing label contr
   long-running processes are the **stack containers**.
 - **The stack is a `docker compose` project embedded in the binary** via `//go:embed`
   (`internal/docker/assets/`: `docker-compose.yml`, `traefik/`, `dns.Dockerfile`,
-  `watcher.Dockerfile`). On `install`/`up` it is *materialized* to the per-user config dir
-  (`os.UserConfigDir()/proximo/stack/`) with the TLD (`__TLD__`) and DNS port (`__DNSPORT__`)
-  sentinels substituted, then brought up via the shared `docker.Converge()`
+  `watcher.Dockerfile`). On `install`/`up` it is *materialized* to the per-user state home
+  (`~/.proximo/stack/`) with the TLD (`__TLD__`), DNS port (`__DNSPORT__`), and host data-dir
+  (`__DATADIR__`) sentinels substituted, then brought up via the shared `docker.Converge()`
   (`docker compose up -d --build --pull always`, plus a `--no-cache` rebuild for mobile refs).
   **Editing an embedded asset has no effect until the binary is rebuilt AND the stack
   re-materialized (re-`install`/`up`/`update`).**
 - **Three stack services:** `traefik` (HTTPS on :443, routes by `Host`, two providers: Docker
   labels + file provider on `/etc/traefik/dynamic`), `dns` (miekg/dns wildcard: `*.<tld>` →
-  `127.0.0.1`, published on `127.0.0.1:5354/udp`), `watcher` (the reconcile loop). They share a
-  `dynamic` volume — watcher writes, Traefik's file provider reads.
+  `127.0.0.1`, published on `127.0.0.1:5354/udp`), `watcher` (the reconcile loop). They share the
+  `~/.proximo/data/traefik` host dir (bind-mounted, not a named volume) — watcher writes
+  routes/certs, Traefik's file provider reads.
 - **The watcher (`internal/docker/watcher.go`) is the engine.** Reconciles on start, on Docker
   events, and every 30s: selects routed containers, resolves the backend port, attaches Traefik
   to backend networks, writes one Traefik router/service per container targeting
@@ -81,7 +82,7 @@ Full diagram and per-service detail: `docs/architecture.md`. Routing label contr
 | Path | Responsibility |
 | --- | --- |
 | `main.go`, `internal/cli/` | Cobra command surface |
-| `internal/config/` | Persisted TLD + per-user paths (config dir, DNS port constant) |
+| `internal/config/` | Persisted TLD + per-user paths (state home `~/.proximo`, data dir, DNS port constant) |
 | `internal/dns/` | Wildcard DNS server + host-resolver wiring (macOS `/etc/resolver`, Linux systemd-resolved drop-in) |
 | `internal/tls/` | Local CA, leaf issuance, system + NSS trust |
 | `internal/docker/` | Embedded stack (`assets/`), `compose` driver (`stack.go`), the watcher |

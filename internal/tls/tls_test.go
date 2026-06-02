@@ -9,6 +9,7 @@ import (
 )
 
 func TestEnsureCAReused(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	certPath, _, err := EnsureCA()
@@ -27,6 +28,7 @@ func TestEnsureCAReused(t *testing.T) {
 }
 
 func TestIssueHostCertChainsAndMatches(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	certPath, keyPath, err := EnsureCA()

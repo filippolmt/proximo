@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,13 +51,11 @@ func TestDefault(t *testing.T) {
 	}
 }
 
-// withTempConfigDir points os.UserConfigDir at a fresh temp directory for the
-// duration of the test, on both Linux (XDG_CONFIG_HOME) and macOS (HOME).
+// withTempConfigDir points proximo's state home (Dir → $HOME/.proximo) at a
+// fresh temp directory for the duration of the test.
 func withTempConfigDir(t *testing.T) {
 	t.Helper()
-	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
-	t.Setenv("HOME", tmp)
+	t.Setenv("HOME", t.TempDir())
 }
 
 func TestLoadMissingFileReturnsDefault(t *testing.T) {
@@ -99,5 +98,45 @@ func TestLoadBlankTLDFallsBackToDefault(t *testing.T) {
 	}
 	if cfg.TLD != DefaultTLD {
 		t.Fatalf("blank TLD = %q, want default %q", cfg.TLD, DefaultTLD)
+	}
+}
+
+// TestDirResolvesUnderHome pins the state home to $HOME/.proximo on both
+// platforms, created on resolution.
+func TestDirResolvesUnderHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	want := filepath.Join(home, ".proximo")
+	if dir != want {
+		t.Fatalf("Dir() = %q, want %q", dir, want)
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		t.Fatalf("Dir() did not create %q: %v", dir, err)
+	}
+}
+
+// TestRemoveHome verifies the uninstall seam deletes the whole state home,
+// without Docker or sudo.
+func TestRemoveHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveHome(); err != nil {
+		t.Fatalf("RemoveHome: %v", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("home still present after RemoveHome: %v", err)
 	}
 }

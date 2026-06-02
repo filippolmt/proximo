@@ -1,30 +1,72 @@
 package docker
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
 // TestReplaceSentinels covers the pure substitution lifted out of Materialize:
-// __TLD__ and __DNSPORT__ are replaced, and content with no sentinel passes
-// through unchanged.
+// __TLD__, __DNSPORT__, and __DATADIR__ are replaced, and content with no
+// sentinel passes through unchanged.
 func TestReplaceSentinels(t *testing.T) {
-	got := string(replaceSentinels([]byte("host: app.__TLD__\nport: __DNSPORT__\n"), "test", 5354))
-	want := "host: app.test\nport: 5354\n"
+	got := string(replaceSentinels([]byte("host: app.__TLD__\nport: __DNSPORT__\ndata: __DATADIR__/traefik\n"), "test", 5354, "/home/u/.proximo/data"))
+	want := "host: app.test\nport: 5354\ndata: /home/u/.proximo/data/traefik\n"
 	if got != want {
 		t.Errorf("replaceSentinels = %q, want %q", got, want)
 	}
 
 	// Both sentinels may appear more than once.
-	multi := string(replaceSentinels([]byte("__TLD__ __TLD__ __DNSPORT__"), "dev", 99))
+	multi := string(replaceSentinels([]byte("__TLD__ __TLD__ __DNSPORT__"), "dev", 99, "/d"))
 	if multi != "dev dev 99" {
 		t.Errorf("repeated sentinels = %q, want %q", multi, "dev dev 99")
 	}
 
 	// No sentinel: passthrough, byte-identical.
 	plain := []byte("nothing to replace here")
-	if out := replaceSentinels(plain, "test", 5354); string(out) != string(plain) {
+	if out := replaceSentinels(plain, "test", 5354, "/d"); string(out) != string(plain) {
 		t.Errorf("passthrough = %q, want %q", out, plain)
+	}
+}
+
+// TestMaterializeBindMounts asserts the materialized compose carries the
+// absolute host data-dir bind mount (no unreplaced __DATADIR__ sentinel) and no
+// longer declares a top-level named volumes block, and that Materialize creates
+// the data/traefik bind-mount source.
+func TestMaterializeBindMounts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	dir, err := Materialize("test", "")
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	composeBytes, err := os.ReadFile(filepath.Join(dir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("read compose: %v", err)
+	}
+	yaml := string(composeBytes)
+
+	dataDir := filepath.Join(home, ".proximo", "data")
+	wantMount := filepath.Join(dataDir, "traefik") + ":/etc/traefik/dynamic"
+	if !strings.Contains(yaml, wantMount) {
+		t.Errorf("compose missing bind mount %q:\n%s", wantMount, yaml)
+	}
+	if strings.Contains(yaml, dataDirSentinel) {
+		t.Errorf("compose still contains unreplaced %s:\n%s", dataDirSentinel, yaml)
+	}
+	// A top-level (column-0) "volumes:" block must no longer be declared; the
+	// service-level volumes: keys are indented and so don't match.
+	for line := range strings.SplitSeq(yaml, "\n") {
+		if line == "volumes:" {
+			t.Errorf("compose still declares a top-level named volumes block:\n%s", yaml)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(dataDir, "traefik")); err != nil || !fi.IsDir() {
+		t.Errorf("Materialize did not create data/traefik: %v", err)
 	}
 }
 
@@ -56,6 +98,7 @@ func TestConvergeRunsCommandSequence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			c := &recordComposer{}
 			if err := convergeWith(c, tc.ref, "test", "", ConvergeOpts{Force: tc.force}); err != nil {

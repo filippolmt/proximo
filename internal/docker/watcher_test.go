@@ -348,6 +348,7 @@ func TestTraefikNoGlobalRedirect(t *testing.T) {
 // temp dynamic dir, for exercising certificate sync without Docker.
 func testWatcher(t *testing.T) *Watcher {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	certPath, keyPath, err := tls.EnsureCA()
 	if err != nil {
