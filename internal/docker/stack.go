@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/version"
@@ -147,15 +148,25 @@ func copyCA(stackDir, certDir string) error {
 }
 
 func writeEnv(stackDir, tld string) error {
-	// For released binaries version.Version is the tag (e.g. v1.2.3), which
-	// `go install ...@<tag>` resolves directly. For local/dev builds fall back
-	// to the default branch, which resolves on a public repo without a tag.
-	ref := version.Version
-	if ref == "" || ref == "dev" {
-		ref = "main"
-	}
-	content := fmt.Sprintf("PROXIMO_TLD=%s\nPROXIMO_REF=%s\n", tld, ref)
+	content := fmt.Sprintf("PROXIMO_TLD=%s\nPROXIMO_REF=%s\n", tld, moduleRef(version.Version))
 	return os.WriteFile(filepath.Join(stackDir, ".env"), []byte(content), 0o644)
+}
+
+// moduleRef turns the build version into a ref that `go install ...@<ref>` can
+// resolve. Released binaries carry a bare semver because GoReleaser's
+// {{ .Version }} strips the leading "v"; restore it so the value is a canonical
+// module version (vX.Y.Z) the module proxy serves directly — a bare "0.1.0" is
+// treated as a VCS query and fails when git is unavailable. Local/dev builds
+// ("dev" or empty) fall back to the default branch, which resolves without a tag.
+func moduleRef(v string) string {
+	switch {
+	case v == "" || v == "dev":
+		return "main"
+	case strings.HasPrefix(v, "v"):
+		return v
+	default:
+		return "v" + v
+	}
 }
 
 func compose(stackDir string, args ...string) error {
