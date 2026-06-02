@@ -1,11 +1,14 @@
 package docker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/filippolmt/proximo/internal/config"
 )
 
 // TestReplaceSentinels covers the pure substitution lifted out of Materialize:
@@ -67,6 +70,9 @@ func TestMaterializeBindMounts(t *testing.T) {
 	}
 	if fi, err := os.Stat(filepath.Join(dataDir, "traefik")); err != nil || !fi.IsDir() {
 		t.Errorf("Materialize did not create data/traefik: %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(dataDir, "beszel")); err != nil || !fi.IsDir() {
+		t.Errorf("Materialize did not create data/beszel: %v", err)
 	}
 }
 
@@ -185,6 +191,89 @@ func TestComposeConvergeCmds(t *testing.T) {
 					tt.ref, tt.force, cmds)
 			}
 		})
+	}
+}
+
+// TestObservabilitySentinelsInCompose substitutes the embedded compose asset for
+// a given TLD and asserts the observability services come out with the right
+// routing hosts, seeded email/auto-login, and loopback bootstrap port — and that
+// no sentinel is left behind.
+func TestObservabilitySentinelsInCompose(t *testing.T) {
+	raw, err := assets.ReadFile("assets/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read embedded compose: %v", err)
+	}
+	out := string(replaceSentinels(raw, "example", config.DNSPort, "/home/u/.proximo/data"))
+
+	wantContains := []string{
+		"proximo.hosts=logs.example",
+		"proximo.hosts=metrics.example",
+		"proximo.port=8080",
+		"proximo.port=8090",
+		"USER_EMAIL: proximo@example",
+		"AUTO_LOGIN: proximo@example",
+		fmt.Sprintf("127.0.0.1:%d:8090", config.ObsHubPort),
+	}
+	for _, want := range wantContains {
+		if !strings.Contains(out, want) {
+			t.Errorf("substituted compose missing %q", want)
+		}
+	}
+	for _, sentinel := range []string{tldSentinel, dnsPortSentinel, obsEmailSentinel, obsHubPortSentinel} {
+		if strings.Contains(out, sentinel) {
+			t.Errorf("sentinel %q left unsubstituted", sentinel)
+		}
+	}
+	// The observability services must not carry a proximo.role label, or the
+	// watcher would exclude them from routing.
+	if strings.Contains(out, "proximo.role=dozzle") || strings.Contains(out, "proximo.role=beszel") {
+		t.Error("observability service must not have a proximo.role label")
+	}
+}
+
+// TestObservabilityConvergeSequence asserts the staged bring-up: the core `up`
+// carries no profile flag, the hub and agent bring-ups activate the observability
+// profile, and the bootstrap runs between the hub and the agent so the agent
+// never starts without its hub credentials.
+func TestObservabilityConvergeSequence(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	c := &recordComposer{}
+	bootstrapAt := -1
+	bootstrap := func(_ string) error {
+		bootstrapAt = len(c.cmds)
+		return nil
+	}
+	if err := convergeObservabilityWith(c, "v0.1.0", "test", "", ConvergeOpts{}, bootstrap); err != nil {
+		t.Fatalf("convergeObservabilityWith: %v", err)
+	}
+
+	if len(c.cmds) != 3 {
+		t.Fatalf("ran %d commands, want 3 (core up, hub up, agent up): %v", len(c.cmds), c.cmds)
+	}
+	core, hub, agent := c.cmds[0], c.cmds[1], c.cmds[2]
+
+	if slices.Contains(core, "--profile") {
+		t.Errorf("core up activated a profile: %v", core)
+	}
+	if core[0] != "up" {
+		t.Errorf("first command is %v, want core up", core)
+	}
+	for _, want := range []string{"--profile", observabilityProfile, svcDozzle, svcBeszel} {
+		if !slices.Contains(hub, want) {
+			t.Errorf("hub up missing %q: %v", want, hub)
+		}
+	}
+	if slices.Contains(hub, svcBeszelAgent) {
+		t.Errorf("hub up must not start the agent before bootstrap: %v", hub)
+	}
+	for _, want := range []string{"--profile", observabilityProfile, svcBeszelAgent} {
+		if !slices.Contains(agent, want) {
+			t.Errorf("agent up missing %q: %v", want, agent)
+		}
+	}
+	if bootstrapAt != 2 {
+		t.Errorf("bootstrap ran at index %d, want 2 (after core+hub, before agent)", bootstrapAt)
 	}
 }
 

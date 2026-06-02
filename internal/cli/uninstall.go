@@ -2,11 +2,20 @@ package cli
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/docker"
+	"github.com/filippolmt/proximo/internal/observability"
 	"github.com/filippolmt/proximo/internal/platform"
 	"github.com/spf13/cobra"
+)
+
+// Seams for the stack teardown and observability cleanup so the uninstall wiring
+// is unit-testable without Docker or touching the host (mirrors defaultRunner).
+var (
+	teardownStack      = docker.Down
+	purgeObservability = observability.Purge
 )
 
 func newUninstallCmd() *cobra.Command {
@@ -31,8 +40,7 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	fmt.Fprintln(out, "==> Stopping the proximo stack")
-	if err := docker.Down(); err != nil {
+	if err := stopAndCleanStack(out); err != nil {
 		return err
 	}
 
@@ -49,4 +57,21 @@ func runUninstall(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, "\nUninstalled. The host has been restored to its prior state.")
 	return nil
+}
+
+// stopAndCleanStack stops the stack (which also removes the profiled
+// observability containers) and deletes the generated observability secret + env
+// files. The stack's runtime data lives in bind mounts under ~/.proximo, which
+// uninstall removes wholesale via config.RemoveHome once the stack is down — so
+// there is no named volume left to tear down here.
+func stopAndCleanStack(out io.Writer) error {
+	fmt.Fprintln(out, "==> Stopping the proximo stack")
+	if err := teardownStack(); err != nil {
+		return err
+	}
+	stackDir, err := docker.StackDir()
+	if err != nil {
+		return err
+	}
+	return purgeObservability(stackDir)
 }

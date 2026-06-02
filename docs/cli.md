@@ -13,7 +13,7 @@ proximo <command> [args]
 | Command | Summary | Needs sudo | Needs Docker |
 | --- | --- | --- | --- |
 | [`install`](#proximo-install) | Full host setup + start the stack | yes | yes |
-| [`up`](#proximo-up) | Start the stack only | no | yes |
+| [`up`](#proximo-up) | Start the stack only (`--observability` adds the dashboards) | no | yes |
 | [`down`](#proximo-down) | Stop the stack only | no | yes |
 | [`update`](#proximo-update) | Converge the running stack to the installed CLI | no | yes |
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
@@ -53,6 +53,18 @@ until you `install`.
 `up` shares the convergence path with [`update`](#proximo-update), so it also
 applies any pending update — rebuilding the in-stack images at the installed CLI
 version and re-pulling Traefik. See [Updating](updating.md).
+
+### `--observability`
+
+```sh
+proximo up --observability
+```
+
+Bring up the core stack **and** the opt-in logs (Dozzle) + metrics (Beszel)
+dashboards in one command, run the metrics bootstrap, and print the dashboard
+URLs (`https://logs.<tld>`, `https://metrics.<tld>`). Off by default: a plain
+`up` starts neither. `down` / `uninstall` tear them down too. See
+[Dev-time observability](observability.md).
 
 ## `proximo down`
 
@@ -151,7 +163,9 @@ Reverse everything `install` did and tear down the stack:
 proximo uninstall
 ```
 
-1. Stop the stack.
+1. Stop the stack and remove its volumes — including, when observability was
+   used, the metrics data volume and the generated secret
+   ([Dev-time observability](observability.md)).
 2. Remove the host resolver config for the TLD (and reload the resolver on
    Linux).
 3. Remove CA trust from the NSS and system stores.

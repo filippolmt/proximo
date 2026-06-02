@@ -76,6 +76,16 @@ Full diagram and per-service detail: `docs/architecture.md`. Routing label contr
   `proximo.enable=false` (park), `proximo.redirect=true` (opt in to the HTTP→HTTPS redirect;
   off by default — `:80` for a non-opted host 404s, it is not redirected). Native `traefik.*`
   labels still work in parallel.
+- **Opt-in dev observability (`proximo up --observability`):** a compose `observability`
+  profile adds Dozzle (`logs.<tld>`) + Beszel hub/agent (`metrics.<tld>`), routed via the plain
+  label contract — **no watcher changes**. `internal/observability/` owns the runtime-generated
+  hub password (`crypto/rand`, `0600`, mirroring the CA key) and the in-process Beszel bootstrap
+  (first user seeded via `USER_EMAIL`/`USER_PASSWORD` + `AUTO_LOGIN`; hub `getkey` +
+  `universal-token` → agent env file). Staged converge (hub → bootstrap → agent) lives in
+  `docker.ConvergeObservability`; the hub is published on loopback `config.ObsHubPort` only for
+  the bootstrap. Beszel data persists in the `~/.proximo/data/beszel` bind mount (removed when
+  `uninstall` deletes the home). Off by default; `down`/`uninstall` tear it down. See
+  `docs/observability.md`.
 
 ### Source map
 
@@ -86,6 +96,7 @@ Full diagram and per-service detail: `docs/architecture.md`. Routing label contr
 | `internal/dns/` | Wildcard DNS server + host-resolver wiring (macOS `/etc/resolver`, Linux systemd-resolved drop-in) |
 | `internal/tls/` | Local CA, leaf issuance, system + NSS trust |
 | `internal/docker/` | Embedded stack (`assets/`), `compose` driver (`stack.go`), the watcher |
+| `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap |
 | `internal/platform/` | OS / package-manager detection, privileged host ops |
 | `cmd/dnsserver/`, `cmd/watcher/` | Entrypoints for the two in-stack services |
 

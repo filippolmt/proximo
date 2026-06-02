@@ -52,3 +52,63 @@ services:
     labels:
       - "proximo.role=watcher"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
+
+  # --- Opt-in dev-time observability (profile: observability) ----------------
+  # These services are inert unless `proximo up --observability` activates the
+  # profile. They carry the plain proximo.hosts/proximo.port routing labels and
+  # NO proximo.role label, so the watcher routes them and issues CA-signed certs
+  # with zero watcher changes (docs/observability.md).
+
+  dozzle:
+    # Realtime container log viewer; open by default (no auth) — local only.
+    image: amir20/dozzle:v10.6.4
+    profiles: [observability]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "proximo.hosts=logs.__TLD__"
+      - "proximo.port=8080"
+
+  beszel:
+    # Metrics hub (UI + storage). PocketBase cannot fully disable auth, so the
+    # first user is seeded via USER_EMAIL/USER_PASSWORD and AUTO_LOGIN lands the
+    # developer straight in the dashboard. The password is generated at runtime
+    # and supplied via the 0600 beszel-hub.env file (never embedded/committed).
+    image: henrygd/beszel:0.18.7
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      # Non-secret, deterministic from the TLD (substituted at materialize time).
+      # Seeds the first user and auto-authenticates it so the dashboard opens
+      # with no login prompt. USER_PASSWORD comes from the 0600 env file below.
+      USER_EMAIL: __OBS_USER_EMAIL__
+      AUTO_LOGIN: __OBS_USER_EMAIL__
+    env_file:
+      - path: ./beszel-hub.env
+        required: false
+    ports:
+      # Loopback-only, for the one-shot proximo bootstrap to reach the hub API
+      # before DNS/Traefik/TLS are converged. The dashboard is served via Traefik.
+      - "127.0.0.1:__OBS_HUBPORT__:8090"
+    volumes:
+      # Host bind mount under ~/.proximo/data (see __DATADIR__); persists metrics
+      # history + users across restarts and is removed when `proximo uninstall`
+      # deletes the ~/.proximo home.
+      - __DATADIR__/beszel:/beszel_data
+    labels:
+      - "proximo.hosts=metrics.__TLD__"
+      - "proximo.port=8090"
+
+  beszel-agent:
+    # Pushes per-container metrics to the hub over the compose network (no host
+    # networking — see design D6). HUB_URL/KEY/TOKEN are injected by the proximo
+    # bootstrap via the 0600 beszel-agent.env file after the hub is up.
+    image: henrygd/beszel-agent:0.18.7
+    profiles: [observability]
+    restart: unless-stopped
+    env_file:
+      - path: ./beszel-agent.env
+        required: false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
