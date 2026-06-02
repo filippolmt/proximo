@@ -9,16 +9,23 @@ import (
 	"github.com/docker/docker/client"
 )
 
-// Route is a routed container and a URL it is reachable at.
+// Route is a routed container and a URL it is reachable at. When Note is set the
+// container opted in but is not effectively served (e.g. an unresolved backend
+// port the watcher skips); URL is then empty and Note explains why.
 type Route struct {
 	Container string
 	Host      string
 	URL       string
+	Note      string
 }
 
-// Routes lists the routed containers and the hostnames they serve. Hosts come
-// from the proximo.hosts label when present, otherwise from the container's
-// native Traefik router rules.
+// Routes lists the effective routing state `proximo status` reports. It uses the
+// same classifier (classify) the watcher uses to generate routers and
+// certificates, so the two cannot disagree about which hosts are served. A
+// proximo container whose backend port is ambiguous/unresolved (the watcher skips
+// it) is flagged with a Note rather than listed as a working route. The
+// classifyInfo diagnostics are ignored here so status stays quiet — no watcher
+// warnings.
 func Routes(ctx context.Context) ([]Route, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -36,21 +43,29 @@ func Routes(ctx context.Context) ([]Route, error) {
 		if !isRouted(c) {
 			continue
 		}
-		name := primaryName(c)
-		for _, host := range routeHosts(c.Labels) {
-			routes = append(routes, Route{Container: name, Host: host, URL: "https://" + host})
+		rc, ok, info := classify(ctx, cli.ContainerInspect, c)
+		if !ok && !info.portFailed {
+			continue // not a host route (e.g. a native container with no Host rule)
+		}
+		// A proximo route the watcher skips for an unresolved port is surfaced
+		// with the same reason the watcher logs, so status explains why it is
+		// missing instead of hiding it.
+		note := ""
+		if !ok {
+			note = info.port.hint()
+		}
+		for _, host := range rc.hosts {
+			r := Route{Container: rc.name, Host: host}
+			if ok {
+				r.URL = "https://" + host
+			} else {
+				r.Note = note
+			}
+			routes = append(routes, r)
 		}
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
 	return routes, nil
-}
-
-// routeHosts returns the hostnames a container serves, using the same
-// classification as the watcher (classifyHosts) so `proximo status` matches
-// what is actually routed.
-func routeHosts(labels map[string]string) []string {
-	hosts, _, _ := classifyHosts(labels)
-	return hosts
 }
 
 func primaryName(c container.Summary) string {

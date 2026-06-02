@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -196,64 +197,128 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	return nil
 }
 
-// buildRouted turns a routed container summary into the routing model: proximo
-// path when proximo.hosts is set and enabled, native Traefik path otherwise.
-// It returns ok=false when the container should not get a route/cert (e.g.
-// ambiguous port, or a native container with no Host rule).
-func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedContainer, bool) {
+// inspector inspects a container by ID. Both the watcher (w.cli.ContainerInspect)
+// and the host CLI (cli.ContainerInspect) satisfy it, so classify runs in either
+// context without a *Watcher receiver.
+type inspector func(context.Context, string) (container.InspectResponse, error)
+
+// classifyInfo carries diagnostics produced by classify for the caller to log.
+// The watcher logs them; `proximo status` ignores them (it stays quiet).
+type classifyInfo struct {
+	invalidHosts []string   // invalid entries found in proximo.hosts
+	portFailed   bool       // proximo route whose backend port could not be resolved
+	port         portResult // detail explaining a port-resolution failure
+}
+
+// portResult explains why backend-port resolution failed; its zero value means
+// success or not attempted.
+type portResult struct {
+	badLabel   string // proximo.port value that failed to parse/validate
+	inspectErr error  // ContainerInspect error
+	exposedTCP int    // number of exposed TCP ports (set when ambiguous)
+}
+
+// classify is the single full routing decision shared by the watcher
+// (buildRouted) and `proximo status` (Routes): it runs classifyHosts and, on the
+// proximo branch, resolves the backend port via the injected inspect function so
+// the two cannot diverge about what is actually served. It returns the routing
+// model, whether the container is effectively routed, and diagnostics for the
+// caller to log. The returned routedContainer keeps its hosts even when ok is
+// false (unresolved port) so callers can flag it. classify never logs.
+func classify(ctx context.Context, inspect inspector, c container.Summary) (routedContainer, bool, classifyInfo) {
 	hosts, proximo, invalid := classifyHosts(c.Labels)
-	rc := routedContainer{name: primaryName(c), id: c.ID}
-	for _, h := range invalid {
-		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
-	}
+	info := classifyInfo{invalidHosts: invalid}
+	rc := routedContainer{name: primaryName(c), id: c.ID, hosts: hosts, proximo: proximo}
 	if len(hosts) == 0 {
-		return routedContainer{}, false
+		return rc, false, info
 	}
-	rc.hosts = hosts
-	rc.proximo = proximo
 
 	// Proximo routes are translated into Traefik dynamic config by the watcher,
 	// so they need a backend port; native traefik.* routes are configured by
 	// Traefik's Docker provider and only need a certificate.
 	if proximo {
-		port, ok := w.resolveBackendPort(ctx, c, rc.name)
+		port, ok, res := resolveBackendPort(ctx, inspect, c)
 		if !ok {
-			return routedContainer{}, false
+			info.portFailed = true
+			info.port = res
+			return rc, false, info
 		}
 		rc.port = port
 	}
-	return rc, true
+	return rc, true, info
 }
 
-// resolveBackendPort returns the backend port for a routed container. It uses
-// proximo.port when set; otherwise it inspects the container and returns the
-// single exposed TCP port. It returns ok=false (and logs) when the port is
-// absent and the container exposes zero or multiple TCP ports.
-func (w *Watcher) resolveBackendPort(ctx context.Context, c container.Summary, name string) (int, bool) {
+// buildRouted is the watcher's thin wrapper over classify: it resolves ports
+// through the watcher's Docker client and logs the diagnostics classify returns.
+// ok=false means the container gets no route/cert (e.g. ambiguous port, or a
+// native container with no Host rule).
+func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedContainer, bool) {
+	rc, ok, info := classify(ctx, w.cli.ContainerInspect, c)
+	for _, h := range info.invalidHosts {
+		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
+	}
+	if info.portFailed {
+		logPortFailure(rc.name, info.port)
+	}
+	return rc, ok
+}
+
+// resolveBackendPort returns the backend port for a proximo-routed container. It
+// uses proximo.port when set; otherwise it inspects the container and returns the
+// single exposed TCP port. ok=false (with a portResult explaining why) when the
+// label is invalid, the inspect fails, or the container exposes zero or multiple
+// TCP ports. It does not log — the caller decides (watcher logs; status stays
+// quiet).
+func resolveBackendPort(ctx context.Context, inspect inspector, c container.Summary) (port int, ok bool, res portResult) {
 	if v := strings.TrimSpace(c.Labels[proximoPortLabel]); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil || p < 1 || p > 65535 {
-			log.Printf("proximo watcher: container %s has invalid %s=%q", name, proximoPortLabel, v)
-			return 0, false
+			return 0, false, portResult{badLabel: v}
 		}
-		return p, true
+		return p, true, portResult{}
 	}
 
-	info, err := w.cli.ContainerInspect(ctx, c.ID)
+	info, err := inspect(ctx, c.ID)
 	if err != nil {
-		log.Printf("proximo watcher: inspect %s: %v", name, err)
-		return 0, false
+		return 0, false, portResult{inspectErr: err}
 	}
 	var ports nat.PortSet
 	if info.Config != nil {
 		ports = info.Config.ExposedPorts
 	}
-	port, count, ok := portFromExposed(ports)
+	p, count, ok := portFromExposed(ports)
 	if !ok {
-		log.Printf("proximo watcher: container %s exposes %d TCP port(s); set %s to disambiguate",
-			name, count, proximoPortLabel)
+		return 0, false, portResult{exposedTCP: count}
 	}
-	return port, ok
+	return p, true, portResult{}
+}
+
+// logPortFailure logs (watcher-side) why a proximo route's backend port could not
+// be resolved, reproducing the original per-cause messages.
+func logPortFailure(name string, res portResult) {
+	switch {
+	case res.badLabel != "":
+		log.Printf("proximo watcher: container %s has invalid %s=%q", name, proximoPortLabel, res.badLabel)
+	case res.inspectErr != nil:
+		log.Printf("proximo watcher: inspect %s: %v", name, res.inspectErr)
+	default:
+		log.Printf("proximo watcher: container %s exposes %d TCP port(s); set %s to disambiguate",
+			name, res.exposedTCP, proximoPortLabel)
+	}
+}
+
+// hint is the short, user-facing reason a proximo route's backend port could not
+// be resolved, for `proximo status` to display. It mirrors the cause split of
+// logPortFailure so status and the watcher logs agree on the why.
+func (res portResult) hint() string {
+	switch {
+	case res.badLabel != "":
+		return "invalid " + proximoPortLabel + "=" + strconv.Quote(res.badLabel)
+	case res.inspectErr != nil:
+		return "cannot detect backend port (inspect failed)"
+	default:
+		return "set " + proximoPortLabel + " (exposes " + strconv.Itoa(res.exposedTCP) + " TCP ports)"
+	}
 }
 
 // portFromExposed returns the single exposed TCP port (ok=true) and the number
@@ -317,16 +382,16 @@ func renderRouter(rc routedContainer) []byte {
 	var b strings.Builder
 	b.WriteString("http:\n")
 	b.WriteString("  routers:\n")
-	b.WriteString("    " + id + ":\n")
+	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      entryPoints:\n        - websecure\n")
-	b.WriteString("      rule: \"" + rule + "\"\n")
-	b.WriteString("      service: " + id + "\n")
+	fmt.Fprintf(&b, "      rule: %q\n", rule)
+	fmt.Fprintf(&b, "      service: %s\n", id)
 	b.WriteString("      tls: {}\n")
 	b.WriteString("  services:\n")
-	b.WriteString("    " + id + ":\n")
+	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
-	b.WriteString("          - url: \"" + url + "\"\n")
+	fmt.Fprintf(&b, "          - url: %q\n", url)
 	return []byte(b.String())
 }
 
@@ -415,12 +480,12 @@ func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer) {
 	b.WriteString("tls:\n")
 	first := entries[0]
 	b.WriteString("  stores:\n    default:\n      defaultCertificate:\n")
-	b.WriteString("        certFile: " + filepath.Join(certsDir, first.safe+".crt") + "\n")
-	b.WriteString("        keyFile: " + filepath.Join(certsDir, first.safe+".key") + "\n")
+	fmt.Fprintf(&b, "        certFile: %s\n", filepath.Join(certsDir, first.safe+".crt"))
+	fmt.Fprintf(&b, "        keyFile: %s\n", filepath.Join(certsDir, first.safe+".key"))
 	b.WriteString("  certificates:\n")
 	for _, rc := range entries {
-		b.WriteString("    - certFile: " + filepath.Join(certsDir, rc.safe+".crt") + "\n")
-		b.WriteString("      keyFile: " + filepath.Join(certsDir, rc.safe+".key") + "\n")
+		fmt.Fprintf(&b, "    - certFile: %s\n", filepath.Join(certsDir, rc.safe+".crt"))
+		fmt.Fprintf(&b, "      keyFile: %s\n", filepath.Join(certsDir, rc.safe+".key"))
 	}
 	if err := os.WriteFile(tlsPath, []byte(b.String()), 0o644); err != nil {
 		log.Printf("proximo watcher: write tls config: %v", err)
@@ -468,7 +533,8 @@ func isProximoRoute(labels map[string]string) bool {
 
 // classifyHosts is the single source of truth for a container's host-based
 // routing decision, shared by the watcher (buildRouted) and `proximo status`
-// (routeHosts) so the two never disagree. It returns the hostnames to route,
+// (Routes) — both via classify — so the two never disagree. It returns the
+// hostnames to route,
 // whether routing is via proximo.hosts (vs native traefik.* rules), and any
 // invalid proximo.hosts entries for the caller to log. Empty hosts means no
 // host-based route. Port resolution is intentionally left to the watcher.
@@ -496,7 +562,7 @@ func proximoHosts(labels map[string]string) []string {
 // splitHosts splits a comma-separated host list into valid and invalid entries.
 // Whitespace is trimmed and empty entries are dropped.
 func splitHosts(raw string) (valid, invalid []string) {
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		h := strings.TrimSpace(part)
 		if h == "" {
 			continue

@@ -2,15 +2,34 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/filippolmt/proximo/internal/tls"
 )
+
+// failInspect returns an inspector that fails the test if called — for cases
+// where port resolution must not need ContainerInspect.
+func failInspect(t *testing.T) inspector {
+	t.Helper()
+	return func(context.Context, string) (container.InspectResponse, error) {
+		t.Fatal("inspect must not be called")
+		return container.InspectResponse{}, nil
+	}
+}
+
+// exposeInspect returns an inspector reporting the given exposed ports.
+func exposeInspect(ports nat.PortSet) inspector {
+	return func(context.Context, string) (container.InspectResponse, error) {
+		return container.InspectResponse{Config: &container.Config{ExposedPorts: ports}}, nil
+	}
+}
 
 func TestProximoHosts(t *testing.T) {
 	tests := []struct {
@@ -94,16 +113,95 @@ func TestClassifyHosts(t *testing.T) {
 }
 
 func TestResolveBackendPortExplicit(t *testing.T) {
-	w := &Watcher{}
+	// An explicit, valid proximo.port resolves without inspecting the container.
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"})
-	port, ok := w.resolveBackendPort(context.Background(), c, "app")
+	port, ok, _ := resolveBackendPort(context.Background(), failInspect(t), c)
 	if !ok || port != 8080 {
 		t.Fatalf("explicit port = (%d,%v), want (8080,true)", port, ok)
 	}
 
 	bad := makeSummary(map[string]string{proximoPortLabel: "nope"})
-	if _, ok := w.resolveBackendPort(context.Background(), bad, "bad"); ok {
-		t.Error("invalid explicit port should be rejected")
+	if _, ok, res := resolveBackendPort(context.Background(), failInspect(t), bad); ok || res.badLabel != "nope" {
+		t.Errorf("invalid explicit port = (ok=%v, badLabel=%q), want (false, \"nope\")", ok, res.badLabel)
+	}
+}
+
+// TestPortResultHint: the status hint is cause-specific so `proximo status` and
+// the watcher logs agree on why a port could not be resolved.
+func TestPortResultHint(t *testing.T) {
+	if got := (portResult{badLabel: "nope"}).hint(); !strings.Contains(got, "invalid") || !strings.Contains(got, "nope") {
+		t.Errorf("badLabel hint = %q, want it to name the invalid value", got)
+	}
+	if got := (portResult{inspectErr: errors.New("boom")}).hint(); !strings.Contains(got, "inspect") {
+		t.Errorf("inspectErr hint = %q, want it to mention the inspect failure", got)
+	}
+	if got := (portResult{exposedTCP: 2}).hint(); !strings.Contains(got, proximoPortLabel) || !strings.Contains(got, "2") {
+		t.Errorf("ambiguous hint = %q, want it to suggest %s and name the count", got, proximoPortLabel)
+	}
+}
+
+// TestClassifyExplicitPort: classify resolves the explicit proximo.port (4.1).
+func TestClassifyExplicitPort(t *testing.T) {
+	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"})
+	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	if !ok || !rc.proximo || rc.port != 8080 || !slices.Equal(rc.hosts, []string{"app.test"}) {
+		t.Fatalf("classify explicit = (hosts=%v, proximo=%v, port=%d, ok=%v), want ([app.test],true,8080,true)",
+			rc.hosts, rc.proximo, rc.port, ok)
+	}
+}
+
+// TestClassifyPortResolution: a single exposed port resolves; zero or multiple
+// exposed ports (no proximo.port) make the proximo route not-routed but keep its
+// hosts for status to flag (4.2).
+func TestClassifyPortResolution(t *testing.T) {
+	c := makeSummary(map[string]string{proximoHostsLabel: "app.test"})
+
+	rc, ok, _ := classify(context.Background(), exposeInspect(nat.PortSet{"3000/tcp": struct{}{}}), c)
+	if !ok || rc.port != 3000 {
+		t.Fatalf("single exposed port = (port=%d, ok=%v), want (3000,true)", rc.port, ok)
+	}
+
+	for name, ports := range map[string]nat.PortSet{
+		"zero":     {},
+		"multiple": {"80/tcp": struct{}{}, "8080/tcp": struct{}{}},
+	} {
+		rc, ok, info := classify(context.Background(), exposeInspect(ports), c)
+		if ok {
+			t.Errorf("%s ports: expected not routed", name)
+		}
+		if !info.portFailed {
+			t.Errorf("%s ports: expected portFailed=true", name)
+		}
+		if !rc.proximo || !slices.Equal(rc.hosts, []string{"app.test"}) {
+			t.Errorf("%s ports: rc should keep proximo hosts for flagging, got %v", name, rc.hosts)
+		}
+	}
+}
+
+// TestClassifyNativeNeedsNoInspect: the native traefik path (enable + Host rule)
+// is classified without inspecting the container (4.3).
+func TestClassifyNativeNeedsNoInspect(t *testing.T) {
+	c := makeSummary(map[string]string{enableLabel: "true", "traefik.http.routers.w.rule": "Host(`x.test`)"})
+	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	if !ok || rc.proximo || !slices.Equal(rc.hosts, []string{"x.test"}) {
+		t.Fatalf("native classify = (hosts=%v, proximo=%v, ok=%v), want ([x.test],false,true)", rc.hosts, rc.proximo, ok)
+	}
+}
+
+// TestWatcherAndStatusShareClassify: both the watcher (buildRouted) and status
+// (Routes) delegate to classify, so for the same labels they reach the same
+// decision. The proximo.enable=false + native-rule case (the original skew)
+// must resolve to the native host for both, never to the parked proximo host (4.4).
+func TestWatcherAndStatusShareClassify(t *testing.T) {
+	c := makeSummary(map[string]string{
+		proximoHostsLabel:             "parked.test",
+		proximoEnableLabel:            "false",
+		enableLabel:                   "true",
+		"traefik.http.routers.x.rule": "Host(`live.test`)",
+	})
+	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	if !ok || rc.proximo || !slices.Equal(rc.hosts, []string{"live.test"}) {
+		t.Fatalf("shared decision = (hosts=%v, proximo=%v, ok=%v), want ([live.test],false,true)", rc.hosts, rc.proximo, ok)
 	}
 }
 
