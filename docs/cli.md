@@ -13,7 +13,7 @@ proximo <command> [args]
 | Command | Summary | Needs sudo | Needs Docker |
 | --- | --- | --- | --- |
 | [`install`](#proximo-install) | Full host setup + start the stack | yes | yes |
-| [`up`](#proximo-up) | Start the stack only | no | yes |
+| [`up`](#proximo-up) | Start the stack only (`--observability` adds the dashboards) | no | yes |
 | [`down`](#proximo-down) | Stop the stack only | no | yes |
 | [`update`](#proximo-update) | Converge the running stack to the installed CLI | no | yes |
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
@@ -53,6 +53,19 @@ until you `install`.
 `up` shares the convergence path with [`update`](#proximo-update), so it also
 applies any pending update — rebuilding the in-stack images at the installed CLI
 version and re-pulling Traefik. See [Updating](updating.md).
+
+### `--observability`
+
+```sh
+proximo up --observability
+```
+
+Bring up the core stack **and** the opt-in logs (Dozzle) + metrics (Beszel)
+dashboards in one command, run the metrics bootstrap, and print the dashboard
+URLs (`https://logs.<tld>`, `https://metrics.<tld>`). Both dashboards opt into the
+HTTP→HTTPS redirect, so `http://logs.<tld>` / `http://metrics.<tld>` auto-redirect
+to the trusted https host. Off by default: a plain `up` starts neither. `down` /
+`uninstall` tear them down too. See [Dev-time observability](observability.md).
 
 ## `proximo down`
 
@@ -151,12 +164,17 @@ Reverse everything `install` did and tear down the stack:
 proximo uninstall
 ```
 
-1. Stop the stack.
+1. Stop the stack (this also removes the profiled observability containers) and
+   delete the generated observability secret + env files
+   ([Dev-time observability](observability.md)). proximo uses no Docker named
+   volume, so there is nothing to volume-remove here — the data goes with the
+   home in step 4.
 2. Remove the host resolver config for the TLD (and reload the resolver on
    Linux).
 3. Remove CA trust from the NSS and system stores.
 4. Delete the `~/.proximo` state home — config, CA, the materialized stack, and
-   the bind-mounted Traefik data — so no proximo state is left on the host.
+   the bind-mounted Traefik data (plus the Beszel metrics data, if observability
+   was used) — so no proximo state is left on the host.
 
 The host is restored to its prior state.
 

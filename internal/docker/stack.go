@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/filippolmt/proximo/internal/config"
+	"github.com/filippolmt/proximo/internal/observability"
 	"github.com/filippolmt/proximo/internal/version"
 )
 
@@ -23,9 +24,20 @@ var assets embed.FS
 
 // Sentinels replaced with configured values when assets are materialized.
 const (
-	tldSentinel     = "__TLD__"
-	dnsPortSentinel = "__DNSPORT__"
-	dataDirSentinel = "__DATADIR__"
+	tldSentinel        = "__TLD__"
+	dnsPortSentinel    = "__DNSPORT__"
+	dataDirSentinel    = "__DATADIR__"
+	obsEmailSentinel   = "__OBS_USER_EMAIL__"
+	obsHubPortSentinel = "__OBS_HUBPORT__"
+)
+
+// Observability profile + service names, used to bring the opt-in services up
+// out-of-band from the core converge.
+const (
+	observabilityProfile = "observability"
+	svcDozzle            = "dozzle"
+	svcBeszel            = "beszel"
+	svcBeszelAgent       = "beszel-agent"
 )
 
 // StackDir returns the directory the embedded stack is materialized into.
@@ -46,10 +58,16 @@ func Materialize(tld, certDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Create the bind-mount source so `docker compose` resolves the mount; the
-	// watcher regenerates routes/certs into the empty dir on its first reconcile.
-	if err := os.MkdirAll(filepath.Join(dataDir, "traefik"), 0o755); err != nil {
-		return "", err
+	// Create the bind-mount sources so `docker compose` resolves the mounts and
+	// the host dirs are owned by the user (not root-created by the daemon, which
+	// would later block uninstall's RemoveHome). The watcher regenerates
+	// routes/certs into data/traefik on its first reconcile; the metrics hub
+	// persists into data/beszel when the observability profile is active (an empty
+	// dir is harmless when it is not).
+	for _, sub := range []string{"traefik", "beszel"} {
+		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o755); err != nil {
+			return "", err
+		}
 	}
 	walkErr := fs.WalkDir(assets, "assets", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -92,19 +110,25 @@ func Materialize(tld, certDir string) (string, error) {
 }
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
-// __DNSPORT__, and __DATADIR__ — the absolute host data-dir path) in an embedded
-// asset. It is pure so the substitution can be unit tested directly; the
-// Materialize WalkDir closure calls it per file. Data with no sentinel is
-// returned unchanged.
+// __DNSPORT__, __DATADIR__ — the absolute host data-dir path, the observability
+// user email, and the observability hub port) in an embedded asset. It is pure
+// so the substitution can be unit tested directly; the Materialize WalkDir
+// closure calls it per file. Data with no sentinel is returned unchanged. The
+// observability email is deterministic from the TLD (its canonical form is
+// observability.Email); only the generated password is injected at runtime via
+// the 0600 beszel-hub.env file.
 func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []byte {
-	if sentinel := []byte(tldSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(tld))
-	}
-	if sentinel := []byte(dnsPortSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(strconv.Itoa(dnsPort)))
-	}
-	if sentinel := []byte(dataDirSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(dataDir))
+	for _, s := range []struct{ sentinel, value string }{
+		{tldSentinel, tld},
+		{dnsPortSentinel, strconv.Itoa(dnsPort)},
+		{dataDirSentinel, dataDir},
+		{obsEmailSentinel, observability.Email(tld)},
+		{obsHubPortSentinel, strconv.Itoa(config.ObsHubPort)},
+	} {
+		// Guard the substitution so an absent sentinel skips ReplaceAll's copy.
+		if needle := []byte(s.sentinel); bytes.Contains(data, needle) {
+			data = bytes.ReplaceAll(data, needle, []byte(s.value))
+		}
 	}
 	return data
 }
@@ -267,6 +291,62 @@ func Up(tld, certDir string) error {
 	return Converge(tld, certDir, ConvergeOpts{})
 }
 
+// ConvergeObservability brings the stack up with the opt-in observability
+// profile active. It runs the normal core converge, brings up the log viewer and
+// metrics hub, runs the supplied bootstrap (which must write the agent env file
+// once the hub is reachable), then brings up the metrics agent. Sequencing the
+// agent after the bootstrap guarantees it never starts without its hub
+// credentials (design D4). bootstrap may be nil (e.g. in tests).
+func ConvergeObservability(tld, certDir string, opts ConvergeOpts, bootstrap func(stackDir string) error) error {
+	return convergeObservabilityWith(defaultComposer, moduleRef(version.Version), tld, certDir, opts, bootstrap)
+}
+
+// convergeObservabilityWith is ConvergeObservability with the Composer and module
+// ref injected so a fake composer can assert the staged command sequence without
+// Docker. The default `up` carries no --profile flag (core only); only the hub
+// and agent bring-ups activate the observability profile.
+func convergeObservabilityWith(c Composer, ref, tld, certDir string, opts ConvergeOpts, bootstrap func(stackDir string) error) error {
+	dir, err := Materialize(tld, certDir)
+	if err != nil {
+		return err
+	}
+	hubCmds := append(composeConvergeCmds(ref, opts.Force), composeObservabilityHubCmds()...)
+	for _, args := range hubCmds {
+		if err := c.Compose(dir, args...); err != nil {
+			return err
+		}
+	}
+	if bootstrap != nil {
+		if err := bootstrap(dir); err != nil {
+			return err
+		}
+	}
+	for _, args := range composeObservabilityAgentCmds() {
+		if err := c.Compose(dir, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// composeObservabilityHubCmds brings up the hub-side observability services (log
+// viewer + metrics hub) under the observability profile. The agent is deferred
+// to composeObservabilityAgentCmds, after the bootstrap. The bring-up re-pulls so
+// the pinned images pick up rebuilds.
+func composeObservabilityHubCmds() [][]string {
+	return [][]string{
+		{"--profile", observabilityProfile, "up", "-d", "--pull", "always", svcDozzle, svcBeszel},
+	}
+}
+
+// composeObservabilityAgentCmds brings up the metrics agent under the
+// observability profile, once the bootstrap has written its env file.
+func composeObservabilityAgentCmds() [][]string {
+	return [][]string{
+		{"--profile", observabilityProfile, "up", "-d", svcBeszelAgent},
+	}
+}
+
 // isMobileRef reports whether ref is a mutable ref whose build cache must be
 // busted on converge. main, dev, and empty resolve to a moving target; a
 // canonical release tag (vX.Y.Z) is immutable and safe to cache.
@@ -296,6 +376,8 @@ func composeConvergeCmds(ref string, force bool) [][]string {
 }
 
 // Down stops and removes the stack without touching host configuration.
+// `docker compose down` removes every container in the project, including any
+// profiled observability services, so it tears those down too when running.
 func Down() error {
 	dir, err := StackDir()
 	if err != nil {

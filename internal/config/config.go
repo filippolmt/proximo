@@ -22,6 +22,13 @@ const (
 	// avoided because macOS mDNSResponder (Bonjour) already binds it.
 	DNSPort = 5354
 
+	// ObsHubPort is the loopback TCP host port the metrics hub is published on
+	// (only when the observability profile is active) so the one-shot bootstrap
+	// can reach the hub API directly, without depending on DNS/Traefik/TLS being
+	// converged yet. A high, uncommon port avoids colliding with the hub's
+	// default 8090.
+	ObsHubPort = 48090
+
 	// appDir is the per-user directory name; the state home is $HOME/.proximo
 	// (a leading dot is prepended in homePath).
 	appDir = "proximo"

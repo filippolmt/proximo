@@ -55,7 +55,7 @@ substituted in.
 
 | Service | Image / build | Role |
 | --- | --- | --- |
-| **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, redirects `:80` → `:443`, routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. |
+| **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. |
 | **dns** | built from this repo | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
 | **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik to backend networks. Mounts the Docker socket and the CA. |
 
@@ -64,6 +64,13 @@ The watcher and Traefik share the host directory `~/.proximo/data/traefik`
 the watcher writes routes + certs to it, Traefik's file provider reads from it.
 Because it is a bind mount, the data is visible on the host and survives a
 `docker volume prune`. See [the state home](installation.md#state-home-proximo).
+
+An opt-in **observability profile** (`up --observability`) adds two more services
+— Dozzle (logs) and a Beszel hub + agent (metrics) — routed through the same
+label contract at `logs.<tld>` / `metrics.<tld>` (both opt into the HTTP→HTTPS
+redirect). They are inert unless the flag is passed, and the hub persists into
+the `~/.proximo/data/beszel` bind mount. See
+[Dev-time observability](observability.md).
 
 ## DNS
 

@@ -14,6 +14,7 @@ This folder is the full guide. Start wherever fits your need:
 | [Updating](updating.md) | Keeping the stack in lockstep with the CLI: `proximo update`, skew detection, and how updates apply. |
 | [Architecture](architecture.md) | How it works under the hood: the embedded stack, the DNS server, the local CA and trust, the watcher. |
 | [Routing](routing.md) | How to expose a container: the `proximo.*` labels, port auto-detection, multiple hosts, and native Traefik compatibility. |
+| [Dev-time observability](observability.md) | The opt-in `up --observability` logs (Dozzle) + metrics (Beszel) dashboards — credential-less and no-secret. |
 | [Troubleshooting](troubleshooting.md) | Common issues: DNS not resolving, port in use, browser cert warnings, macOS Gatekeeper. |
 
 ## 60-second tour
