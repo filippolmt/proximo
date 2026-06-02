@@ -16,6 +16,7 @@ services:
       - dynamic:/etc/traefik/dynamic
     labels:
       - "proximo.role=traefik"
+      - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   dns:
     build:
@@ -31,6 +32,7 @@ services:
       - "127.0.0.1:__DNSPORT__:5353/udp"
     labels:
       - "proximo.role=dns"
+      - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   watcher:
     build:
@@ -49,6 +51,7 @@ services:
       - dynamic:/etc/traefik/dynamic
     labels:
       - "proximo.role=watcher"
+      - "proximo.version=${PROXIMO_VERSION:-dev}"
 
 volumes:
   # Shared between the watcher (writes routes/certs) and Traefik (file provider).

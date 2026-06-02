@@ -11,6 +11,7 @@ This folder is the full guide. Start wherever fits your need:
 | --- | --- |
 | [Installation](installation.md) | Requirements, install on macOS/Linux, exactly what is changed on your host, and how to fully reverse it. |
 | [CLI reference](cli.md) | Every `proximo` command, what it does, and example sessions. |
+| [Updating](updating.md) | Keeping the stack in lockstep with the CLI: `proximo update`, skew detection, and how updates apply. |
 | [Architecture](architecture.md) | How it works under the hood: the embedded stack, the DNS server, the local CA and trust, the watcher. |
 | [Routing](routing.md) | How to expose a container: the `proximo.*` labels, port auto-detection, multiple hosts, and native Traefik compatibility. |
 | [Troubleshooting](troubleshooting.md) | Common issues: DNS not resolving, port in use, browser cert warnings, macOS Gatekeeper. |

@@ -15,6 +15,8 @@ Full guides live in [`docs/`](docs/README.md):
 - [Installation](docs/installation.md) — requirements, install steps, what it
   changes on your host, and how to reverse it.
 - [CLI reference](docs/cli.md) — every command with examples.
+- [Updating](docs/updating.md) — `proximo update`, skew detection, and how
+  updates apply to the stack.
 - [Architecture](docs/architecture.md) — the stack, DNS, the local CA, the
   watcher.
 - [Routing](docs/routing.md) — the `proximo.*` labels and Traefik compatibility.

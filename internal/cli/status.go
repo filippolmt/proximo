@@ -6,8 +6,13 @@ import (
 	"text/tabwriter"
 
 	"github.com/filippolmt/proximo/internal/docker"
+	"github.com/filippolmt/proximo/internal/version"
 	"github.com/spf13/cobra"
 )
+
+// warnPrefix marks a warning line in `proximo status` output (skew notice and
+// per-route notes both use it).
+const warnPrefix = "⚠ "
 
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
@@ -18,11 +23,21 @@ func newStatusCmd() *cobra.Command {
 			if err := checkDocker(); err != nil {
 				return err
 			}
-			routes, err := docker.Routes(context.Background())
+			ctx := context.Background()
+			out := cmd.OutOrStdout()
+
+			// Read-only skew check: warn (never mutate) when the running stack
+			// version differs from the installed CLI, pointing to `proximo update`.
+			if stackVer, err := docker.StackVersion(ctx); err == nil {
+				if w := docker.VersionSkew(stackVer, version.Version); w != "" {
+					fmt.Fprintln(out, warnPrefix+w)
+				}
+			}
+
+			routes, err := docker.Routes(ctx)
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
 			if len(routes) == 0 {
 				fmt.Fprintln(out, "No routed containers.")
 				return nil
@@ -32,7 +47,7 @@ func newStatusCmd() *cobra.Command {
 			for _, r := range routes {
 				val := r.URL
 				if r.Note != "" {
-					val = "⚠ " + r.Note
+					val = warnPrefix + r.Note
 				}
 				fmt.Fprintf(w, "%s\t%s\n", r.Container, val)
 			}

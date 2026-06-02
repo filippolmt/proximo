@@ -15,6 +15,7 @@ proximo <command> [args]
 | [`install`](#proximo-install) | Full host setup + start the stack | yes | yes |
 | [`up`](#proximo-up) | Start the stack only | no | yes |
 | [`down`](#proximo-down) | Stop the stack only | no | yes |
+| [`update`](#proximo-update) | Converge the running stack to the installed CLI | no | yes |
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`uninstall`](#proximo-uninstall) | Reverse all host changes + stop the stack | yes | yes |
@@ -60,6 +61,29 @@ proximo down
 
 A no-op if the stack was never materialized.
 
+## `proximo update`
+
+Converge the running stack to the **installed CLI version**: re-materialize the
+embedded assets, rebuild the `dns` / `watcher` images at the CLI version, and
+re-pull Traefik (security patches). Run it after upgrading the CLI
+(`brew upgrade` / `go install`) — it is also the safe escape hatch for any stack
+problem.
+
+```sh
+proximo update
+proximo update --force   # rebuild images without the build cache
+```
+
+- **Idempotent**: prints "up to date" and recreates nothing when the stack
+  already matches the CLI.
+- **Never needs sudo**: Docker operations only — no resolver or CA changes.
+- **Soft no-op**: when Docker is unreachable or no stack is running it reports
+  that the update will apply on the next `proximo up` and exits 0.
+- Shares the convergence code path with `proximo up`, so "update now" and
+  "update on next start" cannot drift.
+
+See [Updating proximo](updating.md) for the full model.
+
 ## `proximo status`
 
 List the **effective** routing state — the routes the watcher actually serves,
@@ -90,6 +114,13 @@ multi      ⚠ set proximo.port (exposes 2 TCP ports)
 ```
 
 Prints `No routed containers.` when nothing is exposed.
+
+When the running stack version differs from the installed CLI, `status` prints a
+read-only **skew warning** recommending `proximo update` (it never rebuilds):
+
+```
+⚠ stack is running v0.1.0 but the CLI is v0.2.0; run `proximo update` to converge
+```
 
 ## `proximo config tld`
 

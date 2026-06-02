@@ -148,7 +148,11 @@ func copyCA(stackDir, certDir string) error {
 }
 
 func writeEnv(stackDir, tld string) error {
-	content := fmt.Sprintf("PROXIMO_TLD=%s\nPROXIMO_REF=%s\n", tld, moduleRef(version.Version))
+	// PROXIMO_VERSION stamps the materialized services with the CLI version (a
+	// proximo.version label) so the running stack's version can be read back for
+	// skew detection; PROXIMO_REF is the canonical module ref the images build at.
+	content := fmt.Sprintf("PROXIMO_TLD=%s\nPROXIMO_REF=%s\nPROXIMO_VERSION=%s\n",
+		tld, moduleRef(version.Version), version.Version)
 	return os.WriteFile(filepath.Join(stackDir, ".env"), []byte(content), 0o644)
 }
 
@@ -178,13 +182,64 @@ func compose(stackDir string, args ...string) error {
 	return cmd.Run()
 }
 
-// Up materializes the stack and brings it up (building images as needed).
-func Up(tld, certDir string) error {
+// ConvergeOpts tunes how Converge rebuilds the stack.
+type ConvergeOpts struct {
+	// Force rebuilds the in-stack images without the build cache, regardless of
+	// whether the ref is mobile.
+	Force bool
+}
+
+// Converge materializes the embedded stack to disk and brings it up with
+// ref-aware build freshness. It is the single bring-up path shared by `proximo
+// up`, `install`, and `proximo update`, so "update now" and "update on next
+// start" cannot drift. The bring-up always re-pulls (so the pinned Traefik tag
+// picks up security patches); a mobile ref or Force prepends a --no-cache
+// rebuild of the buildable services to defeat a stale `go install @<ref>` layer.
+func Converge(tld, certDir string, opts ConvergeOpts) error {
 	dir, err := Materialize(tld, certDir)
 	if err != nil {
 		return err
 	}
-	return compose(dir, "up", "-d", "--build")
+	for _, args := range composeConvergeCmds(moduleRef(version.Version), opts.Force) {
+		if err := compose(dir, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Up materializes the stack and brings it up (building images as needed),
+// applying any pending convergence to the installed CLI version.
+func Up(tld, certDir string) error {
+	return Converge(tld, certDir, ConvergeOpts{})
+}
+
+// isMobileRef reports whether ref is a mutable ref whose build cache must be
+// busted on converge. main, dev, and empty resolve to a moving target; a
+// canonical release tag (vX.Y.Z) is immutable and safe to cache.
+func isMobileRef(ref string) bool {
+	switch ref {
+	case "", "main", "dev":
+		return true
+	default:
+		return false
+	}
+}
+
+// composeConvergeCmds returns the docker compose command(s) Converge runs, in
+// order, for a given module ref and force flag. The bring-up always re-pulls
+// (--pull always) so the pinned Traefik tag picks up security patches. A mobile
+// ref (main/dev/empty) or force prepends a --no-cache rebuild of the buildable
+// services (`docker compose up` has no --no-cache), defeating a stale
+// `go install @<ref>` layer. An immutable tag reuses the cache — a new tag
+// changes the build arg and cache-misses naturally.
+func composeConvergeCmds(ref string, force bool) [][]string {
+	var cmds [][]string
+	if force || isMobileRef(ref) {
+		cmds = append(cmds, []string{"build", "--no-cache", "--pull", "dns", "watcher"})
+	}
+	cmds = append(cmds, []string{"up", "-d", "--build", "--pull", "always"})
+	return cmds
 }
 
 // Down stops and removes the stack without touching host configuration.
