@@ -15,6 +15,10 @@ stack unless you ask for it.
 (`<tld>` is your configured TLD, `test` by default — so `https://logs.test` and
 `https://metrics.test`.)
 
+Both dashboards opt into the HTTP→HTTPS redirect, so a plain `http://logs.<tld>`
+or `http://metrics.<tld>` is redirected to the CA-trusted `https://` host
+automatically.
+
 ## Start it
 
 ```sh

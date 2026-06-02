@@ -219,6 +219,11 @@ func TestObservabilitySentinelsInCompose(t *testing.T) {
 			t.Errorf("substituted compose missing %q", want)
 		}
 	}
+	// Both dashboards opt into the HTTP->HTTPS redirect so http://logs|metrics
+	// always lands on the CA-trusted https host.
+	if n := strings.Count(out, "proximo.redirect=true"); n != 2 {
+		t.Errorf("want proximo.redirect=true on both observability dashboards (x2), got %d", n)
+	}
 	for _, sentinel := range []string{tldSentinel, dnsPortSentinel, obsEmailSentinel, obsHubPortSentinel} {
 		if strings.Contains(out, sentinel) {
 			t.Errorf("sentinel %q left unsubstituted", sentinel)
