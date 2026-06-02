@@ -1,0 +1,30 @@
+*openspec*
+*opsx*
+
+# Build output
+/bin/
+/dist/
+
+# Go
+*.exe
+*.exe~
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# Local CA / certs / secrets (proximo generates a CA — never commit private keys)
+*.pem
+*.key
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+.toolbox*

@@ -1,0 +1,68 @@
+version: 2
+
+project_name: proximo
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: proximo
+    main: .
+    binary: proximo
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/filippolmt/proximo/internal/version.Version={{ .Version }}
+      - -X github.com/filippolmt/proximo/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/filippolmt/proximo/internal/version.Date={{ .Date }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: proximo
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Homebrew cask (not the deprecated `brews` formula), macOS-only.
+homebrew_casks:
+  - name: proximo
+    repository:
+      owner: filippolmt
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/filippolmt/proximo"
+    description: "Local development reverse proxy with automatic DNS and trusted HTTPS"
+    # The binary is unsigned; strip the quarantine attribute so macOS Gatekeeper
+    # does not refuse to run it with an "is damaged" alert.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/proximo"]
+          end

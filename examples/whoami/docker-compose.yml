@@ -1,0 +1,19 @@
+# Sample stack for the end-to-end test.
+#
+#   proximo install                         # one-time host setup
+#   docker compose up -d                    # from this directory (or: make demo)
+#   open https://whoami.test
+#
+# Proximo-native routing: declare the host(s) with `proximo.hosts` and you are
+# routed at https://whoami.test. The backend port is auto-detected because the
+# image EXPOSEs exactly one port; set `proximo.port` only when it exposes zero
+# or several. `proximo.enable=false` would park the container without deleting
+# labels.
+name: proximo-demo
+
+services:
+  whoami:
+    image: traefik/whoami
+    container_name: whoami
+    labels:
+      - "proximo.hosts=whoami.test"
