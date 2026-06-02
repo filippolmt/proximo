@@ -30,7 +30,11 @@ func newStatusCmd() *cobra.Command {
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "CONTAINER\tURL")
 			for _, r := range routes {
-				fmt.Fprintf(w, "%s\t%s\n", r.Container, r.URL)
+				val := r.URL
+				if r.Note != "" {
+					val = "⚠ " + r.Note
+				}
+				fmt.Fprintf(w, "%s\t%s\n", r.Container, val)
 			}
 			return w.Flush()
 		},

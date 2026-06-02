@@ -62,9 +62,12 @@ A no-op if the stack was never materialized.
 
 ## `proximo status`
 
-List the containers that are currently routed and the URL each is reachable at.
-Hosts come from the `proximo.hosts` label when present, otherwise from native
-Traefik router rules.
+List the **effective** routing state — the routes the watcher actually serves,
+not just declared intent. It uses the same classifier the watcher uses, so the
+two never disagree. Hosts come from the `proximo.hosts` label when present,
+otherwise from native Traefik router rules; for a `proximo.hosts` route the
+backend port is resolved the same way the watcher resolves it (explicit
+`proximo.port`, else the single exposed TCP port).
 
 ```sh
 proximo status
@@ -74,6 +77,16 @@ proximo status
 CONTAINER  URL
 whoami     https://whoami.test
 api        https://api.test
+```
+
+A `proximo.hosts` container whose backend port is **ambiguous** (no
+`proximo.port`, and the image exposes zero or several ports) is not served by the
+watcher, so it is **not** shown as a working route — it is flagged instead so you
+know why it is missing:
+
+```
+CONTAINER  URL
+multi      ⚠ set proximo.port (exposes 2 TCP ports)
 ```
 
 Prints `No routed containers.` when nothing is exposed.

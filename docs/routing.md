@@ -57,7 +57,9 @@ The backend port is resolved as:
 2. the single exposed TCP port, auto-detected by inspecting the container, else
 3. **skipped** — when the container exposes zero or several ports and no
    `proximo.port` is given, the container is not routed and a warning is logged
-   describing the ambiguity.
+   describing the ambiguity. `proximo status` reflects this: it shows the
+   container flagged (`⚠ set proximo.port`) rather than as a working route, since
+   the watcher does not actually serve it.
 
 ```yaml
 labels:
