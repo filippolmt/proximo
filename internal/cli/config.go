@@ -56,7 +56,7 @@ func runConfigTLD(cmd *cobra.Command, raw string) error {
 	}
 
 	fmt.Fprintf(out, "==> Switching TLD: .%s -> .%s\n", oldTLD, newTLD)
-	if err := dns.RemoveResolver(oldTLD); err != nil {
+	if err := dns.RemoveResolver(defaultRunner, oldTLD); err != nil {
 		return err
 	}
 
@@ -65,7 +65,7 @@ func runConfigTLD(cmd *cobra.Command, raw string) error {
 		return err
 	}
 
-	if err := dns.ConfigureResolver(newTLD); err != nil {
+	if err := dns.ConfigureResolver(defaultRunner, newTLD); err != nil {
 		return err
 	}
 

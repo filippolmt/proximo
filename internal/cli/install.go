@@ -41,21 +41,7 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	fmt.Fprintln(out, "==> Generating local CA")
-	if _, _, err := tls.EnsureCA(); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(out, "==> Configuring host resolver for .%s\n", cfg.TLD)
-	if err := dns.ConfigureResolver(cfg.TLD); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(out, "==> Installing CA trust (system + NSS)")
-	if err := tls.InstallSystemTrust(); err != nil {
-		return err
-	}
-	if err := tls.InstallNSSTrust(); err != nil {
+	if err := applySteps(out, hostSteps(defaultRunner, cfg.TLD)); err != nil {
 		return err
 	}
 

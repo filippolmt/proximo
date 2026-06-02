@@ -4,10 +4,8 @@ import (
 	"fmt"
 
 	"github.com/filippolmt/proximo/internal/config"
-	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/platform"
-	"github.com/filippolmt/proximo/internal/tls"
 	"github.com/spf13/cobra"
 )
 
@@ -38,19 +36,7 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "==> Removing host resolver for .%s\n", cfg.TLD)
-	if err := dns.RemoveResolver(cfg.TLD); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(out, "==> Removing CA trust (system + NSS)")
-	if err := tls.RemoveNSSTrust(); err != nil {
-		return err
-	}
-	if err := tls.RemoveSystemTrust(); err != nil {
-		return err
-	}
-	if err := tls.Purge(); err != nil {
+	if err := revertSteps(out, hostSteps(defaultRunner, cfg.TLD)); err != nil {
 		return err
 	}
 

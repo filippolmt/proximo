@@ -77,6 +77,33 @@ func Has(name string) bool {
 	return err == nil
 }
 
+// Runner is the privileged/host exec surface the install/uninstall host steps
+// mutate through. ExecRunner is the production adapter — each method delegates
+// to the matching package function unchanged — so production behavior is
+// identical; tests pass a fake that records calls to assert step ordering and
+// rollback without touching the host.
+type Runner interface {
+	Run(name string, args ...string) error
+	Sudo(args ...string) error
+	WriteFilePrivileged(path string, content []byte, mode os.FileMode) error
+	RemoveFilePrivileged(path string) error
+}
+
+// ExecRunner is the production Runner. It carries no state and forwards every
+// call to the package-level functions, so routing host steps through a Runner
+// changes no observable behavior.
+type ExecRunner struct{}
+
+func (ExecRunner) Run(name string, args ...string) error { return Run(name, args...) }
+
+func (ExecRunner) Sudo(args ...string) error { return Sudo(args...) }
+
+func (ExecRunner) WriteFilePrivileged(path string, content []byte, mode os.FileMode) error {
+	return WriteFilePrivileged(path, content, mode)
+}
+
+func (ExecRunner) RemoveFilePrivileged(path string) error { return RemoveFilePrivileged(path) }
+
 // Run executes a command, inheriting the parent's stdio.
 func Run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
