@@ -91,10 +91,12 @@ func TestWriteHubEnvPermissions(t *testing.T) {
 }
 
 func TestEmail(t *testing.T) {
-	if got := Email("test"); got != "proximo@test" {
-		t.Errorf("Email(test) = %q, want proximo@test", got)
+	// The domain must be dotted (proximo.<tld>) so PocketBase's email format
+	// check accepts it — a bare "proximo@test" crash-loops the hub.
+	if got := Email("test"); got != "proximo@proximo.test" {
+		t.Errorf("Email(test) = %q, want proximo@proximo.test", got)
 	}
-	if got := Email("dev"); got != "proximo@dev" {
-		t.Errorf("Email(dev) = %q, want proximo@dev", got)
+	if got := Email("dev"); got != "proximo@proximo.dev" {
+		t.Errorf("Email(dev) = %q, want proximo@proximo.dev", got)
 	}
 }

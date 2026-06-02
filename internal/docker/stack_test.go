@@ -210,8 +210,8 @@ func TestObservabilitySentinelsInCompose(t *testing.T) {
 		"proximo.hosts=metrics.example",
 		"proximo.port=8080",
 		"proximo.port=8090",
-		"USER_EMAIL: proximo@example",
-		"AUTO_LOGIN: proximo@example",
+		"USER_EMAIL: proximo@proximo.example",
+		"AUTO_LOGIN: proximo@proximo.example",
 		fmt.Sprintf("127.0.0.1:%d:8090", config.ObsHubPort),
 	}
 	for _, want := range wantContains {
