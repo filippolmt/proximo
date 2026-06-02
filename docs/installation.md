@@ -65,7 +65,7 @@ This runs, in order:
 3. **Prime sudo** — prompts once so the following privileged steps don't each
    ask for a password.
 4. **Generate the local CA** — a P-256 ECDSA CA created on first run and reused
-   afterwards, stored under your per-user config dir.
+   afterwards, stored under your [state home](#state-home-proximo).
 5. **Configure the host resolver** — routes `*.<tld>` lookups to the local DNS
    server (see [what it changes](#what-install-changes-on-your-host)).
 6. **Install CA trust** — adds the CA to the OS system trust store and, when
@@ -86,13 +86,41 @@ Everything below is created by `install` and removed by `uninstall`.
 | **macOS** | `/etc/resolver/<tld>` → `nameserver 127.0.0.1` + `port 5354` | CA added to the system keychain trust store + NSS DBs (if any) |
 | **Linux** | `/etc/systemd/resolved.conf.d/proximo-<tld>.conf` → `DNS=127.0.0.1:5354`, `Domains=~<tld>`, then `systemd-resolved` is restarted | CA added to the system trust store + NSS DBs via `certutil` |
 
-Per-user state (not privileged) lives under your OS config dir
-(`os.UserConfigDir()/proximo`):
+## State home (`~/.proximo`)
 
-- `config.json` — the persisted TLD.
-- `tls/` — the CA certificate and key (`ca.pem`, `ca-key.pem`).
-- `stack/` — the materialized `docker compose` stack (compose file, Traefik
-  config, a copy of the CA for the watcher to mount).
+All of proximo's per-user state lives under a single user-owned home directory,
+**`~/.proximo`** (literally `$HOME/.proximo` on both macOS and Linux — not the
+platform `os.UserConfigDir()` location). Nothing of proximo's lives in a
+Docker-managed named volume, so a `docker volume prune` can't wipe it.
+
+| Path | Holds |
+| --- | --- |
+| `~/.proximo/config.json` | the persisted TLD |
+| `~/.proximo/tls/` | the local CA certificate and key (`ca.pem`, `ca-key.pem`) |
+| `~/.proximo/stack/` | the materialized `docker compose` stack (compose file, Traefik config, a copy of the CA for the watcher) |
+| `~/.proximo/data/traefik/` | **bind-mounted** into Traefik + the watcher: the dynamic routes and per-container certificates the watcher generates |
+
+**Back it up** by copying the folder — `cp -a ~/.proximo ~/proximo-backup` (or
+add it to your backup set). It is the one place all proximo state lives.
+
+- **Bind mounts, not named volumes.** `data/traefik` is a host directory mounted
+  into the containers, so it is plainly visible and survives `docker volume rm` /
+  `docker volume prune`. The watcher regenerates routes and certs into it on its
+  first reconcile, so even an empty `data/traefik` self-heals.
+- **Linux file ownership.** The stack containers write into `data/` as root, so
+  on Linux those files appear **root-owned** under your home. They are still
+  readable for backup; `proximo uninstall` removes them (it tears the stack down
+  first, then deletes the home).
+- **Stale legacy volume.** If you ran a pre-bind-mount build, a now-unused
+  `proximo_dynamic` named volume may linger in Docker. It is harmless (nothing
+  references it); reclaim the space with `docker volume rm proximo_dynamic`.
+- **No migration from the old location.** Earlier builds stored state under
+  `os.UserConfigDir()/proximo`. There is no automatic move — if you have such an
+  install, run `proximo install` again (it regenerates the CA and re-trusts it
+  once).
+- **macOS Docker Desktop file sharing.** `$HOME` is shared by default, so the
+  bind mount works out of the box; a non-default file-sharing configuration that
+  excludes `$HOME` would block it.
 
 ## Uninstall
 
@@ -101,8 +129,10 @@ proximo uninstall
 ```
 
 Reverses the whole setup: stops the stack, removes the resolver config, untrusts
-and deletes the local CA from the system and NSS stores. The host returns to its
-prior state. (See the [CLI reference](cli.md#proximo-uninstall) for details.)
+and deletes the local CA from the system and NSS stores, and **deletes the
+`~/.proximo` state home** (config, CA, stack, and the bind-mounted data) so no
+proximo state is left behind. The host returns to its prior state. (See the
+[CLI reference](cli.md#proximo-uninstall) for details.)
 
 ## Next
 

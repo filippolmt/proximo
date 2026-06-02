@@ -47,7 +47,7 @@ and exits:
 - `uninstall` → reverse all host changes, `compose down`.
 
 The only long-running processes are the **stack containers**. They are an
-embedded `docker compose` project, materialized to `~/<config>/proximo/stack/`
+embedded `docker compose` project, materialized to `~/.proximo/stack/`
 from assets compiled into the binary (`//go:embed`), with the TLD and DNS port
 substituted in.
 
@@ -59,8 +59,11 @@ substituted in.
 | **dns** | built from this repo | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
 | **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik to backend networks. Mounts the Docker socket and the CA. |
 
-The three share a `dynamic` volume: the watcher writes to it, Traefik's file
-provider reads from it.
+The watcher and Traefik share the host directory `~/.proximo/data/traefik`
+(**bind-mounted** into both at `/etc/traefik/dynamic`, not a Docker named volume):
+the watcher writes routes + certs to it, Traefik's file provider reads from it.
+Because it is a bind mount, the data is visible on the host and survives a
+`docker volume prune`. See [the state home](installation.md#state-home-proximo).
 
 ## DNS
 
@@ -92,7 +95,8 @@ warning and no public ACME round-trip.
 
 - **Local CA** (`internal/tls`) — a P-256 ECDSA CA generated on first
   `install` (10-year validity, `IsCA`, path-len 0) and reused afterwards. Stored
-  as `tls/ca.pem` + `tls/ca-key.pem` in your config dir.
+  as `tls/ca.pem` + `tls/ca-key.pem` in your [state home](installation.md#state-home-proximo)
+  (`~/.proximo`).
 - **Trust** — the CA is added to the **OS system trust store** (via built-in OS
   tooling) and the **NSS store** (Firefox/Chromium DBs, via `certutil`) when
   present. `uninstall` removes both.

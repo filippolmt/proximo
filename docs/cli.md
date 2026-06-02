@@ -155,7 +155,8 @@ proximo uninstall
 2. Remove the host resolver config for the TLD (and reload the resolver on
    Linux).
 3. Remove CA trust from the NSS and system stores.
-4. Delete the local CA material from disk.
+4. Delete the `~/.proximo` state home — config, CA, the materialized stack, and
+   the bind-mounted Traefik data — so no proximo state is left on the host.
 
 The host is restored to its prior state.
 

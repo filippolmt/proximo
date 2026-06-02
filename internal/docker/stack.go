@@ -25,6 +25,7 @@ var assets embed.FS
 const (
 	tldSentinel     = "__TLD__"
 	dnsPortSentinel = "__DNSPORT__"
+	dataDirSentinel = "__DATADIR__"
 )
 
 // StackDir returns the directory the embedded stack is materialized into.
@@ -32,12 +33,22 @@ func StackDir() (string, error) {
 	return config.SubDir("stack")
 }
 
-// Materialize writes the embedded stack assets to disk, substituting the TLD,
+// Materialize writes the embedded stack assets to disk, substituting the TLD
+// and the host data-dir path, creates the bind-mounted data subdirectories,
 // copies the TLS material from certDir into the stack, writes the compose
 // environment file, and returns the stack directory.
 func Materialize(tld, certDir string) (string, error) {
 	dir, err := StackDir()
 	if err != nil {
+		return "", err
+	}
+	dataDir, err := config.DataDir()
+	if err != nil {
+		return "", err
+	}
+	// Create the bind-mount source so `docker compose` resolves the mount; the
+	// watcher regenerates routes/certs into the empty dir on its first reconcile.
+	if err := os.MkdirAll(filepath.Join(dataDir, "traefik"), 0o755); err != nil {
 		return "", err
 	}
 	walkErr := fs.WalkDir(assets, "assets", func(path string, d fs.DirEntry, err error) error {
@@ -59,7 +70,7 @@ func Materialize(tld, certDir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		data = replaceSentinels(data, tld, config.DNSPort)
+		data = replaceSentinels(data, tld, config.DNSPort, dataDir)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
@@ -80,16 +91,20 @@ func Materialize(tld, certDir string) (string, error) {
 	return dir, nil
 }
 
-// replaceSentinels substitutes the materialization sentinels (__TLD__ and
-// __DNSPORT__) in an embedded asset. It is pure so the substitution can be unit
-// tested directly; the Materialize WalkDir closure calls it per file. Data with
-// no sentinel is returned unchanged.
-func replaceSentinels(data []byte, tld string, dnsPort int) []byte {
+// replaceSentinels substitutes the materialization sentinels (__TLD__,
+// __DNSPORT__, and __DATADIR__ — the absolute host data-dir path) in an embedded
+// asset. It is pure so the substitution can be unit tested directly; the
+// Materialize WalkDir closure calls it per file. Data with no sentinel is
+// returned unchanged.
+func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []byte {
 	if sentinel := []byte(tldSentinel); bytes.Contains(data, sentinel) {
 		data = bytes.ReplaceAll(data, sentinel, []byte(tld))
 	}
 	if sentinel := []byte(dnsPortSentinel); bytes.Contains(data, sentinel) {
 		data = bytes.ReplaceAll(data, sentinel, []byte(strconv.Itoa(dnsPort)))
+	}
+	if sentinel := []byte(dataDirSentinel); bytes.Contains(data, sentinel) {
+		data = bytes.ReplaceAll(data, sentinel, []byte(dataDir))
 	}
 	return data
 }

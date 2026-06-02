@@ -40,6 +40,13 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
+	// Remove the state home last: the trust reversal above reads the CA from it,
+	// and the stack is already down so the data bind mounts are released.
+	fmt.Fprintln(out, "==> Removing the proximo state home")
+	if err := config.RemoveHome(); err != nil {
+		return err
+	}
+
 	fmt.Fprintln(out, "\nUninstalled. The host has been restored to its prior state.")
 	return nil
 }

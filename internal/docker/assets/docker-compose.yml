@@ -13,7 +13,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - dynamic:/etc/traefik/dynamic
+      - __DATADIR__/traefik:/etc/traefik/dynamic
     labels:
       - "proximo.role=traefik"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
@@ -48,11 +48,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./ca:/ca:ro
-      - dynamic:/etc/traefik/dynamic
+      - __DATADIR__/traefik:/etc/traefik/dynamic
     labels:
       - "proximo.role=watcher"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
-
-volumes:
-  # Shared between the watcher (writes routes/certs) and Traefik (file provider).
-  dynamic: {}
