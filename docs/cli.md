@@ -62,9 +62,10 @@ proximo up --observability
 
 Bring up the core stack **and** the opt-in logs (Dozzle) + metrics (Beszel)
 dashboards in one command, run the metrics bootstrap, and print the dashboard
-URLs (`https://logs.<tld>`, `https://metrics.<tld>`). Off by default: a plain
-`up` starts neither. `down` / `uninstall` tear them down too. See
-[Dev-time observability](observability.md).
+URLs (`https://logs.<tld>`, `https://metrics.<tld>`). Both dashboards opt into the
+HTTP→HTTPS redirect, so `http://logs.<tld>` / `http://metrics.<tld>` auto-redirect
+to the trusted https host. Off by default: a plain `up` starts neither. `down` /
+`uninstall` tear them down too. See [Dev-time observability](observability.md).
 
 ## `proximo down`
 
@@ -163,14 +164,17 @@ Reverse everything `install` did and tear down the stack:
 proximo uninstall
 ```
 
-1. Stop the stack and remove its volumes — including, when observability was
-   used, the metrics data volume and the generated secret
-   ([Dev-time observability](observability.md)).
+1. Stop the stack (this also removes the profiled observability containers) and
+   delete the generated observability secret + env files
+   ([Dev-time observability](observability.md)). proximo uses no Docker named
+   volume, so there is nothing to volume-remove here — the data goes with the
+   home in step 4.
 2. Remove the host resolver config for the TLD (and reload the resolver on
    Linux).
 3. Remove CA trust from the NSS and system stores.
 4. Delete the `~/.proximo` state home — config, CA, the materialized stack, and
-   the bind-mounted Traefik data — so no proximo state is left on the host.
+   the bind-mounted Traefik data (plus the Beszel metrics data, if observability
+   was used) — so no proximo state is left on the host.
 
 The host is restored to its prior state.
 

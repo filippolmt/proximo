@@ -99,13 +99,15 @@ Docker-managed named volume, so a `docker volume prune` can't wipe it.
 | `~/.proximo/tls/` | the local CA certificate and key (`ca.pem`, `ca-key.pem`) |
 | `~/.proximo/stack/` | the materialized `docker compose` stack (compose file, Traefik config, a copy of the CA for the watcher) |
 | `~/.proximo/data/traefik/` | **bind-mounted** into Traefik + the watcher: the dynamic routes and per-container certificates the watcher generates |
+| `~/.proximo/data/beszel/` | **bind-mounted** into the Beszel metrics hub when observability is enabled (`up --observability`): metrics history and hub users |
 
 **Back it up** by copying the folder — `cp -a ~/.proximo ~/proximo-backup` (or
 add it to your backup set). It is the one place all proximo state lives.
 
-- **Bind mounts, not named volumes.** `data/traefik` is a host directory mounted
-  into the containers, so it is plainly visible and survives `docker volume rm` /
-  `docker volume prune`. The watcher regenerates routes and certs into it on its
+- **Bind mounts, not named volumes.** `data/traefik` (and `data/beszel` when
+  observability is enabled) are host directories mounted into the containers, so
+  they are plainly visible and survive `docker volume rm` / `docker volume
+  prune`. The watcher regenerates routes and certs into `data/traefik` on its
   first reconcile, so even an empty `data/traefik` self-heals.
 - **Linux file ownership.** The stack containers write into `data/` as root, so
   on Linux those files appear **root-owned** under your home. They are still

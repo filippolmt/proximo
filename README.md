@@ -21,7 +21,8 @@ Full guides live in [`docs/`](docs/README.md):
   watcher.
 - [Routing](docs/routing.md) — the `proximo.*` labels and Traefik compatibility.
 - [Dev-time observability](docs/observability.md) — opt-in `up --observability`
-  logs (Dozzle) + metrics (Beszel) dashboards.
+  logs (Dozzle) + metrics (Beszel) dashboards: credential-less and over trusted
+  HTTPS (`http://` auto-redirects).
 - [Troubleshooting](docs/troubleshooting.md) — common issues.
 
 ## Quick start

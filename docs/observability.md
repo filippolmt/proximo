@@ -86,6 +86,36 @@ proximo uninstall   # removes them and the generated secret, then reverses all
                     # the bind-mounted metrics data)
 ```
 
+## Logs, metrics & retention
+
+**Dozzle stores nothing.** It is a live viewer that streams container logs from
+the Docker socket — close the tab and nothing is persisted. What you can scroll
+back to is whatever the Docker daemon's log driver still holds for that
+container; there is no Dozzle-side retention to configure.
+
+**Beszel keeps metrics history** in the `~/.proximo/data/beszel` bind mount, so
+it survives `down` / `up` and is removed only by `uninstall`. Beszel
+auto-downsamples old records to coarser resolutions internally; those retention
+windows are **not configurable via environment variables** (the hub exposes none
+for it), so proximo offers no knob either. For a handful of local containers the
+on-disk footprint stays small.
+
+**Container log caps.** proximo's own stack containers use a small rotated
+`json-file` cap (`max-size: 5m`, `max-file: 3` → ~15 MB per container) so the dev
+host's logs cannot grow unbounded. **Your own containers are not covered** —
+proximo does not manage them, and Dozzle only reads them. To bound their logs set
+a daemon-wide cap in `/etc/docker/daemon.json` (size-based only; `json-file` has
+no time-based "keep N days" option) and restart Docker:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "5m", "max-file": "3" }
+}
+```
+
+…or per service in your own compose under a `logging:` key.
+
 ## Notes & limits
 
 - **Pinned images.** `amir20/dozzle`, `henrygd/beszel`, and
