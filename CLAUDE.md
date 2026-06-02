@@ -72,7 +72,9 @@ Full diagram and per-service detail: `docs/architecture.md`. Routing label contr
   capped under 398 days. No `*.<tld>` wildcard (browsers reject TLD-level wildcards).
 - **Routing is opt-in via labels:** `proximo.hosts` (comma-separated, presence opts in),
   `proximo.port` (omit when the image EXPOSEs exactly one port; ambiguous → skipped + warning),
-  `proximo.enable=false` (park). Native `traefik.*` labels still work in parallel.
+  `proximo.enable=false` (park), `proximo.redirect=true` (opt in to the HTTP→HTTPS redirect;
+  off by default — `:80` for a non-opted host 404s, it is not redirected). Native `traefik.*`
+  labels still work in parallel.
 
 ### Source map
 
