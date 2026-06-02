@@ -11,20 +11,21 @@ import (
 )
 
 // ConfigureResolver wires the host resolver so that lookups for the TLD are
-// sent to the local DNS server on 127.0.0.1:<DNSPort>.
-func ConfigureResolver(tld string) error {
+// sent to the local DNS server on 127.0.0.1:<DNSPort>. Privileged writes go
+// through the injected Runner so the install step is testable.
+func ConfigureResolver(r platform.Runner, tld string) error {
 	return platform.Dispatch(
-		func() error { return configureResolverDarwin(tld) },
-		func() error { return configureResolverLinux(tld) },
+		func() error { return configureResolverDarwin(r, tld) },
+		func() error { return configureResolverLinux(r, tld) },
 	)
 }
 
 // RemoveResolver removes the host resolver configuration created by
 // ConfigureResolver and reloads the resolver.
-func RemoveResolver(tld string) error {
+func RemoveResolver(r platform.Runner, tld string) error {
 	return platform.Dispatch(
-		func() error { return removeResolverDarwin(tld) },
-		func() error { return removeResolverLinux(tld) },
+		func() error { return removeResolverDarwin(r, tld) },
+		func() error { return removeResolverLinux(r, tld) },
 	)
 }
 
@@ -34,13 +35,13 @@ func resolverFileDarwin(tld string) string {
 	return filepath.Join("/etc/resolver", tld)
 }
 
-func configureResolverDarwin(tld string) error {
+func configureResolverDarwin(r platform.Runner, tld string) error {
 	content := fmt.Sprintf("nameserver 127.0.0.1\nport %d\n", config.DNSPort)
-	return platform.WriteFilePrivileged(resolverFileDarwin(tld), []byte(content), 0o644)
+	return r.WriteFilePrivileged(resolverFileDarwin(tld), []byte(content), 0o644)
 }
 
-func removeResolverDarwin(tld string) error {
-	return platform.RemoveFilePrivileged(resolverFileDarwin(tld))
+func removeResolverDarwin(r platform.Runner, tld string) error {
+	return r.RemoveFilePrivileged(resolverFileDarwin(tld))
 }
 
 // ---- Linux: systemd-resolved drop-in ----
@@ -51,26 +52,26 @@ func resolvedDropInPath(tld string) string {
 	return filepath.Join(resolvedDropInDir, "proximo-"+tld+".conf")
 }
 
-func configureResolverLinux(tld string) error {
+func configureResolverLinux(r platform.Runner, tld string) error {
 	if err := requireSystemdResolved(); err != nil {
 		return err
 	}
 	content := fmt.Sprintf("[Resolve]\nDNS=127.0.0.1:%d\nDomains=~%s\n", config.DNSPort, tld)
-	if err := platform.WriteFilePrivileged(resolvedDropInPath(tld), []byte(content), 0o644); err != nil {
+	if err := r.WriteFilePrivileged(resolvedDropInPath(tld), []byte(content), 0o644); err != nil {
 		return err
 	}
-	return reloadResolved()
+	return reloadResolved(r)
 }
 
-func removeResolverLinux(tld string) error {
-	if err := platform.RemoveFilePrivileged(resolvedDropInPath(tld)); err != nil {
+func removeResolverLinux(r platform.Runner, tld string) error {
+	if err := r.RemoveFilePrivileged(resolvedDropInPath(tld)); err != nil {
 		return err
 	}
-	return reloadResolved()
+	return reloadResolved(r)
 }
 
-func reloadResolved() error {
-	return platform.Sudo("systemctl", "restart", "systemd-resolved")
+func reloadResolved(r platform.Runner) error {
+	return r.Sudo("systemctl", "restart", "systemd-resolved")
 }
 
 // requireSystemdResolved aborts when systemd-resolved is not the active

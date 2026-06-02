@@ -5,6 +5,70 @@ import (
 	"testing"
 )
 
+// TestReplaceSentinels covers the pure substitution lifted out of Materialize:
+// __TLD__ and __DNSPORT__ are replaced, and content with no sentinel passes
+// through unchanged.
+func TestReplaceSentinels(t *testing.T) {
+	got := string(replaceSentinels([]byte("host: app.__TLD__\nport: __DNSPORT__\n"), "test", 5354))
+	want := "host: app.test\nport: 5354\n"
+	if got != want {
+		t.Errorf("replaceSentinels = %q, want %q", got, want)
+	}
+
+	// Both sentinels may appear more than once.
+	multi := string(replaceSentinels([]byte("__TLD__ __TLD__ __DNSPORT__"), "dev", 99))
+	if multi != "dev dev 99" {
+		t.Errorf("repeated sentinels = %q, want %q", multi, "dev dev 99")
+	}
+
+	// No sentinel: passthrough, byte-identical.
+	plain := []byte("nothing to replace here")
+	if out := replaceSentinels(plain, "test", 5354); string(out) != string(plain) {
+		t.Errorf("passthrough = %q, want %q", out, plain)
+	}
+}
+
+// recordComposer is a fake Composer that records the compose commands it is
+// asked to run, so Converge's sequencing is verifiable without Docker.
+type recordComposer struct{ cmds [][]string }
+
+func (r *recordComposer) Compose(_ string, args ...string) error {
+	r.cmds = append(r.cmds, append([]string(nil), args...))
+	return nil
+}
+
+// TestConvergeRunsCommandSequence asserts convergeWith issues exactly the
+// command sequence composeConvergeCmds produces — for an immutable tag (cache
+// reused), a mobile ref (cache busted), and Force on a tag — so execution
+// faithfully follows the pure, tested decision.
+func TestConvergeRunsCommandSequence(t *testing.T) {
+	equalCmds := func(a, b [][]string) bool {
+		return slices.EqualFunc(a, b, slices.Equal[[]string])
+	}
+	cases := []struct {
+		name  string
+		ref   string
+		force bool
+	}{
+		{"immutable tag reuses cache", "v0.1.0", false},
+		{"mobile ref busts cache", "main", false},
+		{"force on a tag busts cache", "v0.1.0", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			c := &recordComposer{}
+			if err := convergeWith(c, tc.ref, "test", "", ConvergeOpts{Force: tc.force}); err != nil {
+				t.Fatalf("convergeWith: %v", err)
+			}
+			want := composeConvergeCmds(tc.ref, tc.force)
+			if !equalCmds(c.cmds, want) {
+				t.Errorf("convergeWith ran %v, want %v", c.cmds, want)
+			}
+		})
+	}
+}
+
 func TestModuleRef(t *testing.T) {
 	cases := map[string]string{
 		// Released binaries carry a bare semver (GoReleaser drops the "v").

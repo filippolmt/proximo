@@ -7,9 +7,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/filippolmt/proximo/internal/tls"
 )
@@ -344,6 +348,178 @@ func TestSyncCertsPerContainer(t *testing.T) {
 	w.syncCerts(nil)
 	if fileExists(filepath.Join(w.dynamicDir, "proximo-tls.yml")) {
 		t.Error("tls config should be removed when nothing is routed")
+	}
+}
+
+// fakeDocker implements dockerAPI without a daemon, recording the network
+// attach/detach calls reconcile makes and serving event/error channels Run
+// consumes.
+type fakeDocker struct {
+	mu         sync.Mutex
+	containers []container.Summary
+	inspect    map[string]container.InspectResponse
+
+	connected    []string // network IDs traefik was connected to
+	disconnected []string // network IDs traefik was disconnected from
+	listN        int      // ContainerList call count
+	eventsN      int      // Events subscription count
+
+	events chan events.Message
+	errs   chan error
+}
+
+func newFakeDocker() *fakeDocker {
+	return &fakeDocker{
+		inspect: map[string]container.InspectResponse{},
+		events:  make(chan events.Message, 1),
+		errs:    make(chan error, 1),
+	}
+}
+
+func (f *fakeDocker) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listN++
+	return f.containers, nil
+}
+
+func (f *fakeDocker) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+	return f.inspect[id], nil
+}
+
+func (f *fakeDocker) NetworkConnect(_ context.Context, netID, _ string, _ *network.EndpointSettings) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.connected = append(f.connected, netID)
+	return nil
+}
+
+func (f *fakeDocker) NetworkDisconnect(_ context.Context, netID, _ string, _ bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disconnected = append(f.disconnected, netID)
+	return nil
+}
+
+func (f *fakeDocker) Events(context.Context, events.ListOptions) (<-chan events.Message, <-chan error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.eventsN++
+	return f.events, f.errs
+}
+
+func (f *fakeDocker) listCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return f.listN }
+func (f *fakeDocker) eventCount() int { f.mu.Lock(); defer f.mu.Unlock(); return f.eventsN }
+
+func netSummary(nets map[string]string) *container.NetworkSettingsSummary {
+	out := &container.NetworkSettingsSummary{Networks: map[string]*network.EndpointSettings{}}
+	for name, id := range nets {
+		out.Networks[name] = &network.EndpointSettings{NetworkID: id}
+	}
+	return out
+}
+
+// TestReconcileAttachesAndDetaches drives reconcile through the fake: Traefik
+// must join the backend network of a routed container, keep the stack network,
+// and be disconnected from a stale (no-longer-desired, non-stack) network.
+func TestReconcileAttachesAndDetaches(t *testing.T) {
+	f := newFakeDocker()
+	f.containers = []container.Summary{
+		{
+			ID:     "traefikcid",
+			Labels: map[string]string{roleLabel: "traefik"},
+			NetworkSettings: netSummary(map[string]string{
+				"proximo_default": "stacknet", // stack network: must be kept
+				"oldnet":          "oldid",    // stale: must be disconnected
+			}),
+		},
+		{
+			ID:     "appcid",
+			Names:  []string{"/app"},
+			Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
+			NetworkSettings: netSummary(map[string]string{
+				"appnet": "appid", // desired: traefik must connect
+			}),
+		},
+	}
+
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if !slices.Equal(f.connected, []string{"appid"}) {
+		t.Errorf("connected = %v, want [appid]", f.connected)
+	}
+	if !slices.Equal(f.disconnected, []string{"oldid"}) {
+		t.Errorf("disconnected = %v, want [oldid] (stack network must be kept)", f.disconnected)
+	}
+}
+
+// TestReconcileNoTraefikIsNoOp: with no traefik container running, reconcile
+// touches no networks (it cannot attach a backend to a proxy that is not up).
+func TestReconcileNoTraefik(t *testing.T) {
+	f := newFakeDocker()
+	f.containers = []container.Summary{
+		{ID: "appcid", Names: []string{"/app"}, Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
+			NetworkSettings: netSummary(map[string]string{"appnet": "appid"})},
+	}
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(f.connected) != 0 || len(f.disconnected) != 0 {
+		t.Errorf("no traefik should touch no networks; connected=%v disconnected=%v", f.connected, f.disconnected)
+	}
+}
+
+// TestRunReconcilesOnEventAndStops: Run reconciles once on start, again on a
+// Docker event, and returns ctx.Err() when the context is cancelled.
+func TestRunReconcilesOnEventAndStops(t *testing.T) {
+	f := newFakeDocker()
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	f.events <- events.Message{} // trigger a reconcile beyond the initial one
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned %v, want context.Canceled", err)
+	}
+	if got := f.listCount(); got < 2 {
+		t.Errorf("ContainerList called %d times, want >= 2 (initial + event)", got)
+	}
+}
+
+// TestRunReconnectsAfterEventError: an error on the event stream makes Run
+// re-subscribe (after its backoff) rather than exit, then it still stops on
+// ctx cancel.
+func TestRunReconnectsAfterEventError(t *testing.T) {
+	f := newFakeDocker()
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	f.errs <- errors.New("stream broke") // Run logs, backs off, re-subscribes
+
+	deadline := time.After(5 * time.Second)
+	for f.eventCount() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("Run did not re-subscribe to Events after a stream error")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned %v, want context.Canceled", err)
 	}
 }
 

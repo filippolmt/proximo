@@ -18,7 +18,6 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/filippolmt/proximo/internal/tls"
 )
@@ -67,11 +66,24 @@ type routedContainer struct {
 	proximo bool     // true when routed via proximo.hosts (generate dynamic config)
 }
 
+// dockerAPI is the narrow slice of the Docker client the watcher depends on —
+// exactly the methods reconcile and Run call. *client.Client satisfies it
+// unchanged, so production passes the real client (built by newClient) and
+// tests pass a fake. It mirrors the existing inspector seam: a minimal
+// interface, not the whole SDK surface.
+type dockerAPI interface {
+	ContainerList(context.Context, container.ListOptions) ([]container.Summary, error)
+	ContainerInspect(context.Context, string) (container.InspectResponse, error)
+	NetworkConnect(context.Context, string, string, *network.EndpointSettings) error
+	NetworkDisconnect(context.Context, string, string, bool) error
+	Events(context.Context, events.ListOptions) (<-chan events.Message, <-chan error)
+}
+
 // Watcher keeps Traefik attached to the Docker networks of routed containers and
 // issues a CA-signed certificate per container, written to Traefik's
 // file-provider directory.
 type Watcher struct {
-	cli        *client.Client
+	cli        dockerAPI
 	caCert     *x509.Certificate
 	caKey      *ecdsa.PrivateKey
 	dynamicDir string

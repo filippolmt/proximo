@@ -10,7 +10,9 @@ import (
 
 // InstallNSSTrust adds the local CA to the NSS trust databases used by Firefox
 // and Chrome-on-Linux. When certutil is missing it installs nss-tools first.
-func InstallNSSTrust() error {
+// certutil invocations go through the injected Runner; certutil discovery and
+// bootstrap stay on the package helpers.
+func InstallNSSTrust(r platform.Runner) error {
 	if err := ensureCertutil(); err != nil {
 		return err
 	}
@@ -25,8 +27,8 @@ func InstallNSSTrust() error {
 	}
 	for _, db := range dbs {
 		// Remove any stale entry first so re-runs stay idempotent.
-		_ = platform.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
-		if err := platform.Run("certutil", "-A", "-d", "sql:"+db,
+		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
+		if err := r.Run("certutil", "-A", "-d", "sql:"+db,
 			"-t", "C,,", "-n", caCommonName, "-i", caPath); err != nil {
 			fmt.Fprintf(os.Stderr, "proximo: warning: could not add CA to NSS db %s: %v\n", db, err)
 		}
@@ -35,12 +37,12 @@ func InstallNSSTrust() error {
 }
 
 // RemoveNSSTrust removes the local CA from all discovered NSS databases.
-func RemoveNSSTrust() error {
+func RemoveNSSTrust(r platform.Runner) error {
 	if !platform.Has("certutil") {
 		return nil
 	}
 	for _, db := range nssDatabases() {
-		_ = platform.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
+		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
 	}
 	return nil
 }

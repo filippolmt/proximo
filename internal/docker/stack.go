@@ -59,12 +59,7 @@ func Materialize(tld, certDir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		if sentinel := []byte(tldSentinel); bytes.Contains(data, sentinel) {
-			data = bytes.ReplaceAll(data, sentinel, []byte(tld))
-		}
-		if sentinel := []byte(dnsPortSentinel); bytes.Contains(data, sentinel) {
-			data = bytes.ReplaceAll(data, sentinel, []byte(strconv.Itoa(config.DNSPort)))
-		}
+		data = replaceSentinels(data, tld, config.DNSPort)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
@@ -83,6 +78,20 @@ func Materialize(tld, certDir string) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// replaceSentinels substitutes the materialization sentinels (__TLD__ and
+// __DNSPORT__) in an embedded asset. It is pure so the substitution can be unit
+// tested directly; the Materialize WalkDir closure calls it per file. Data with
+// no sentinel is returned unchanged.
+func replaceSentinels(data []byte, tld string, dnsPort int) []byte {
+	if sentinel := []byte(tldSentinel); bytes.Contains(data, sentinel) {
+		data = bytes.ReplaceAll(data, sentinel, []byte(tld))
+	}
+	if sentinel := []byte(dnsPortSentinel); bytes.Contains(data, sentinel) {
+		data = bytes.ReplaceAll(data, sentinel, []byte(strconv.Itoa(dnsPort)))
+	}
+	return data
 }
 
 // devDockerfile is the local-source build file at the PROXIMO_SRC repo root.
@@ -182,6 +191,27 @@ func compose(stackDir string, args ...string) error {
 	return cmd.Run()
 }
 
+// Composer runs a docker compose subcommand in a materialized stack directory.
+// The production adapter (execComposer) shells out via compose(); tests pass a
+// fake that records the commands so Converge's sequencing is verifiable without
+// Docker. Only execution is bound — composeConvergeCmds stays the pure, tested
+// source of the command sequence.
+type Composer interface {
+	Compose(stackDir string, args ...string) error
+}
+
+// execComposer is the production Composer: it runs `docker compose` with the
+// working directory and inherited stdio that compose() configures.
+type execComposer struct{}
+
+func (execComposer) Compose(stackDir string, args ...string) error {
+	return compose(stackDir, args...)
+}
+
+// defaultComposer is the Composer used by the exported bring-up/teardown
+// entrypoints. Tests drive the unexported variants with a fake instead.
+var defaultComposer Composer = execComposer{}
+
 // ConvergeOpts tunes how Converge rebuilds the stack.
 type ConvergeOpts struct {
 	// Force rebuilds the in-stack images without the build cache, regardless of
@@ -196,12 +226,20 @@ type ConvergeOpts struct {
 // picks up security patches); a mobile ref or Force prepends a --no-cache
 // rebuild of the buildable services to defeat a stale `go install @<ref>` layer.
 func Converge(tld, certDir string, opts ConvergeOpts) error {
+	return convergeWith(defaultComposer, moduleRef(version.Version), tld, certDir, opts)
+}
+
+// convergeWith is Converge with the Composer and module ref injected, so a fake
+// composer can assert the issued command sequence for mobile/immutable refs and
+// Force without Docker. Converge wires the production composer and the build
+// version's ref.
+func convergeWith(c Composer, ref, tld, certDir string, opts ConvergeOpts) error {
 	dir, err := Materialize(tld, certDir)
 	if err != nil {
 		return err
 	}
-	for _, args := range composeConvergeCmds(moduleRef(version.Version), opts.Force) {
-		if err := compose(dir, args...); err != nil {
+	for _, args := range composeConvergeCmds(ref, opts.Force) {
+		if err := c.Compose(dir, args...); err != nil {
 			return err
 		}
 	}
@@ -252,5 +290,5 @@ func Down() error {
 		// Nothing materialized; nothing to tear down.
 		return nil
 	}
-	return compose(dir, "down")
+	return defaultComposer.Compose(dir, "down")
 }
