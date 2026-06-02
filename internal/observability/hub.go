@@ -156,11 +156,11 @@ func (c *HubClient) PublicKey(ctx context.Context, authToken string) (string, er
 // current token, then enables it (idempotent — re-enabling the same token is a
 // no-op), mirroring the documented read-then-enable dance.
 func (c *HubClient) UniversalToken(ctx context.Context, authToken string) (string, error) {
-	current, _, err := c.universalToken(ctx, authToken, nil)
+	current, err := c.universalToken(ctx, authToken, nil)
 	if err != nil {
 		return "", err
 	}
-	token, _, err := c.universalToken(ctx, authToken, url.Values{
+	token, err := c.universalToken(ctx, authToken, url.Values{
 		"token":  {current},
 		"enable": {"1"},
 	})
@@ -176,24 +176,23 @@ func (c *HubClient) UniversalToken(ctx context.Context, authToken string) (strin
 	return token, nil
 }
 
-func (c *HubClient) universalToken(ctx context.Context, authToken string, q url.Values) (string, bool, error) {
+func (c *HubClient) universalToken(ctx context.Context, authToken string, q url.Values) (string, error) {
 	u := c.BaseURL + "/api/beszel/universal-token"
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	req.Header.Set("Authorization", authToken)
 	var out struct {
-		Token  string `json:"token"`
-		Active bool   `json:"active"`
+		Token string `json:"token"`
 	}
 	if err := c.do(req, &out); err != nil {
-		return "", false, err
+		return "", err
 	}
-	return out.Token, out.Active, nil
+	return out.Token, nil
 }
 
 // do executes req and decodes a JSON response into v, treating non-2xx as an

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/filippolmt/proximo/internal/config"
+	"github.com/filippolmt/proximo/internal/observability"
 	"github.com/filippolmt/proximo/internal/version"
 )
 
@@ -117,20 +118,17 @@ func Materialize(tld, certDir string) (string, error) {
 // observability.Email); only the generated password is injected at runtime via
 // the 0600 beszel-hub.env file.
 func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []byte {
-	if sentinel := []byte(tldSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(tld))
-	}
-	if sentinel := []byte(dnsPortSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(strconv.Itoa(dnsPort)))
-	}
-	if sentinel := []byte(dataDirSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(dataDir))
-	}
-	if sentinel := []byte(obsEmailSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte("proximo@"+tld))
-	}
-	if sentinel := []byte(obsHubPortSentinel); bytes.Contains(data, sentinel) {
-		data = bytes.ReplaceAll(data, sentinel, []byte(strconv.Itoa(config.ObsHubPort)))
+	for _, s := range []struct{ sentinel, value string }{
+		{tldSentinel, tld},
+		{dnsPortSentinel, strconv.Itoa(dnsPort)},
+		{dataDirSentinel, dataDir},
+		{obsEmailSentinel, observability.Email(tld)},
+		{obsHubPortSentinel, strconv.Itoa(config.ObsHubPort)},
+	} {
+		// Guard the substitution so an absent sentinel skips ReplaceAll's copy.
+		if needle := []byte(s.sentinel); bytes.Contains(data, needle) {
+			data = bytes.ReplaceAll(data, needle, []byte(s.value))
+		}
 	}
 	return data
 }
