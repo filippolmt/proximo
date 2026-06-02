@@ -99,3 +99,7 @@ to be published. The Make lifecycle targets above pass `PROXIMO_SRC=$(pwd)`
 automatically, so those images build **from local source** (no push, no module
 fetch) via a generated `docker-compose.override.yml`. Run the binary directly
 without `PROXIMO_SRC` to use the published images instead.
+
+## License
+
+[MIT](LICENSE) — free to use, modify, and distribute.
