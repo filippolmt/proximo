@@ -83,7 +83,7 @@ type Watcher struct {
 // NewWatcher creates a Watcher from the Docker environment and loads the CA (for
 // issuing per-host certificates) from the mounted paths.
 func NewWatcher() (*Watcher, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := newClient()
 	if err != nil {
 		return nil, err
 	}
