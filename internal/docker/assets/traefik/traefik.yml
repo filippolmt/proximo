@@ -6,13 +6,12 @@ log:
   level: INFO
 
 entryPoints:
+  # HTTP listens on :80 but does not redirect by default. A container opts in to
+  # an HTTP->HTTPS redirect per host with the proximo.redirect label; the watcher
+  # then writes a web-entrypoint router + redirectScheme middleware for it. A host
+  # that has not opted in gets no web router (Traefik 404s its :80 requests).
   web:
     address: ":80"
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
   websecure:
     address: ":443"
     http:

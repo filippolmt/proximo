@@ -39,6 +39,9 @@ const (
 	proximoPortLabel = "proximo.port"
 	// proximoEnableLabel is the opt-out switch; defaults to true.
 	proximoEnableLabel = "proximo.enable"
+	// proximoRedirectLabel opts a routed container in to an HTTP->HTTPS redirect
+	// for its hosts; defaults to false (truthy: true/1/yes, case-insensitive).
+	proximoRedirectLabel = "proximo.redirect"
 
 	// routerFilePrefix prefixes the per-container Traefik dynamic config files
 	// the watcher writes into the file-provider directory.
@@ -58,12 +61,13 @@ var unsafeNameRe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
 // routedContainer is the per-container routing model built during reconcile.
 type routedContainer struct {
-	name    string   // primary container name (used as the backend DNS name)
-	id      string   // container ID (for collision disambiguation)
-	safe    string   // sanitized name used for filenames / router ids
-	hosts   []string // routed hostnames
-	port    int      // resolved backend port (proximo path only)
-	proximo bool     // true when routed via proximo.hosts (generate dynamic config)
+	name     string   // primary container name (used as the backend DNS name)
+	id       string   // container ID (for collision disambiguation)
+	safe     string   // sanitized name used for filenames / router ids
+	hosts    []string // routed hostnames
+	port     int      // resolved backend port (proximo path only)
+	proximo  bool     // true when routed via proximo.hosts (generate dynamic config)
+	redirect bool     // true when proximo.redirect opts in to an HTTP->HTTPS redirect
 }
 
 // dockerAPI is the narrow slice of the Docker client the watcher depends on —
@@ -240,7 +244,7 @@ type portResult struct {
 func classify(ctx context.Context, inspect inspector, c container.Summary) (routedContainer, bool, classifyInfo) {
 	hosts, proximo, invalid := classifyHosts(c.Labels)
 	info := classifyInfo{invalidHosts: invalid}
-	rc := routedContainer{name: primaryName(c), id: c.ID, hosts: hosts, proximo: proximo}
+	rc := routedContainer{name: primaryName(c), id: c.ID, hosts: hosts, proximo: proximo, redirect: isProximoRedirect(c.Labels)}
 	if len(hosts) == 0 {
 		return rc, false, info
 	}
@@ -381,7 +385,10 @@ func (w *Watcher) syncDynamic(routed []routedContainer) {
 
 // renderRouter renders the Traefik dynamic config (HTTP router + service) for a
 // single proximo-routed container. Hosts are validated to a hostname charset
-// before reaching here, so templating them into the rule is safe.
+// before reaching here, so templating them into the rule is safe. When rc.redirect
+// is set it additionally emits a web-entrypoint router (same Host rule) attached
+// to a redirectScheme middleware, so http://<host> 302-redirects to https://; the
+// middleware rides this same file, so it is cleaned up with the rest of the config.
 func renderRouter(rc routedContainer) []byte {
 	id := "proximo-" + rc.safe
 	rules := make([]string, 0, len(rc.hosts))
@@ -399,6 +406,24 @@ func renderRouter(rc routedContainer) []byte {
 	fmt.Fprintf(&b, "      rule: %q\n", rule)
 	fmt.Fprintf(&b, "      service: %s\n", id)
 	b.WriteString("      tls: {}\n")
+	if rc.redirect {
+		// HTTP router on :80 for the same hosts plus the redirectScheme
+		// middleware it references — emitted together so both ride this file and
+		// are cleaned up together. middlewares: is a sibling of routers:/services:
+		// under http:, so writing it here (before services) is order-free.
+		redirectID := id + "-redirect"
+		fmt.Fprintf(&b, "    %s:\n", redirectID)
+		b.WriteString("      entryPoints:\n        - web\n")
+		fmt.Fprintf(&b, "      rule: %q\n", rule)
+		fmt.Fprintf(&b, "      service: %s\n", id)
+		b.WriteString("      middlewares:\n")
+		fmt.Fprintf(&b, "        - %s\n", redirectID)
+		b.WriteString("  middlewares:\n")
+		fmt.Fprintf(&b, "    %s:\n", redirectID)
+		b.WriteString("      redirectScheme:\n")
+		b.WriteString("        scheme: https\n")
+		b.WriteString("        permanent: false\n")
+	}
 	b.WriteString("  services:\n")
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      loadBalancer:\n")
@@ -597,6 +622,18 @@ func isProximoEnabled(labels map[string]string) bool {
 		return false
 	}
 	return true
+}
+
+// isProximoRedirect reports whether a container opted in to an HTTP->HTTPS
+// redirect for its hosts. It defaults to false and is enabled only by an
+// explicit truthy proximo.redirect value (true/1/yes, case-insensitive) —
+// mirroring isProximoEnabled with the inverted default.
+func isProximoRedirect(labels map[string]string) bool {
+	switch strings.ToLower(strings.TrimSpace(labels[proximoRedirectLabel])) {
+	case "true", "1", "yes":
+		return true
+	}
+	return false
 }
 
 // hostsFromLabels extracts the Host(...) values from a container's Traefik

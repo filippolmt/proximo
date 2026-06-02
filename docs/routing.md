@@ -13,6 +13,7 @@ keep working for advanced cases.
 | `proximo.hosts` | **yes** | — | Comma-separated hostname(s) under the configured TLD. **Its presence opts the container in.** |
 | `proximo.port` | no | auto-detected | Backend port. Omit when the image `EXPOSE`s exactly one port. |
 | `proximo.enable` | no | `true` | Opt-out switch. Set to `false`/`0`/`no` to park the container. |
+| `proximo.redirect` | no | `false` | Opt in to an HTTP→HTTPS redirect for the container's hosts. Truthy: `true`/`1`/`yes`. |
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
 single port:
@@ -80,6 +81,32 @@ labels:
 Falsy values are `false`, `0`, `no` (case-insensitive). Anything else (or
 absence) means enabled.
 
+## `proximo.redirect` — opt in to the HTTP→HTTPS redirect
+
+Defaults to `false`. By default a routed container is served on HTTPS only:
+`https://<host>` routes, while a plain `http://<host>` request is **not**
+redirected and **not** served — Traefik returns 404 on `:80` for that host
+(the proxy still listens on `:80`, it just has no router for the host). Opt in
+per container to redirect HTTP to HTTPS:
+
+```yaml
+labels:
+  - "proximo.hosts=app.test"
+  - "proximo.redirect=true"   # http://app.test -> https://app.test (302)
+```
+
+Truthy values are `true`, `1`, `yes` (case-insensitive); anything else (or
+absence) leaves the redirect off. When enabled, the watcher writes an extra
+`web`-entrypoint router with a `redirectScheme` middleware for the container's
+hosts; the redirect is a 302 (non-permanent) so removing the label later is not
+sticky in browser caches. The HTTPS router is unchanged.
+
+> **BREAKING (behavior change).** Earlier versions redirected **every** host
+> from HTTP to HTTPS globally. That global redirect is gone — the redirect is now
+> opt-in per container. A host that relied on the automatic redirect must add
+> `proximo.redirect=true` to keep it; the one-line fix is the label above. This
+> takes effect on the next `proximo update`/`up`.
+
 ## What happens behind the scenes
 
 For each routed container the watcher:
@@ -142,6 +169,10 @@ labels:
 # Temporarily parked
 - "proximo.hosts=app.test"
 - "proximo.enable=false"
+
+# Opt in to the HTTP->HTTPS redirect (off by default)
+- "proximo.hosts=app.test"
+- "proximo.redirect=true"
 
 # Advanced: native Traefik labels
 - "traefik.enable=true"

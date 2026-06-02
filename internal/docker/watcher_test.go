@@ -72,6 +72,24 @@ func TestIsProximoEnabled(t *testing.T) {
 	}
 }
 
+// TestIsProximoRedirect: the redirect label is off by default and on only for
+// the truthy set (true/1/yes, case-insensitive); falsy and garbage stay off —
+// the inverted default of proximo.enable (4.1).
+func TestIsProximoRedirect(t *testing.T) {
+	on := []string{"true", "TRUE", "1", "yes", " Yes "}
+	for _, v := range on {
+		if !isProximoRedirect(map[string]string{proximoRedirectLabel: v}) {
+			t.Errorf("proximo.redirect=%q should enable the redirect", v)
+		}
+	}
+	off := []string{"", "false", "FALSE", "0", "no", "anything", "garbage"}
+	for _, v := range off {
+		if isProximoRedirect(map[string]string{proximoRedirectLabel: v}) {
+			t.Errorf("proximo.redirect=%q should not enable the redirect", v)
+		}
+	}
+}
+
 func TestIsRoutedProximo(t *testing.T) {
 	if !isRouted(makeSummary(map[string]string{proximoHostsLabel: "web.test"})) {
 		t.Error("proximo.hosts alone should route")
@@ -273,6 +291,56 @@ func TestRenderRouter(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("renderRouter output missing %q\n---\n%s", w, out)
 		}
+	}
+}
+
+// TestRenderRouterRedirect: with redirect off, renderRouter emits only the
+// websecure router (no web entrypoint, no middleware); with redirect on it adds
+// a web router + redirectScheme middleware sharing the same Host rule (4.2).
+func TestRenderRouterRedirect(t *testing.T) {
+	base := routedContainer{name: "whoami", safe: "whoami", hosts: []string{"app.test"}, port: 80, proximo: true}
+
+	off := string(renderRouter(base))
+	for _, unwanted := range []string{"- web\n", "middlewares:", "redirectScheme"} {
+		if strings.Contains(off, unwanted) {
+			t.Errorf("redirect off should not emit %q\n---\n%s", unwanted, off)
+		}
+	}
+
+	on := base
+	on.redirect = true
+	out := string(renderRouter(on))
+	wants := []string{
+		"proximo-whoami-redirect:",
+		"        - web\n",
+		"redirectScheme:",
+		"scheme: https",
+		"permanent: false",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("redirect on missing %q\n---\n%s", w, out)
+		}
+	}
+	// The web router reuses the websecure router's Host rule (one per router).
+	if n := strings.Count(out, "Host(`app.test`)"); n != 2 {
+		t.Errorf("redirect router should share the websecure Host rule, got %d occurrences\n%s", n, out)
+	}
+}
+
+// TestTraefikNoGlobalRedirect: the embedded (materialized) traefik.yml keeps the
+// web entrypoint on :80 but configures no global http.redirections (4.3).
+func TestTraefikNoGlobalRedirect(t *testing.T) {
+	data, err := assets.ReadFile("assets/traefik/traefik.yml")
+	if err != nil {
+		t.Fatalf("read embedded traefik.yml: %v", err)
+	}
+	yaml := string(data)
+	if strings.Contains(yaml, "redirections") {
+		t.Errorf("traefik.yml must not configure a global http.redirections:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "web:") || !strings.Contains(yaml, ":80") {
+		t.Errorf("traefik.yml should keep the web entrypoint on :80:\n%s", yaml)
 	}
 }
 
