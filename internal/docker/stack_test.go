@@ -304,6 +304,56 @@ func TestStackLogCaps(t *testing.T) {
 	}
 }
 
+// TestDownTearsDownEverything asserts a plain `down` enables the observability
+// profile and removes orphans, so profile-gated dashboards are torn down with
+// the core stack (a bare `docker compose down` leaves them running).
+func TestDownTearsDownEverything(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := Materialize("test", ""); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	c := &recordComposer{}
+	if err := downWith(c); err != nil {
+		t.Fatalf("downWith: %v", err)
+	}
+	if len(c.cmds) != 1 {
+		t.Fatalf("ran %d commands, want 1: %v", len(c.cmds), c.cmds)
+	}
+	for _, want := range []string{"--profile", observabilityProfile, "down", "--remove-orphans"} {
+		if !slices.Contains(c.cmds[0], want) {
+			t.Errorf("down cmd missing %q: %v", want, c.cmds[0])
+		}
+	}
+}
+
+// TestDownObservabilityScoped asserts `down --observability` removes only the
+// observability services (stop + force-remove) and never runs a project-wide
+// down that would stop the core stack.
+func TestDownObservabilityScoped(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := Materialize("test", ""); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	c := &recordComposer{}
+	if err := downObservabilityWith(c); err != nil {
+		t.Fatalf("downObservabilityWith: %v", err)
+	}
+	if len(c.cmds) != 1 {
+		t.Fatalf("ran %d commands, want 1: %v", len(c.cmds), c.cmds)
+	}
+	got := c.cmds[0]
+	for _, want := range []string{"--profile", observabilityProfile, "rm", svcDozzle, svcBeszel, svcBeszelAgent} {
+		if !slices.Contains(got, want) {
+			t.Errorf("down --observability cmd missing %q: %v", want, got)
+		}
+	}
+	if slices.Contains(got, "down") {
+		t.Errorf("scoped observability teardown must not run a project-wide down: %v", got)
+	}
+}
+
 func TestVersionSkew(t *testing.T) {
 	if w := VersionSkew("v0.1.0", "v0.1.0"); w != "" {
 		t.Errorf("aligned versions = %q, want empty", w)

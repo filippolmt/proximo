@@ -81,10 +81,11 @@ repeat runs.
 ## Tear it down
 
 ```sh
-proximo down        # stops the observability containers with the core stack
-proximo uninstall   # removes them and the generated secret, then reverses all
-                    # host changes and deletes the ~/.proximo home (which holds
-                    # the bind-mounted metrics data)
+proximo down                  # stops the whole stack (core + dashboards)
+proximo down --observability  # stops only the dashboards, leaves the core up
+proximo uninstall             # removes everything and the generated secret, then
+                              # reverses all host changes and deletes the
+                              # ~/.proximo home (which holds the metrics data)
 ```
 
 ## Logs, metrics & retention

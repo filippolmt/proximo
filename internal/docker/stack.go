@@ -375,10 +375,18 @@ func composeConvergeCmds(ref string, force bool) [][]string {
 	return cmds
 }
 
-// Down stops and removes the stack without touching host configuration.
-// `docker compose down` removes every container in the project, including any
-// profiled observability services, so it tears those down too when running.
+// Down stops and removes the whole stack — core services plus the opt-in
+// observability dashboards — without touching host configuration. A plain
+// `docker compose down` leaves profile-gated services running, so the
+// observability profile must be enabled (and --remove-orphans added) for the
+// dashboards to be torn down together with the core stack.
 func Down() error {
+	return downWith(defaultComposer)
+}
+
+// downWith is Down with the Composer injected so a fake can assert the issued
+// teardown command without Docker.
+func downWith(c Composer) error {
 	dir, err := StackDir()
 	if err != nil {
 		return err
@@ -387,5 +395,28 @@ func Down() error {
 		// Nothing materialized; nothing to tear down.
 		return nil
 	}
-	return defaultComposer.Compose(dir, "down")
+	return c.Compose(dir, "--profile", observabilityProfile, "down", "--remove-orphans")
+}
+
+// DownObservability stops and removes only the opt-in observability services,
+// leaving the core stack running. It is the scoped counterpart to Down behind
+// `proximo down --observability`.
+func DownObservability() error {
+	return downObservabilityWith(defaultComposer)
+}
+
+// downObservabilityWith is DownObservability with the Composer injected for
+// testing. `rm -s -f` stops then force-removes just the observability services;
+// the profile flag is required to address the profile-gated services.
+func downObservabilityWith(c Composer) error {
+	dir, err := StackDir()
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "docker-compose.yml")); statErr != nil {
+		// Nothing materialized; nothing to tear down.
+		return nil
+	}
+	return c.Compose(dir, "--profile", observabilityProfile, "rm", "-s", "-f",
+		svcDozzle, svcBeszel, svcBeszelAgent)
 }

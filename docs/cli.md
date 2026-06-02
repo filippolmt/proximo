@@ -69,14 +69,25 @@ to the trusted https host. Off by default: a plain `up` starts neither. `down` /
 
 ## `proximo down`
 
-Stop and remove the stack containers. Host configuration (resolver, trust) is
-left untouched, so a later `up` brings everything back.
+Stop and remove the stack containers — the core services **and** the opt-in
+observability dashboards (the profile is enabled on teardown, so they do not
+linger). Host configuration (resolver, trust) is left untouched, so a later `up`
+brings everything back.
 
 ```sh
 proximo down
 ```
 
 A no-op if the stack was never materialized.
+
+### `--observability`
+
+Stop **only** the observability dashboards (Dozzle + Beszel), leaving the core
+stack running:
+
+```sh
+proximo down --observability
+```
 
 ## `proximo update`
 

@@ -81,11 +81,19 @@ func upObservability(cmd *cobra.Command, tld, certDir string) error {
 }
 
 func newDownCmd() *cobra.Command {
-	return &cobra.Command{
+	var obsOnly bool
+	cmd := &cobra.Command{
 		Use:   "down",
 		Short: "Stop the proximo stack (no host-config changes)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if obsOnly {
+				if err := docker.DownObservability(); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "Observability dashboards stopped (core stack left running).")
+				return nil
+			}
 			if err := docker.Down(); err != nil {
 				return err
 			}
@@ -93,4 +101,7 @@ func newDownCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&obsOnly, "observability", false,
+		"Stop only the observability dashboards, leaving the core stack running")
+	return cmd
 }
