@@ -3,7 +3,7 @@ name: proximo
 services:
   traefik:
     # v3.6+ negotiates a Docker API version supported by Engine 28/29.
-    image: traefik:v3.6
+    image: traefik:v3.7
     restart: unless-stopped
     command:
       - --configfile=/etc/traefik/traefik.yml

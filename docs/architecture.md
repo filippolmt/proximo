@@ -53,7 +53,7 @@ substituted in.
 
 | Service | Image / build | Role |
 | --- | --- | --- |
-| **traefik** | `traefik:v3.6` | Reverse proxy. Terminates HTTPS on `:443`, redirects `:80` → `:443`, routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. |
+| **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, redirects `:80` → `:443`, routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. |
 | **dns** | built from this repo | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
 | **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik to backend networks. Mounts the Docker socket and the CA. |
 
