@@ -1,10 +1,22 @@
 name: proximo
 
+# Small, rotated log caps for every stack container (json-file, so Dozzle can
+# still read them). Dozzle and Beszel store no logs of their own — this only
+# bounds each container's stdout/stderr that the Docker daemon retains. Your own
+# containers are NOT covered (proximo does not manage them); cap those with the
+# daemon-wide log-opts described in docs/observability.md.
+x-logging: &proximo-logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "3"
+
 services:
   traefik:
     # v3.6+ negotiates a Docker API version supported by Engine 28/29.
     image: traefik:v3.7
     restart: unless-stopped
+    logging: *proximo-logging
     command:
       - --configfile=/etc/traefik/traefik.yml
     ports:
@@ -25,6 +37,7 @@ services:
       args:
         PROXIMO_REF: ${PROXIMO_REF:-latest}
     restart: unless-stopped
+    logging: *proximo-logging
     environment:
       PROXIMO_TLD: ${PROXIMO_TLD:-test}
       PROXIMO_DNS_ADDR: ":5353"
@@ -41,6 +54,7 @@ services:
       args:
         PROXIMO_REF: ${PROXIMO_REF:-latest}
     restart: unless-stopped
+    logging: *proximo-logging
     environment:
       PROXIMO_CA_CERT: /ca/ca.pem
       PROXIMO_CA_KEY: /ca/ca-key.pem
@@ -64,6 +78,7 @@ services:
     image: amir20/dozzle:v10.6.4
     profiles: [observability]
     restart: unless-stopped
+    logging: *proximo-logging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
@@ -81,6 +96,7 @@ services:
     image: henrygd/beszel:0.18.7
     profiles: [observability]
     restart: unless-stopped
+    logging: *proximo-logging
     environment:
       # Non-secret, deterministic from the TLD (substituted at materialize time).
       # Seeds the first user and auto-authenticates it so the dashboard opens
@@ -113,6 +129,7 @@ services:
     image: henrygd/beszel-agent:0.18.7
     profiles: [observability]
     restart: unless-stopped
+    logging: *proximo-logging
     env_file:
       - path: ./beszel-agent.env
         required: false

@@ -282,6 +282,28 @@ func TestObservabilityConvergeSequence(t *testing.T) {
 	}
 }
 
+// TestStackLogCaps asserts every stack container gets a small, rotated
+// json-file log cap via the shared x-logging anchor, so container stdout/stderr
+// the daemon retains cannot grow unbounded on the dev host.
+func TestStackLogCaps(t *testing.T) {
+	raw, err := assets.ReadFile("assets/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read embedded compose: %v", err)
+	}
+	compose := string(raw)
+	for _, want := range []string{
+		"x-logging: &proximo-logging",
+		"driver: json-file",
+		`max-size: "5m"`,
+		`max-file: "3"`,
+		"logging: *proximo-logging",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("compose missing log-cap config %q", want)
+		}
+	}
+}
+
 func TestVersionSkew(t *testing.T) {
 	if w := VersionSkew("v0.1.0", "v0.1.0"); w != "" {
 		t.Errorf("aligned versions = %q, want empty", w)
