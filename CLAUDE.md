@@ -47,14 +47,16 @@ make e2e        # install + whoami demo + open https://whoami.test
 Full diagram and per-service detail: `docs/architecture.md`. Routing label contract: `docs/routing.md`.
 
 - **The CLI is a one-shot orchestrator — there is no proximo daemon.** Each command
-  (`install`/`up`/`down`/`config tld`/`uninstall`) performs its action and exits. The only
+  (`install`/`up`/`down`/`update`/`config tld`/`uninstall`) performs its action and exits. The only
   long-running processes are the **stack containers**.
 - **The stack is a `docker compose` project embedded in the binary** via `//go:embed`
   (`internal/docker/assets/`: `docker-compose.yml`, `traefik/`, `dns.Dockerfile`,
   `watcher.Dockerfile`). On `install`/`up` it is *materialized* to the per-user config dir
   (`os.UserConfigDir()/proximo/stack/`) with the TLD (`__TLD__`) and DNS port (`__DNSPORT__`)
-  sentinels substituted, then `docker compose up -d --build`. **Editing an embedded asset has
-  no effect until the binary is rebuilt AND the stack re-materialized (re-`install`/`up`).**
+  sentinels substituted, then brought up via the shared `docker.Converge()`
+  (`docker compose up -d --build --pull always`, plus a `--no-cache` rebuild for mobile refs).
+  **Editing an embedded asset has no effect until the binary is rebuilt AND the stack
+  re-materialized (re-`install`/`up`/`update`).**
 - **Three stack services:** `traefik` (HTTPS on :443, routes by `Host`, two providers: Docker
   labels + file provider on `/etc/traefik/dynamic`), `dns` (miekg/dns wildcard: `*.<tld>` →
   `127.0.0.1`, published on `127.0.0.1:5354/udp`), `watcher` (the reconcile loop). They share a

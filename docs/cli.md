@@ -50,6 +50,10 @@ Requires that the Docker daemon is reachable. If you run `up` before `install`,
 the CA may not exist yet — the watcher then runs without issuing certificates
 until you `install`.
 
+`up` shares the convergence path with [`update`](#proximo-update), so it also
+applies any pending update — rebuilding the in-stack images at the installed CLI
+version and re-pulling Traefik. See [Updating](updating.md).
+
 ## `proximo down`
 
 Stop and remove the stack containers. Host configuration (resolver, trust) is
@@ -119,7 +123,7 @@ When the running stack version differs from the installed CLI, `status` prints a
 read-only **skew warning** recommending `proximo update` (it never rebuilds):
 
 ```
-⚠ stack is running v0.1.0 but the CLI is v0.2.0; run `proximo update` to converge
+⚠ stack is running 0.1.0 but the CLI is 0.2.0; run `proximo update` to converge
 ```
 
 ## `proximo config tld`

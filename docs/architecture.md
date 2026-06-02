@@ -41,6 +41,8 @@ and exits:
 
 - `install` → generate CA, configure resolver, install trust, `compose up`.
 - `up` / `down` → start / stop the stack.
+- `update` → converge the running stack to the installed CLI version (rebuild
+  the in-stack images, re-pull Traefik); a soft no-op when Docker/stack is down.
 - `config tld` → rewrite the resolver and restart the stack.
 - `uninstall` → reverse all host changes, `compose down`.
 
