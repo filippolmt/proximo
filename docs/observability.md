@@ -58,8 +58,9 @@ to type**:
 
 - **Dozzle** runs with authentication disabled.
 - **Beszel** is built on PocketBase and cannot fully disable auth, so proximo
-  seeds a fixed local user (`proximo@<tld>`) and enables **auto-login**, landing
-  you straight in the dashboard.
+  seeds a fixed local user (`proximo@proximo.<tld>` — a dotted domain PocketBase's
+  email validation accepts) and enables **auto-login**, landing you straight in
+  the dashboard.
 
 > Dozzle has the Docker socket mounted, so it *can* exec into / stop containers.
 > That is accepted for a local dev box.

@@ -43,9 +43,13 @@ func HubURL() string {
 
 // Email returns the fixed, non-secret hub user email for a TLD. It is
 // deterministic so it can also be substituted into the compose file as a
-// sentinel without persisting anything.
+// sentinel without persisting anything. The domain is dotted
+// (proximo.<tld>) on purpose: Beszel/PocketBase validates USER_EMAIL with a
+// format check that rejects a bare single-label domain, so "proximo@test"
+// fails its first-run migration and the hub crash-loops — "proximo@proximo.test"
+// passes.
 func Email(tld string) string {
-	return "proximo@" + tld
+	return "proximo@proximo." + tld
 }
 
 // SecretPath returns the per-user path of the stored hub password.
