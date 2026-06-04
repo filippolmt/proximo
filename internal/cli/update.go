@@ -96,13 +96,7 @@ func runUpdate(cmd *cobra.Command, force bool) error {
 	if err != nil {
 		return err
 	}
-	// A pre-0.4.0 stack carries no version label; name it rather than printing
-	// an empty "from" version.
-	fromVer := stackVer
-	if fromVer == "" {
-		fromVer = "pre-0.4.0"
-	}
-	fmt.Fprintf(out, "Converging stack %s -> %s...\n", fromVer, cliVer)
+	fmt.Fprintf(out, "Converging stack %s -> %s...\n", docker.DisplayVersion(stackVer), cliVer)
 	if err := docker.Converge(cfg.TLD, certDir, docker.ConvergeOpts{Force: force}); err != nil {
 		return err
 	}

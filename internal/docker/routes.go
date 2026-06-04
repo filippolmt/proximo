@@ -112,18 +112,23 @@ func StackVersion(ctx context.Context) (ver string, running bool, err error) {
 	return "", false, nil
 }
 
+// DisplayVersion names a stack version for human output. A running stack
+// without a version label predates version stamping (the proximo.version label
+// was introduced in 0.4.0), so an empty version is shown as "pre-0.4.0".
+func DisplayVersion(ver string) string {
+	if ver == "" {
+		return "pre-0.4.0"
+	}
+	return ver
+}
+
 // VersionSkew returns a human-readable warning when the running stack version
 // differs from the installed CLI version, or "" when they match or the stack is
-// not running. A running stack without a version label predates version
-// stamping (pre-0.4.0) and is always skewed — it must not be mistaken for a
-// stack that is down.
+// not running. An unlabeled (pre-0.4.0) stack never matches, so it always
+// warns — it must not be mistaken for a stack that is down.
 func VersionSkew(stackVer string, running bool, cliVer string) string {
-	switch {
-	case !running, stackVer == cliVer:
+	if !running || stackVer == cliVer {
 		return ""
-	case stackVer == "":
-		return "stack predates version stamping; run `proximo update` to converge"
-	default:
-		return fmt.Sprintf("stack is running %s but the CLI is %s; run `proximo update` to converge", stackVer, cliVer)
 	}
+	return fmt.Sprintf("stack is running %s but the CLI is %s; run `proximo update` to converge", DisplayVersion(stackVer), cliVer)
 }
