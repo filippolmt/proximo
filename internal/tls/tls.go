@@ -50,10 +50,14 @@ func locate(name string) (string, error) {
 // pathIn is locate plus ensuring the directory exists, for callers about to
 // read or write the file.
 func pathIn(name string) (string, error) {
-	if _, err := Dir(); err != nil {
+	path, err := locate(name)
+	if err != nil {
 		return "", err
 	}
-	return locate(name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // CACertPath is the path to the local CA certificate (PEM).
