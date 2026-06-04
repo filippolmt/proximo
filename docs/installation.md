@@ -96,7 +96,7 @@ Docker-managed named volume, so a `docker volume prune` can't wipe it.
 | Path | Holds |
 | --- | --- |
 | `~/.proximo/config.json` | the persisted TLD |
-| `~/.proximo/tls/` | the local CA certificate and key (`ca.pem`, `ca-key.pem`) |
+| `~/.proximo/tls/` | the local CA certificate and key (`ca.pem`, `ca-key.pem`) — external tools should query the CA path via [`proximo config ca-path`](cli.md#proximo-config-ca-path) instead of hardcoding it |
 | `~/.proximo/stack/` | the materialized `docker compose` stack (compose file, Traefik config, a copy of the CA for the watcher) |
 | `~/.proximo/data/traefik/` | **bind-mounted** into Traefik + the watcher: the dynamic routes and per-container certificates the watcher generates |
 | `~/.proximo/data/beszel/` | **bind-mounted** into the Beszel metrics hub when observability is enabled (`up --observability`): metrics history and hub users |

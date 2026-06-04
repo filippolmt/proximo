@@ -18,6 +18,7 @@ proximo <command> [args]
 | [`update`](#proximo-update) | Converge the running stack to the installed CLI | no | yes |
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
+| [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
 | [`uninstall`](#proximo-uninstall) | Reverse all host changes + stop the stack | yes | yes |
 | [`version`](#proximo-version) | Print version, commit, build date | no | no |
 
@@ -166,6 +167,22 @@ proximo config tld dev    # containers become reachable at <name>.dev
 - No-op (with a message) when the TLD is already set.
 
 Default TLD is `.test` (reserved by RFC 6761, never collides with mDNS).
+
+## `proximo config ca-path`
+
+Print the absolute path of the local CA certificate (PEM):
+
+```sh
+proximo config ca-path
+# /Users/you/.proximo/tls/ca.pem
+```
+
+This is the **stable contract for external tools** that want to trust proximo's
+CA (e.g. mounting it into a dev container) — shell out to this command instead
+of hardcoding the state-home layout. The path is printed even when the file
+does not exist yet (proximo not installed yet), so callers must check existence
+themselves; the command itself is side-effect free and never creates
+directories.
 
 ## `proximo uninstall`
 

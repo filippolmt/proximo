@@ -30,7 +30,7 @@ const (
 	ObsHubPort = 48090
 
 	// appDir is the per-user directory name; the state home is $HOME/.proximo
-	// (a leading dot is prepended in homePath).
+	// (a leading dot is prepended in HomePath).
 	appDir = "proximo"
 )
 
@@ -62,7 +62,7 @@ func NormalizeTLD(raw string) (string, error) {
 
 // Dir returns (creating if needed) the per-user state home at $HOME/.proximo.
 func Dir() (string, error) {
-	dir, err := homePath()
+	dir, err := HomePath()
 	if err != nil {
 		return "", err
 	}
@@ -72,9 +72,10 @@ func Dir() (string, error) {
 	return dir, nil
 }
 
-// homePath resolves the state-home path ($HOME/.proximo) without creating it, so
-// callers that only need the location (RemoveHome) don't trigger side effects.
-func homePath() (string, error) {
+// HomePath resolves the state-home path ($HOME/.proximo) without creating it,
+// so callers that only need the location (RemoveHome, `config ca-path`) don't
+// trigger side effects.
+func HomePath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -107,7 +108,7 @@ func DataDir() (string, error) {
 // stack is down and host trust/resolver are reversed, for a full reversal. It
 // resolves the path without creating it.
 func RemoveHome() error {
-	dir, err := homePath()
+	dir, err := HomePath()
 	if err != nil {
 		return err
 	}
