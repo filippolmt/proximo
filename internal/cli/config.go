@@ -17,7 +17,29 @@ func newConfigCmd() *cobra.Command {
 		Short: "Inspect and change proximo configuration",
 	}
 	cmd.AddCommand(newConfigTLDCmd())
+	cmd.AddCommand(newConfigCAPathCmd())
 	return cmd
+}
+
+func newConfigCAPathCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ca-path",
+		Short: "Print the path of the local CA certificate",
+		Long: "Print the absolute path of proximo's local CA certificate (PEM).\n" +
+			"The path is printed even when the file does not exist yet (proximo not\n" +
+			"installed), so external tools can rely on it as a stable contract and\n" +
+			"check existence themselves. The command is side-effect free: it never\n" +
+			"creates directories on the host.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := tls.CACertLocation()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), path)
+			return nil
+		},
+	}
 }
 
 func newConfigTLDCmd() *cobra.Command {

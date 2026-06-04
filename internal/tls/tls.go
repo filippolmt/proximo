@@ -18,30 +18,65 @@ import (
 // caCommonName is the subject/nickname used for the local CA across all stores.
 const caCommonName = "proximo local CA"
 
-// Dir returns the directory holding the CA and certificate material.
+// tlsSubdir is the state-home subdirectory holding the CA and certificate
+// material.
+const tlsSubdir = "tls"
+
+// PEM filenames under tlsSubdir — the single source for both the path
+// helpers and Purge.
+const (
+	caCertName = "ca.pem"
+	caKeyName  = "ca-key.pem"
+	certName   = "cert.pem"
+	keyName    = "key.pem"
+)
+
+// Dir returns (creating if needed) the directory holding the CA and
+// certificate material.
 func Dir() (string, error) {
-	return config.SubDir("tls")
+	return config.SubDir(tlsSubdir)
 }
 
-func pathIn(name string) (string, error) {
-	dir, err := Dir()
+// locate resolves the path of name under the tls subdir without creating
+// anything — the single place that knows the on-disk layout.
+func locate(name string) (string, error) {
+	home, err := config.HomePath()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, name), nil
+	return filepath.Join(home, tlsSubdir, name), nil
+}
+
+// pathIn is locate plus ensuring the directory exists, for callers about to
+// read or write the file.
+func pathIn(name string) (string, error) {
+	path, err := locate(name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // CACertPath is the path to the local CA certificate (PEM).
-func CACertPath() (string, error) { return pathIn("ca.pem") }
+func CACertPath() (string, error) { return pathIn(caCertName) }
+
+// CACertLocation resolves the CA certificate path without creating any
+// directories, so query-only callers (`proximo config ca-path`) leave a host
+// without proximo state untouched. The file may not exist yet (proximo not
+// installed); callers that care must check.
+func CACertLocation() (string, error) { return locate(caCertName) }
 
 // CAKeyPath is the path to the local CA private key (PEM).
-func CAKeyPath() (string, error) { return pathIn("ca-key.pem") }
+func CAKeyPath() (string, error) { return pathIn(caKeyName) }
 
 // CertPath is the path to the wildcard leaf certificate (PEM).
-func CertPath() (string, error) { return pathIn("cert.pem") }
+func CertPath() (string, error) { return pathIn(certName) }
 
 // KeyPath is the path to the wildcard leaf private key (PEM).
-func KeyPath() (string, error) { return pathIn("key.pem") }
+func KeyPath() (string, error) { return pathIn(keyName) }
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
@@ -54,7 +89,7 @@ func Purge() error {
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{"ca.pem", "ca-key.pem", "cert.pem", "key.pem"} {
+	for _, name := range []string{caCertName, caKeyName, certName, keyName} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
