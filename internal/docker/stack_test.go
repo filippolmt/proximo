@@ -355,13 +355,18 @@ func TestDownObservabilityScoped(t *testing.T) {
 }
 
 func TestVersionSkew(t *testing.T) {
-	if w := VersionSkew("v0.1.0", "v0.1.0"); w != "" {
+	if w := VersionSkew("v0.1.0", true, "v0.1.0"); w != "" {
 		t.Errorf("aligned versions = %q, want empty", w)
 	}
-	if w := VersionSkew("", "v0.1.0"); w != "" {
+	if w := VersionSkew("", false, "v0.1.0"); w != "" {
 		t.Errorf("stack down = %q, want empty", w)
 	}
-	if w := VersionSkew("v0.1.0", "v0.2.0"); w == "" {
+	if w := VersionSkew("v0.1.0", true, "v0.2.0"); w == "" {
 		t.Error("mismatch = empty, want a warning")
+	}
+	// A running stack without a version label predates stamping (pre-0.4.0):
+	// it must warn, not be mistaken for a stack that is down.
+	if w := VersionSkew("", true, "v0.1.0"); !strings.Contains(w, "pre-0.4.0") {
+		t.Errorf("legacy unlabeled stack = %q, want a pre-0.4.0 warning", w)
 	}
 }

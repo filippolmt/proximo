@@ -42,14 +42,16 @@ const (
 )
 
 // decideUpdate maps observed state to the update action. dockerUp is whether the
-// daemon is reachable; stackVer is the running stack version ("" when no stack is
-// running); cliVer is the installed CLI version. force overrides the up-to-date
-// no-op so `--force` always rebuilds.
-func decideUpdate(dockerUp, force bool, stackVer, cliVer string) updateAction {
+// daemon is reachable; stackRunning is whether any stack container is running;
+// stackVer is the running stack version ("" when the stack predates version
+// stamping — pre-0.4.0 stacks carry no label); cliVer is the installed CLI
+// version. force overrides the up-to-date no-op so `--force` always rebuilds.
+// An unlabeled legacy stack never matches cliVer, so it converges.
+func decideUpdate(dockerUp, stackRunning, force bool, stackVer, cliVer string) updateAction {
 	switch {
 	case !dockerUp:
 		return actionDockerDown
-	case stackVer == "":
+	case !stackRunning:
 		return actionStackDown
 	case stackVer == cliVer && !force:
 		return actionUpToDate
@@ -65,15 +67,16 @@ func runUpdate(cmd *cobra.Command, force bool) error {
 
 	dockerUp := checkDocker() == nil
 	var stackVer string
+	var stackRunning bool
 	if dockerUp {
-		v, err := docker.StackVersion(ctx)
+		v, running, err := docker.StackVersion(ctx)
 		if err != nil {
 			return err
 		}
-		stackVer = v
+		stackVer, stackRunning = v, running
 	}
 
-	switch decideUpdate(dockerUp, force, stackVer, cliVer) {
+	switch decideUpdate(dockerUp, stackRunning, force, stackVer, cliVer) {
 	case actionDockerDown:
 		fmt.Fprintln(out, "Docker is not reachable; the update will apply on the next `proximo up`.")
 		return nil
@@ -93,7 +96,7 @@ func runUpdate(cmd *cobra.Command, force bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Converging stack %s -> %s...\n", stackVer, cliVer)
+	fmt.Fprintf(out, "Converging stack %s -> %s...\n", docker.DisplayVersion(stackVer), cliVer)
 	if err := docker.Converge(cfg.TLD, certDir, docker.ConvergeOpts{Force: force}); err != nil {
 		return err
 	}

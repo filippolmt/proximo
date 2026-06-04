@@ -28,8 +28,8 @@ func newStatusCmd() *cobra.Command {
 
 			// Read-only skew check: warn (never mutate) when the running stack
 			// version differs from the installed CLI, pointing to `proximo update`.
-			if stackVer, err := docker.StackVersion(ctx); err == nil {
-				if w := docker.VersionSkew(stackVer, version.Version); w != "" {
+			if stackVer, running, err := docker.StackVersion(ctx); err == nil {
+				if w := docker.VersionSkew(stackVer, running, version.Version); w != "" {
 					fmt.Fprintln(out, warnPrefix+w)
 				}
 			}
