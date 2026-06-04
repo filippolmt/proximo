@@ -88,34 +88,42 @@ func primaryName(c container.Summary) string {
 const versionLabel = "proximo.version"
 
 // StackVersion reads the proximo.version label from a running stack container
-// (any service carries the role label). It returns "" when no stack container is
-// running or the label is absent; Docker errors are returned so callers can tell
-// "stack down" (empty, nil) from "Docker broken".
-func StackVersion(ctx context.Context) (string, error) {
+// (any service carries the role label). running reports whether a stack
+// container was found at all, so callers can tell "no stack" (running false)
+// from "stack predating version stamping" (running true, empty version — a
+// pre-0.4.0 stack carries no version label). Docker errors are returned so
+// callers can tell "stack down" from "Docker broken".
+func StackVersion(ctx context.Context) (ver string, running bool, err error) {
 	cli, err := newClient()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer cli.Close()
 
 	cs, err := cli.ContainerList(ctx, container.ListOptions{})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	for _, c := range cs {
 		if _, isStack := c.Labels[roleLabel]; isStack {
-			return c.Labels[versionLabel], nil
+			return c.Labels[versionLabel], true, nil
 		}
 	}
-	return "", nil
+	return "", false, nil
 }
 
 // VersionSkew returns a human-readable warning when the running stack version
 // differs from the installed CLI version, or "" when they match or the stack is
-// not running (stackVer == "").
-func VersionSkew(stackVer, cliVer string) string {
-	if stackVer == "" || stackVer == cliVer {
+// not running. A running stack without a version label predates version
+// stamping (pre-0.4.0) and is always skewed — it must not be mistaken for a
+// stack that is down.
+func VersionSkew(stackVer string, running bool, cliVer string) string {
+	switch {
+	case !running, stackVer == cliVer:
 		return ""
+	case stackVer == "":
+		return "stack predates version stamping; run `proximo update` to converge"
+	default:
+		return fmt.Sprintf("stack is running %s but the CLI is %s; run `proximo update` to converge", stackVer, cliVer)
 	}
-	return fmt.Sprintf("stack is running %s but the CLI is %s; run `proximo update` to converge", stackVer, cliVer)
 }

@@ -34,6 +34,9 @@ proximo update
   to call from automated hooks).
 - **Re-pulls Traefik** — the pinned Traefik image is re-pulled so security
   patches are picked up.
+- **Legacy stacks converge too** — a stack deployed by a pre-0.4.0 CLI carries
+  no `proximo.version` label; `update` treats it as skewed (not as "no stack")
+  and converges it, and `status` warns about it.
 - `proximo update --force` rebuilds the in-stack images **without the build
   cache** (the nuclear option).
 
