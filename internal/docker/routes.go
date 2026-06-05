@@ -33,8 +33,10 @@ type Route struct {
 // proximo container whose backend port is ambiguous/unresolved (the watcher skips
 // it) is flagged with a Note rather than listed as a working route. The
 // classifyInfo diagnostics are ignored here so status stays quiet — no watcher
-// warnings.
-func Routes(ctx context.Context) ([]Route, error) {
+// warnings. tld names the Traefik dashboard self-route host (traefik.<tld>),
+// which the watcher injects outside container classification and is therefore
+// surfaced here the same way: present whenever the stack's Traefik is running.
+func Routes(ctx context.Context, tld string) ([]Route, error) {
 	cli, err := newClient()
 	if err != nil {
 		return nil, err
@@ -46,7 +48,7 @@ func Routes(ctx context.Context) ([]Route, error) {
 		return nil, err
 	}
 
-	var routes []Route
+	routes := dashboardRoutes(cs, tld)
 	for _, c := range cs {
 		if !isRouted(c) {
 			continue
@@ -74,6 +76,20 @@ func Routes(ctx context.Context) ([]Route, error) {
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
 	return routes, nil
+}
+
+// dashboardRoutes returns the Traefik dashboard self-route when the stack's
+// Traefik container is running. The watcher writes that route on every
+// reconcile (watcher.dashboardRoute), so status mirrors the same condition
+// instead of classifying the role-labeled container (which never routes).
+func dashboardRoutes(cs []container.Summary, tld string) []Route {
+	for _, c := range cs {
+		if c.Labels[roleLabel] == "traefik" {
+			host := dashboardHost(tld)
+			return []Route{{Container: primaryName(c), Host: host, URL: "https://" + host}}
+		}
+	}
+	return nil
 }
 
 func primaryName(c container.Summary) string {

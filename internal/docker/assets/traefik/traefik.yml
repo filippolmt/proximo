@@ -5,6 +5,12 @@ global:
 log:
   level: INFO
 
+# Built-in dashboard, read-only and local-only. api.insecure stays OFF (no
+# extra port is published); the dashboard is served at https://traefik.<tld>
+# by the watcher's self-route to api@internal — no static router here.
+api:
+  dashboard: true
+
 entryPoints:
   # HTTP listens on :80 but does not redirect by default. A container opts in to
   # an HTTP->HTTPS redirect per host with the proximo.redirect label; the watcher

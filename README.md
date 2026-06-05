@@ -56,6 +56,7 @@ services:
 docker compose up -d
 open https://whoami.test   # macOS — trusted HTTPS, no warning
 proximo status             # see what's routed
+open https://traefik.test  # Traefik's own dashboard, always on (traefik.<tld> is reserved)
 ```
 
 A ready-to-run sample is in [`examples/whoami/`](examples/whoami/). For the label
