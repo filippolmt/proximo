@@ -632,10 +632,12 @@ func TestTraefikDashboardStaticConfig(t *testing.T) {
 }
 
 // TestRenderRouterDashboard: the internal self-route renders a websecure router
-// to api@internal with TLS and no backend loadbalancer/port block (4.2).
+// to api@internal with TLS and no backend loadbalancer/port block (4.2). With
+// redirect set (as dashboardRoute always does) it additionally emits the web
+// router + redirectScheme middleware, both still targeting api@internal.
 func TestRenderRouterDashboard(t *testing.T) {
 	out := string(renderRouter(routedContainer{
-		name: "traefik", safe: dashboardSafe, hosts: []string{"traefik.test"}, proximo: true, internal: true,
+		name: "traefik", safe: dashboardSafe, hosts: []string{"traefik.test"}, proximo: true, internal: true, redirect: true,
 	}))
 	wants := []string{
 		"proximo-dashboard:",
@@ -643,13 +645,16 @@ func TestRenderRouterDashboard(t *testing.T) {
 		"service: api@internal",
 		"tls: {}",
 		"- websecure",
+		"proximo-dashboard-redirect:",
+		"- web\n",
+		"redirectScheme:",
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
 			t.Errorf("dashboard router missing %q\n---\n%s", w, out)
 		}
 	}
-	for _, unwanted := range []string{"loadBalancer", "url:", "services:"} {
+	for _, unwanted := range []string{"loadBalancer", "url:", "services:", "service: proximo-dashboard"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("dashboard router must not emit %q\n---\n%s", unwanted, out)
 		}
@@ -763,8 +768,12 @@ func TestNewWatcherTLDFromEnv(t *testing.T) {
 	if w.tld != "local-dev" {
 		t.Errorf("tld = %q, want local-dev", w.tld)
 	}
-	if hosts := w.dashboardRoute().hosts; !slices.Equal(hosts, []string{"traefik.local-dev"}) {
-		t.Errorf("dashboard hosts = %v, want [traefik.local-dev]", hosts)
+	dr := w.dashboardRoute()
+	if !slices.Equal(dr.hosts, []string{"traefik.local-dev"}) {
+		t.Errorf("dashboard hosts = %v, want [traefik.local-dev]", dr.hosts)
+	}
+	if !dr.redirect {
+		t.Error("dashboard route must always opt in to the HTTP->HTTPS redirect")
 	}
 
 	t.Setenv("PROXIMO_TLD", "")

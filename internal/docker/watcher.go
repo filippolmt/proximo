@@ -244,6 +244,9 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 // dashboardRoute synthesizes the self-route serving Traefik's dashboard at
 // https://traefik.<tld>. It is marked internal so it targets api@internal and
 // never flows through resolveBackendPort (there is no backend container).
+// redirect is always on — the dashboard is a stack-owned host, so unlike user
+// containers (opt-in via proximo.redirect) http://traefik.<tld> always
+// redirects to https:// instead of 404ing on :80.
 // w.tld is always set — NewWatcher defaults it to config.DefaultTLD.
 func (w *Watcher) dashboardRoute() routedContainer {
 	return routedContainer{
@@ -252,6 +255,7 @@ func (w *Watcher) dashboardRoute() routedContainer {
 		hosts:    []string{dashboardHost(w.tld)},
 		proximo:  true,
 		internal: true,
+		redirect: true,
 	}
 }
 
@@ -445,22 +449,21 @@ func renderRouter(rc routedContainer) []byte {
 	}
 	rule := strings.Join(rules, " || ")
 
+	// Internal self-route (the dashboard): targets Traefik's built-in
+	// api@internal service, so there is no backend service/loadbalancer
+	// block and no port to resolve.
+	service := id
+	if rc.internal {
+		service = "api@internal"
+	}
+
 	var b strings.Builder
 	b.WriteString("http:\n")
 	b.WriteString("  routers:\n")
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      entryPoints:\n        - websecure\n")
 	fmt.Fprintf(&b, "      rule: %q\n", rule)
-	if rc.internal {
-		// Internal self-route (the dashboard): targets Traefik's built-in
-		// api@internal service, so there is no backend service/loadbalancer
-		// block and no port to resolve.
-		b.WriteString("      service: api@internal\n")
-		b.WriteString("      tls: {}\n")
-		return []byte(b.String())
-	}
-	url := "http://" + rc.name + ":" + strconv.Itoa(rc.port)
-	fmt.Fprintf(&b, "      service: %s\n", id)
+	fmt.Fprintf(&b, "      service: %s\n", service)
 	b.WriteString("      tls: {}\n")
 	if rc.redirect {
 		// HTTP router on :80 for the same hosts plus the redirectScheme
@@ -471,7 +474,7 @@ func renderRouter(rc routedContainer) []byte {
 		fmt.Fprintf(&b, "    %s:\n", redirectID)
 		b.WriteString("      entryPoints:\n        - web\n")
 		fmt.Fprintf(&b, "      rule: %q\n", rule)
-		fmt.Fprintf(&b, "      service: %s\n", id)
+		fmt.Fprintf(&b, "      service: %s\n", service)
 		b.WriteString("      middlewares:\n")
 		fmt.Fprintf(&b, "        - %s\n", redirectID)
 		b.WriteString("  middlewares:\n")
@@ -480,6 +483,10 @@ func renderRouter(rc routedContainer) []byte {
 		b.WriteString("        scheme: https\n")
 		b.WriteString("        permanent: false\n")
 	}
+	if rc.internal {
+		return []byte(b.String())
+	}
+	url := "http://" + rc.name + ":" + strconv.Itoa(rc.port)
 	b.WriteString("  services:\n")
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      loadBalancer:\n")
