@@ -144,7 +144,10 @@ The Traefik container itself carries `proximo.role=traefik` and is therefore
 every reconcile, independently of the container list: a router for
 `Host(traefik.<tld>)` targeting Traefik's internal `api@internal` service (no
 backend port), plus a CA-signed leaf with `traefik.<tld>` as a SAN, listed in
-`proximo-tls.yml` like any other. The route lives under the stable filename
+`proximo-tls.yml` like any other. Unlike user containers (opt-in via
+`proximo.redirect`), the self-route always includes the HTTP→HTTPS redirect:
+`http://traefik.<tld>` 302-redirects to `https://` instead of 404ing on `:80`.
+The route lives under the stable filename
 `proximo-dashboard.yml` (outside the `proximo-route-*` cleanup glob) and its
 reserved `dashboard` id is part of the active set each pass, so stale cleanup
 never collects either file. The watcher learns the TLD from the `PROXIMO_TLD`
