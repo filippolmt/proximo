@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
@@ -19,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/tls"
 )
 
@@ -46,7 +48,21 @@ const (
 	// routerFilePrefix prefixes the per-container Traefik dynamic config files
 	// the watcher writes into the file-provider directory.
 	routerFilePrefix = "proximo-route-"
+
+	// dashboardSafe is the reserved safe id of the watcher's dashboard
+	// self-route (cert files certs/dashboard.crt/.key). assignSafeNames keeps
+	// user containers away from it, and the self-route is rebuilt every
+	// reconcile, so stale cleanup always sees it as active.
+	dashboardSafe = "dashboard"
+	// dashboardFile is the stable dynamic-config filename of the dashboard
+	// self-route. It deliberately does not match the proximo-route-* cleanup
+	// glob, so the per-container stale sweep can never collect it.
+	dashboardFile = "proximo-dashboard.yml"
 )
+
+// dashboardHost returns the reserved hostname serving Traefik's dashboard for
+// a TLD — shared by the watcher self-route and `proximo status`.
+func dashboardHost(tld string) string { return "traefik." + tld }
 
 // hostRuleRe extracts the host from a Traefik router rule label, e.g.
 // `traefik.http.routers.web.rule = Host(`web.test`)`.
@@ -68,6 +84,7 @@ type routedContainer struct {
 	port     int      // resolved backend port (proximo path only)
 	proximo  bool     // true when routed via proximo.hosts (generate dynamic config)
 	redirect bool     // true when proximo.redirect opts in to an HTTP->HTTPS redirect
+	internal bool     // routed to a Traefik internal service (api@internal): no backend port is resolved
 }
 
 // dockerAPI is the narrow slice of the Docker client the watcher depends on —
@@ -91,6 +108,9 @@ type Watcher struct {
 	caCert     *x509.Certificate
 	caKey      *ecdsa.PrivateKey
 	dynamicDir string
+	// tld is the configured proximo TLD (from PROXIMO_TLD), used to build the
+	// dashboard self-route host traefik.<tld>.
+	tld string
 	// lastHosts caches the last-issued host set per container (keyed by safe
 	// name) so certs are reissued only when a container's hosts change.
 	lastHosts map[string]string
@@ -106,6 +126,7 @@ func NewWatcher() (*Watcher, error) {
 	w := &Watcher{
 		cli:        cli,
 		dynamicDir: getenv("PROXIMO_DYNAMIC_DIR", "/etc/traefik/dynamic"),
+		tld:        getenv("PROXIMO_TLD", config.DefaultTLD),
 		lastHosts:  map[string]string{},
 	}
 
@@ -184,6 +205,13 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 		}
 	}
 	assignSafeNames(routed)
+	// The dashboard self-route is rebuilt every pass, independently of the
+	// container list: the Traefik container itself stays excluded by
+	// isRouted/classifyHosts (proximo.role), so it can never reach this path
+	// through classification. Appending after assignSafeNames keeps its
+	// reserved safe id fixed; appending before warnDuplicateHosts flags a user
+	// container that claims the reserved traefik.<tld> host.
+	routed = append(routed, w.dashboardRoute())
 	warnDuplicateHosts(containers, routed)
 
 	for netID := range desired {
@@ -211,6 +239,20 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	w.syncDynamic(routed)
 	w.syncCerts(routed)
 	return nil
+}
+
+// dashboardRoute synthesizes the self-route serving Traefik's dashboard at
+// https://traefik.<tld>. It is marked internal so it targets api@internal and
+// never flows through resolveBackendPort (there is no backend container).
+// w.tld is always set — NewWatcher defaults it to config.DefaultTLD.
+func (w *Watcher) dashboardRoute() routedContainer {
+	return routedContainer{
+		name:     "traefik",
+		safe:     dashboardSafe,
+		hosts:    []string{dashboardHost(w.tld)},
+		proximo:  true,
+		internal: true,
+	}
 }
 
 // inspector inspects a container by ID. Both the watcher (w.cli.ContainerInspect)
@@ -364,7 +406,13 @@ func (w *Watcher) syncDynamic(routed []routedContainer) {
 		}
 		active[rc.safe] = true
 		path := filepath.Join(w.dynamicDir, routerFilePrefix+rc.safe+".yml")
-		if err := os.WriteFile(path, renderRouter(rc), 0o644); err != nil {
+		if rc.internal {
+			// The dashboard self-route lives under its own stable filename,
+			// outside the proximo-route-* glob, so the stale sweep below can
+			// never collect it.
+			path = filepath.Join(w.dynamicDir, dashboardFile)
+		}
+		if err := writeFileIfChanged(path, renderRouter(rc), 0o644); err != nil {
 			log.Printf("proximo watcher: write router config %s: %v", rc.safe, err)
 		}
 	}
@@ -396,7 +444,6 @@ func renderRouter(rc routedContainer) []byte {
 		rules = append(rules, "Host(`"+h+"`)")
 	}
 	rule := strings.Join(rules, " || ")
-	url := "http://" + rc.name + ":" + strconv.Itoa(rc.port)
 
 	var b strings.Builder
 	b.WriteString("http:\n")
@@ -404,6 +451,15 @@ func renderRouter(rc routedContainer) []byte {
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      entryPoints:\n        - websecure\n")
 	fmt.Fprintf(&b, "      rule: %q\n", rule)
+	if rc.internal {
+		// Internal self-route (the dashboard): targets Traefik's built-in
+		// api@internal service, so there is no backend service/loadbalancer
+		// block and no port to resolve.
+		b.WriteString("      service: api@internal\n")
+		b.WriteString("      tls: {}\n")
+		return []byte(b.String())
+	}
+	url := "http://" + rc.name + ":" + strconv.Itoa(rc.port)
 	fmt.Fprintf(&b, "      service: %s\n", id)
 	b.WriteString("      tls: {}\n")
 	if rc.redirect {
@@ -524,9 +580,20 @@ func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer) {
 		fmt.Fprintf(&b, "    - certFile: %s\n", filepath.Join(certsDir, rc.safe+".crt"))
 		fmt.Fprintf(&b, "      keyFile: %s\n", filepath.Join(certsDir, rc.safe+".key"))
 	}
-	if err := os.WriteFile(tlsPath, []byte(b.String()), 0o644); err != nil {
+	if err := writeFileIfChanged(tlsPath, []byte(b.String()), 0o644); err != nil {
 		log.Printf("proximo watcher: write tls config: %v", err)
 	}
+}
+
+// writeFileIfChanged writes data to path only when the current content differs.
+// The reconcile loop regenerates every dynamic-config file each pass (30s + on
+// Docker events); skipping no-op writes spares Traefik's file-provider watcher
+// spurious change events and config reloads.
+func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
+	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, data) {
+		return nil
+	}
+	return os.WriteFile(path, data, perm)
 }
 
 func findTraefik(cs []container.Summary) (id string, nets map[string]string) {
@@ -654,7 +721,9 @@ func hostsFromLabels(labels map[string]string) []string {
 // id), disambiguating collisions with a short container-ID suffix.
 func assignSafeNames(rcs []routedContainer) {
 	bases := make([]string, len(rcs))
-	counts := map[string]int{}
+	// Seed the reserved dashboard id so a user container named "dashboard" is
+	// always suffixed away from the self-route's cert files.
+	counts := map[string]int{dashboardSafe: 1}
 	for i, rc := range rcs {
 		bases[i] = sanitizeName(rc.name)
 		counts[bases[i]]++

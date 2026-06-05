@@ -55,7 +55,7 @@ substituted in.
 
 | Service | Image / build | Role |
 | --- | --- | --- |
-| **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. |
+| **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. Its built-in **dashboard** (`api.dashboard`, read-only — `api.insecure` stays off) is served at `https://traefik.<tld>`. |
 | **dns** | built from this repo | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
 | **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik to backend networks. Mounts the Docker socket and the CA. |
 
@@ -136,6 +136,20 @@ start, then on Docker events, with a 30s safety resync. Each reconcile:
 The backend URL uses the **container name**, not its IP: once Traefik is on the
 container's network, Docker's embedded DNS resolves the name, and names survive
 restarts whereas IPs change.
+
+### The dashboard self-route
+
+The Traefik container itself carries `proximo.role=traefik` and is therefore
+**excluded** from container routing — so the watcher injects a **self-route** on
+every reconcile, independently of the container list: a router for
+`Host(traefik.<tld>)` targeting Traefik's internal `api@internal` service (no
+backend port), plus a CA-signed leaf with `traefik.<tld>` as a SAN, listed in
+`proximo-tls.yml` like any other. The route lives under the stable filename
+`proximo-dashboard.yml` (outside the `proximo-route-*` cleanup glob) and its
+reserved `dashboard` id is part of the active set each pass, so stale cleanup
+never collects either file. The watcher learns the TLD from the `PROXIMO_TLD`
+environment variable the compose file passes it (same as the `dns` service),
+falling back to the default TLD. `traefik.<tld>` is reserved for the stack.
 
 See [Routing](routing.md) for the label contract that drives all of this.
 

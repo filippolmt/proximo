@@ -76,6 +76,11 @@ Full diagram and per-service detail: `docs/architecture.md`. Routing label contr
   `proximo.enable=false` (park), `proximo.redirect=true` (opt in to the HTTP→HTTPS redirect;
   off by default — `:80` for a non-opted host 404s, it is not redirected). Native `traefik.*`
   labels still work in parallel.
+- **Traefik dashboard (always on):** the watcher injects a self-route each reconcile —
+  `https://traefik.<tld>` → `api@internal` (read-only; `api.insecure` off), stable file
+  `proximo-dashboard.yml` + reserved `dashboard` cert id, both carved out of stale cleanup.
+  The watcher reads the TLD from `PROXIMO_TLD` (compose env, like `dns`). `traefik.<tld>` is a
+  **reserved stack host**; `proximo status` lists it via `dashboardRoutes`, not classification.
 - **Opt-in dev observability (`proximo up --observability`):** a compose `observability`
   profile adds Dozzle (`logs.<tld>`) + Beszel hub/agent (`metrics.<tld>`), routed via the plain
   label contract — **no watcher changes**. `internal/observability/` owns the runtime-generated

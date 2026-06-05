@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/tls"
 )
 
@@ -362,6 +365,7 @@ func testWatcher(t *testing.T) *Watcher {
 		caCert:     caCert,
 		caKey:      caKey,
 		dynamicDir: t.TempDir(),
+		tld:        config.DefaultTLD,
 		lastHosts:  map[string]string{},
 	}
 }
@@ -512,7 +516,7 @@ func TestReconcileAttachesAndDetaches(t *testing.T) {
 		},
 	}
 
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 	if err := w.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -533,7 +537,7 @@ func TestReconcileNoTraefik(t *testing.T) {
 		{ID: "appcid", Names: []string{"/app"}, Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
 			NetworkSettings: netSummary(map[string]string{"appnet": "appid"})},
 	}
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 	if err := w.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -546,7 +550,7 @@ func TestReconcileNoTraefik(t *testing.T) {
 // Docker event, and returns ctx.Err() when the context is cancelled.
 func TestRunReconcilesOnEventAndStops(t *testing.T) {
 	f := newFakeDocker()
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -569,7 +573,7 @@ func TestRunReconcilesOnEventAndStops(t *testing.T) {
 // ctx cancel.
 func TestRunReconnectsAfterEventError(t *testing.T) {
 	f := newFakeDocker()
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -606,5 +610,244 @@ func TestSyncDynamicWritesAndCleans(t *testing.T) {
 	w.syncDynamic(nil)
 	if fileExists(routerFile) {
 		t.Error("stale router config should be removed")
+	}
+}
+
+// TestTraefikDashboardStaticConfig: the embedded traefik.yml enables the
+// read-only dashboard and never the insecure API (4.1).
+func TestTraefikDashboardStaticConfig(t *testing.T) {
+	data, err := assets.ReadFile("assets/traefik/traefik.yml")
+	if err != nil {
+		t.Fatalf("read embedded traefik.yml: %v", err)
+	}
+	yaml := string(data)
+	if !strings.Contains(yaml, "dashboard: true") {
+		t.Errorf("traefik.yml should enable api.dashboard:\n%s", yaml)
+	}
+	// Match the YAML key, not the word — the comment explaining the posture
+	// legitimately mentions api.insecure.
+	if strings.Contains(yaml, "insecure:") {
+		t.Errorf("traefik.yml must not enable api.insecure:\n%s", yaml)
+	}
+}
+
+// TestRenderRouterDashboard: the internal self-route renders a websecure router
+// to api@internal with TLS and no backend loadbalancer/port block (4.2).
+func TestRenderRouterDashboard(t *testing.T) {
+	out := string(renderRouter(routedContainer{
+		name: "traefik", safe: dashboardSafe, hosts: []string{"traefik.test"}, proximo: true, internal: true,
+	}))
+	wants := []string{
+		"proximo-dashboard:",
+		"rule: \"Host(`traefik.test`)\"",
+		"service: api@internal",
+		"tls: {}",
+		"- websecure",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("dashboard router missing %q\n---\n%s", w, out)
+		}
+	}
+	for _, unwanted := range []string{"loadBalancer", "url:", "services:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("dashboard router must not emit %q\n---\n%s", unwanted, out)
+		}
+	}
+}
+
+// dashboardCertSANs reads the dashboard leaf cert and returns its DNS SANs.
+func dashboardCertSANs(t *testing.T, certsDir string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(certsDir, dashboardSafe+".crt"))
+	if err != nil {
+		t.Fatalf("read dashboard cert: %v", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		t.Fatal("dashboard cert is not PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse dashboard cert: %v", err)
+	}
+	return cert.DNSNames
+}
+
+// TestReconcileDashboardSelfRoute: a reconcile with zero routed user containers
+// still produces the dashboard route file and a cert with SAN traefik.<tld>,
+// both listed in proximo-tls.yml (4.3).
+func TestReconcileDashboardSelfRoute(t *testing.T) {
+	f := newFakeDocker()
+	f.containers = []container.Summary{
+		{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}},
+	}
+	w := testWatcher(t)
+	w.cli = f
+
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	routeFile := filepath.Join(w.dynamicDir, dashboardFile)
+	if !fileExists(routeFile) {
+		t.Fatal("expected dashboard route file after a reconcile with no user containers")
+	}
+	route, _ := os.ReadFile(routeFile)
+	if !strings.Contains(string(route), "Host(`traefik.test`)") || !strings.Contains(string(route), "api@internal") {
+		t.Errorf("dashboard route should target Host(`traefik.test`) via api@internal:\n%s", route)
+	}
+
+	if sans := dashboardCertSANs(t, filepath.Join(w.dynamicDir, "certs")); !slices.Contains(sans, "traefik.test") {
+		t.Errorf("dashboard cert SANs = %v, want to include traefik.test", sans)
+	}
+	tlsYAML, err := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if err != nil {
+		t.Fatalf("read tls config: %v", err)
+	}
+	if !strings.Contains(string(tlsYAML), dashboardSafe+".crt") {
+		t.Errorf("proximo-tls.yml should list the dashboard cert:\n%s", tlsYAML)
+	}
+}
+
+// TestReconcileDashboardSurvivesStaleCleanup: adding then removing a routed user
+// container garbage-collects the user route/cert but never the dashboard's (4.4).
+func TestReconcileDashboardSurvivesStaleCleanup(t *testing.T) {
+	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}}
+	app := container.Summary{
+		ID:     "appcid",
+		Names:  []string{"/app"},
+		Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
+	}
+
+	f := newFakeDocker()
+	f.containers = []container.Summary{traefik, app}
+	w := testWatcher(t)
+	w.cli = f
+
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile with app: %v", err)
+	}
+	appRoute := filepath.Join(w.dynamicDir, routerFilePrefix+"app.yml")
+	appCrt := filepath.Join(w.dynamicDir, "certs", "app.crt")
+	if !fileExists(appRoute) || !fileExists(appCrt) {
+		t.Fatal("expected the user container's route and cert after the first reconcile")
+	}
+
+	f.mu.Lock()
+	f.containers = []container.Summary{traefik}
+	f.mu.Unlock()
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile without app: %v", err)
+	}
+
+	if fileExists(appRoute) || fileExists(appCrt) {
+		t.Error("user route/cert should be garbage-collected")
+	}
+	if !fileExists(filepath.Join(w.dynamicDir, dashboardFile)) {
+		t.Error("dashboard route must survive stale cleanup")
+	}
+	if !fileExists(filepath.Join(w.dynamicDir, "certs", dashboardSafe+".crt")) {
+		t.Error("dashboard cert must survive stale cleanup")
+	}
+}
+
+// TestNewWatcherTLDFromEnv: the watcher reads the TLD from PROXIMO_TLD and
+// falls back to the default TLD when unset (4.5).
+func TestNewWatcherTLDFromEnv(t *testing.T) {
+	t.Setenv("PROXIMO_TLD", "local-dev")
+	w, err := NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	if w.tld != "local-dev" {
+		t.Errorf("tld = %q, want local-dev", w.tld)
+	}
+	if hosts := w.dashboardRoute().hosts; !slices.Equal(hosts, []string{"traefik.local-dev"}) {
+		t.Errorf("dashboard hosts = %v, want [traefik.local-dev]", hosts)
+	}
+
+	t.Setenv("PROXIMO_TLD", "")
+	w, err = NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	if w.tld != config.DefaultTLD {
+		t.Errorf("tld = %q, want default %q", w.tld, config.DefaultTLD)
+	}
+}
+
+// TestReconcileTraefikRoleNeverContainerRouted: the proximo.role=traefik
+// container produces no per-container route/cert via the normal path, even if
+// it (mis)declares proximo.hosts — the dashboard is served only through the
+// injected self-route (4.6).
+func TestReconcileTraefikRoleNeverContainerRouted(t *testing.T) {
+	f := newFakeDocker()
+	f.containers = []container.Summary{
+		{ID: "traefikcid", Names: []string{"/traefik"}, Labels: map[string]string{
+			roleLabel:         "traefik",
+			proximoHostsLabel: "evil.test",
+			proximoPortLabel:  "8080",
+		}},
+	}
+	w := testWatcher(t)
+	w.cli = f
+
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(w.dynamicDir, routerFilePrefix+"*.yml")); len(files) != 0 {
+		t.Errorf("role container must produce no per-container routes, got %v", files)
+	}
+	if fileExists(filepath.Join(w.dynamicDir, "certs", "traefik.crt")) {
+		t.Error("role container must get no per-container cert")
+	}
+	if !fileExists(filepath.Join(w.dynamicDir, dashboardFile)) {
+		t.Error("dashboard self-route should still be written")
+	}
+}
+
+// TestAssignSafeNamesReservesDashboard: a user container named "dashboard" is
+// suffixed away from the reserved self-route id (design D2).
+func TestAssignSafeNamesReservesDashboard(t *testing.T) {
+	rcs := []routedContainer{{name: "dashboard", id: "dddddddddddd4444"}}
+	assignSafeNames(rcs)
+	if rcs[0].safe == dashboardSafe {
+		t.Errorf("user container named dashboard must not claim the reserved safe id, got %q", rcs[0].safe)
+	}
+}
+
+// TestWriteFileIfChanged: a same-content write is skipped (no touch — Traefik's
+// file watcher must not see spurious change events on every resync), a changed
+// write and a first write go through.
+func TestWriteFileIfChanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "route.yml")
+
+	if err := writeFileIfChanged(path, []byte("v1"), 0o644); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+
+	// Backdate the mtime, rewrite identical content: the file must not be touched.
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := writeFileIfChanged(path, []byte("v1"), 0o644); err != nil {
+		t.Fatalf("same-content write: %v", err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !st.ModTime().Equal(past) {
+		t.Error("same-content write should not touch the file")
+	}
+
+	// Changed content goes through.
+	if err := writeFileIfChanged(path, []byte("v2"), 0o644); err != nil {
+		t.Fatalf("changed write: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "v2" {
+		t.Errorf("content = %q, want v2", data)
 	}
 }

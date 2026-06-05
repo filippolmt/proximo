@@ -51,6 +51,12 @@ Requires that the Docker daemon is reachable. If you run `up` before `install`,
 the CA may not exist yet — the watcher then runs without issuing certificates
 until you `install`.
 
+With the stack up, Traefik's own **dashboard** is always served at
+`https://traefik.<tld>` — read-only and local-only (no `api.insecure`, no extra
+published port, no credentials), trusted by the local CA like every other
+proximo host. `traefik.<tld>` is **reserved** for the stack; do not assign it to
+your own containers.
+
 `up` shares the convergence path with [`update`](#proximo-update), so it also
 applies any pending update — rebuilding the in-stack images at the installed CLI
 version and re-pulling Traefik. See [Updating](updating.md).
@@ -127,10 +133,15 @@ proximo status
 ```
 
 ```
-CONTAINER  URL
-whoami     https://whoami.test
-api        https://api.test
+CONTAINER          URL
+api                https://api.test
+proximo-traefik-1  https://traefik.test
+whoami             https://whoami.test
 ```
+
+The `traefik.<tld>` route is the stack's own
+[dashboard](#proximo-up) — listed whenever the stack is running, since the
+watcher serves it unconditionally.
 
 A `proximo.hosts` container whose backend port is **ambiguous** (no
 `proximo.port`, and the image exposes zero or several ports) is not served by the
@@ -142,7 +153,8 @@ CONTAINER  URL
 multi      ⚠ set proximo.port (exposes 2 TCP ports)
 ```
 
-Prints `No routed containers.` when nothing is exposed.
+Prints `No routed containers.` when nothing is exposed — which implies the
+stack is down, since a running stack always serves the dashboard route.
 
 When the running stack version differs from the installed CLI, `status` prints a
 read-only **skew warning** recommending `proximo update` (it never rebuilds):

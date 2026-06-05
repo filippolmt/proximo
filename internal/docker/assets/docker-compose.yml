@@ -56,6 +56,7 @@ services:
     restart: unless-stopped
     logging: *proximo-logging
     environment:
+      PROXIMO_TLD: ${PROXIMO_TLD:-test}
       PROXIMO_CA_CERT: /ca/ca.pem
       PROXIMO_CA_KEY: /ca/ca-key.pem
       PROXIMO_DYNAMIC_DIR: /etc/traefik/dynamic

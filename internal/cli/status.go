@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"text/tabwriter"
 
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/version"
 	"github.com/spf13/cobra"
@@ -20,6 +21,10 @@ func newStatusCmd() *cobra.Command {
 		Short: "List routed containers and their URLs",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
 			if err := checkDocker(); err != nil {
 				return err
 			}
@@ -34,7 +39,7 @@ func newStatusCmd() *cobra.Command {
 				}
 			}
 
-			routes, err := docker.Routes(ctx)
+			routes, err := docker.Routes(ctx, cfg.TLD)
 			if err != nil {
 				return err
 			}
