@@ -10,7 +10,7 @@ ENV CGO_ENABLED=0
 RUN apk add --no-cache git
 RUN go install github.com/filippolmt/proximo/cmd/watcher@${PROXIMO_REF}
 
-FROM alpine:3.23
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY --from=build /go/bin/watcher /usr/local/bin/watcher
 ENTRYPOINT ["/usr/local/bin/watcher"]

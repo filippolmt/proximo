@@ -10,7 +10,7 @@ ENV CGO_ENABLED=0
 RUN apk add --no-cache git
 RUN go install github.com/filippolmt/proximo/cmd/dnsserver@${PROXIMO_REF}
 
-FROM alpine:3.23
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY --from=build /go/bin/dnsserver /usr/local/bin/dnsserver
 EXPOSE 5353/udp
