@@ -5,125 +5,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What proximo is
 
 A single Go CLI that makes any running Docker container reachable at `https://<name>.test`
-on macOS/Linux, bundling three things developers normally wire by hand: `Host`-based
-routing (Traefik), local wildcard DNS, and a trusted local CA. Docker is the only
-mandatory prerequisite — DNS and certificates are produced natively in Go.
+on macOS/Linux, bundling `Host`-based routing (Traefik), local wildcard DNS, and a trusted
+local CA. Docker is the only mandatory prerequisite — DNS and certificates are produced
+natively in Go. Full picture: [docs/architecture.md](docs/architecture.md); section-level
+index of all guides: [docs/README.md](docs/README.md).
 
 ## Build / test / run
 
-All Go work runs **inside Docker** via the Makefile — no local Go toolchain is assumed
-(a persistent module/build cache volume is reused across runs). Docker is the only prerequisite.
+All Go work runs **inside Docker** via the Makefile — no local Go toolchain is assumed.
+Make targets, the single-test invocation, and the lifecycle targets
+(`install`/`up`/`down`/`status`/`uninstall`/`e2e`) are in
+[docs/development.md — Build and test](docs/development.md#build-and-test) and
+[Lifecycle targets](docs/development.md#lifecycle-targets).
 
-```sh
-make build      # compile bin/proximo-<os>-<arch> for the host (override GOOS/GOARCH=…)
-make build-all  # cross-compile darwin,linux × amd64,arm64
-make test       # full suite (go test ./...) in the golang image
-make vet        # go vet
-make tidy       # go mod tidy
-```
+## Architecture
 
-Run a **single test** (no Make target — invoke `go test` directly in the build image):
+The architecture is fully documented in `docs/` — do not duplicate it here. Component
+ownership: [docs/architecture.md — Source map](docs/architecture.md#source-map).
 
-```sh
-docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine go test ./internal/docker/ -run TestModuleRef -v
-```
+### Doc map (question → section)
 
-If a local Go ≥1.26 toolchain is present you can run `go build/test/vet ./...` directly;
-the Docker path is just the no-toolchain-required default.
-
-### Lifecycle targets (build the host binary, then run it)
-
-These pass `PROXIMO_SRC=$(pwd)` so the in-stack images build from **local source** (see below).
-
-```sh
-make install    # host setup (CA, resolver, trust) + start stack — asks for sudo once
-make up         # start stack (no host changes)   make down       # stop stack
-make status     # list routed containers          make uninstall  # reverse host changes + tear down
-make e2e        # install + whoami demo + open https://whoami.test
-```
-
-## Architecture (the big picture)
-
-Full diagram and per-service detail: `docs/architecture.md`. Routing label contract: `docs/routing.md`.
-
-- **The CLI is a one-shot orchestrator — there is no proximo daemon.** Each command
-  (`install`/`up`/`down`/`update`/`config tld`/`uninstall`) performs its action and exits. The only
-  long-running processes are the **stack containers**.
-- **The stack is a `docker compose` project embedded in the binary** via `//go:embed`
-  (`internal/docker/assets/`: `docker-compose.yml`, `traefik/`, `dns.Dockerfile`,
-  `watcher.Dockerfile`). On `install`/`up` it is *materialized* to the per-user state home
-  (`~/.proximo/stack/`) with the TLD (`__TLD__`), DNS port (`__DNSPORT__`), and host data-dir
-  (`__DATADIR__`) sentinels substituted, then brought up via the shared `docker.Converge()`
-  (`docker compose up -d --build --pull always`, plus a `--no-cache` rebuild for mobile refs).
-  **Editing an embedded asset has no effect until the binary is rebuilt AND the stack
-  re-materialized (re-`install`/`up`/`update`).**
-- **Three stack services:** `traefik` (HTTPS on :443, routes by `Host`, two providers: Docker
-  labels + file provider on `/etc/traefik/dynamic`), `dns` (miekg/dns wildcard: `*.<tld>` →
-  `127.0.0.1`, published on `127.0.0.1:5354/udp`), `watcher` (the reconcile loop). They share the
-  `~/.proximo/data/traefik` host dir (bind-mounted, not a named volume) — watcher writes
-  routes/certs, Traefik's file provider reads.
-- **The watcher (`internal/docker/watcher.go`) is the engine.** Reconciles on start, on Docker
-  events, and every 30s: selects routed containers, resolves the backend port, attaches Traefik
-  to backend networks, writes one Traefik router/service per container targeting
-  `http://<container-name>:<port>` (name, not IP — survives restarts), and issues one CA-signed
-  cert per container with its hosts as SANs. Containers labeled `proximo.role=*` (the stack
-  itself) are never routed.
-- **TLS:** a P-256 ECDSA local CA (`internal/tls`) generated on first install, added to the OS
-  system trust store + NSS (Firefox/Chromium) via `certutil`. Leaf certs are per-container,
-  capped under 398 days. No `*.<tld>` wildcard (browsers reject TLD-level wildcards).
-- **Routing is opt-in via labels:** `proximo.hosts` (comma-separated, presence opts in),
-  `proximo.port` (omit when the image EXPOSEs exactly one port; ambiguous → skipped + warning),
-  `proximo.enable=false` (park), `proximo.redirect=true` (opt in to the HTTP→HTTPS redirect;
-  off by default — `:80` for a non-opted host 404s, it is not redirected). Native `traefik.*`
-  labels still work in parallel.
-- **Traefik dashboard (always on):** the watcher injects a self-route each reconcile —
-  `https://traefik.<tld>` → `api@internal` (read-only; `api.insecure` off), stable file
-  `proximo-dashboard.yml` + reserved `dashboard` cert id, both carved out of stale cleanup.
-  The watcher reads the TLD from `PROXIMO_TLD` (compose env, like `dns`). `traefik.<tld>` is a
-  **reserved stack host**; `proximo status` lists it via `dashboardRoutes`, not classification.
-- **Opt-in dev observability (`proximo up --observability`):** a compose `observability`
-  profile adds Dozzle (`logs.<tld>`) + Beszel hub/agent (`metrics.<tld>`), routed via the plain
-  label contract — **no watcher changes**. `internal/observability/` owns the runtime-generated
-  hub password (`crypto/rand`, `0600`, mirroring the CA key) and the in-process Beszel bootstrap
-  (first user seeded via `USER_EMAIL`/`USER_PASSWORD` + `AUTO_LOGIN`; hub `getkey` +
-  `universal-token` → agent env file). Staged converge (hub → bootstrap → agent) lives in
-  `docker.ConvergeObservability`; the hub is published on loopback `config.ObsHubPort` only for
-  the bootstrap. Beszel data persists in the `~/.proximo/data/beszel` bind mount (removed when
-  `uninstall` deletes the home). Off by default; `down`/`uninstall` tear it down. See
-  `docs/observability.md`.
-
-### Source map
-
-| Path | Responsibility |
+| Question | Read |
 | --- | --- |
-| `main.go`, `internal/cli/` | Cobra command surface |
-| `internal/config/` | Persisted TLD + per-user paths (state home `~/.proximo`, data dir, DNS port constant) |
-| `internal/dns/` | Wildcard DNS server + host-resolver wiring (macOS `/etc/resolver`, Linux systemd-resolved drop-in) |
-| `internal/tls/` | Local CA, leaf issuance, system + NSS trust |
-| `internal/docker/` | Embedded stack (`assets/`), `compose` driver (`stack.go`), the watcher |
-| `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap |
-| `internal/platform/` | OS / package-manager detection, privileged host ops |
-| `cmd/dnsserver/`, `cmd/watcher/` | Entrypoints for the two in-stack services |
+| Routing label contract & port resolution rules | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels) |
+| Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
+| HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
+| Where watcher warnings appear | [docs/troubleshooting.md — Where to read watcher warnings](docs/troubleshooting.md#where-to-read-watcher-warnings) |
+| Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |
+| What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
+| Observability bootstrap (Beszel hub/agent) | [docs/observability.md — How it is wired](docs/observability.md#how-it-is-wired) |
 
 ## Conventions & gotchas
 
-- **Version → module ref.** Build metadata is injected via ldflags into `internal/version`
-  (`Version`, `Commit`, `Date`). GoReleaser's `{{ .Version }}` strips the leading `v`, so
-  `version.Version` is a **bare semver** (`0.1.0`). The in-stack images are built with
-  `go install …@${PROXIMO_REF}`, which requires a **canonical module version** — so
-  `internal/docker/stack.go:moduleRef()` re-adds the `v` (`0.1.0`→`v0.1.0`; `dev`/empty→`main`).
-  Keep `version.Version` usable as a display string and normalize at the module-ref consumer,
-  not at the goreleaser source.
-- **`PROXIMO_SRC` selects how the dns/watcher images build.** Set (the `make` lifecycle targets
-  do this) → a generated `docker-compose.override.yml` builds them from the local checkout via
-  `Dockerfile.dev` (no publish needed). Unset → the base compose builds them with
-  `go install <module>@<ref>`, which needs the module/tag published.
-- **Binaries are named per OS/arch** (`bin/proximo-<os>-<arch>`) so macOS and Linux builds never
-  clobber each other in a shared tree.
-- **Releases:** push a `vX.Y.Z` tag → `.github/workflows/release.yml` runs GoReleaser (Homebrew
-  cask `filippolmt/tap/proximo`, release archives). A fix to embedded stack assets only reaches
-  installed users on the **next release** (the binary carries its own asset copy).
-- **`install` mutates the host** (resolver file + CA trust, needs sudo once); `uninstall`
-  reverses everything. Linux requires `systemd-resolved` as the active resolver.
-- **OpenSpec** lives in `openspec/` — this repo uses a spec-driven change workflow for proposing
-  features (`openspec/changes/`, `openspec/specs/`).
+Code-level contracts live in the development guide — read the relevant section
+before touching the corresponding code:
+
+- Version → module ref (`moduleRef()` re-adds the `v` GoReleaser strips):
+  [docs/development.md — Version and module ref](docs/development.md#version-and-module-ref)
+- Embedded stack assets & sentinels (edits need rebuild **and** re-materialize):
+  [docs/development.md — Embedded stack assets](docs/development.md#embedded-stack-assets)
+- `PROXIMO_SRC` local-source builds vs published module:
+  [docs/development.md — Local source builds](docs/development.md#local-source-builds-proximo_src)
+- Releases (tag → GoReleaser) and the CI workflows:
+  [docs/development.md — Releases](docs/development.md#releases)
+- **OpenSpec** lives in `openspec/` — this repo uses a spec-driven change workflow for
+  proposing features (`openspec/changes/`, `openspec/specs/`). Local-only tooling: the
+  directory is gitignored and its artifacts never land in PRs.

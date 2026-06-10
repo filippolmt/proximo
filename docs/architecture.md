@@ -165,5 +165,6 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/dns/` | The wildcard DNS server + host-resolver wiring. |
 | `internal/tls/` | Local CA, leaf issuance, system + NSS trust. |
 | `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher. |
+| `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
 | `cmd/dnsserver/`, `cmd/watcher/` | Entrypoints for the two in-stack services. |

@@ -13,7 +13,8 @@ BIN     := bin/$(BINARY)-$(GOOS)-$(GOARCH)
 SRC     := $(CURDIR)
 
 # All Go work runs through Docker — no local Go toolchain required.
-GO_IMAGE    ?= golang:1.26-alpine
+GO_IMAGE     ?= golang:1.26-alpine
+LYCHEE_IMAGE ?= lycheeverse/lychee:latest
 DOCKER_FLAGS := --rm -v "$(CURDIR)":/src -w /src \
 	-v proximo-go-mod:/go/pkg/mod -v proximo-go-build:/root/.cache/go-build \
 	-e CGO_ENABLED=0
@@ -27,7 +28,7 @@ DEMO_COMPOSE := examples/whoami/docker-compose.yml
 DEMO_URL     := https://whoami.test
 OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
-.PHONY: build build-all test vet tidy \
+.PHONY: build build-all test vet tidy check-links \
 	install up down status uninstall \
 	demo demo-down e2e e2e-down clean
 
@@ -58,6 +59,11 @@ vet:
 ## tidy: go mod tidy in Docker
 tidy:
 	docker run $(DOCKER_FLAGS) $(GO_IMAGE) go mod tidy
+
+## check-links: validate Markdown links + anchors (lychee, offline — same as CI)
+check-links:
+	docker run --rm -w /input -v "$(CURDIR)":/input $(LYCHEE_IMAGE) \
+		--offline --include-fragments --no-progress README.md CLAUDE.md docs
 
 # ---- Lifecycle (host binary; build first so the arch always matches) ----------
 
