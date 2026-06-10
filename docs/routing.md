@@ -47,8 +47,15 @@ labels:
 - Surrounding whitespace is trimmed and empty entries are ignored
   (`app.test,,  ,api.test` → `app.test`, `api.test`).
 - Hostnames are validated to a hostname character set; invalid entries are
-  rejected and logged (this also prevents injection into the generated config).
+  rejected and a warning is logged (see
+  [where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings)) —
+  this also prevents injection into the generated config.
 - Use hostnames under the configured TLD (default `.test`) so DNS resolves them.
+
+> **Reserved host.** `traefik.<tld>` (e.g. `traefik.test`) is reserved for the
+> stack's own Traefik dashboard and must not be claimed via `proximo.hosts` —
+> the dashboard route is injected by the watcher on every reconcile, so a
+> container claiming it collides with the stack's router.
 
 ## `proximo.port` — usually you can omit it
 
@@ -57,8 +64,10 @@ The backend port is resolved as:
 1. `proximo.port` if set, else
 2. the single exposed TCP port, auto-detected by inspecting the container, else
 3. **skipped** — when the container exposes zero or several ports and no
-   `proximo.port` is given, the container is not routed and a warning is logged
-   describing the ambiguity. `proximo status` reflects this: it shows the
+   `proximo.port` is given, the container is not routed and a warning describing
+   the ambiguity is logged (see
+   [where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings)).
+   `proximo status` reflects this: it shows the
    container flagged (`⚠ set proximo.port`) rather than as a working route, since
    the watcher does not actually serve it.
 
@@ -139,8 +148,9 @@ schemes across containers freely.
 
 > **Avoid declaring the same host in both schemes.** If a host appears in both a
 > `proximo.hosts` label and a native `traefik.*` router rule, Traefik sees a
-> duplicate router across providers; the watcher logs a warning. Use one scheme
-> per host.
+> duplicate router across providers; the watcher logs a warning (see
+> [where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings)).
+> Use one scheme per host.
 
 ## Multiple networks
 

@@ -23,7 +23,11 @@ Full guides live in [`docs/`](docs/README.md):
 - [Dev-time observability](docs/observability.md) — opt-in `up --observability`
   logs (Dozzle) + metrics (Beszel) dashboards: credential-less and over trusted
   HTTPS (`http://` auto-redirects).
-- [Troubleshooting](docs/troubleshooting.md) — common issues.
+- [Troubleshooting](docs/troubleshooting.md) — common issues. Container
+  labeled but unreachable? Start with the
+  [container not routed checklist](docs/troubleshooting.md#container-not-routed).
+- [Development](docs/development.md) — building, testing from source,
+  versioning, releases.
 
 ## Quick start
 
@@ -61,50 +65,23 @@ open https://traefik.test  # Traefik's own dashboard, always on (traefik.<tld> i
 
 A ready-to-run sample is in [`examples/whoami/`](examples/whoami/). For the label
 contract (multiple hosts, explicit port, opt-out, native Traefik labels) see
-[Routing](docs/routing.md).
+the [routing label table](docs/routing.md#the-proximo-labels). If something
+does not work, the [troubleshooting checklist](docs/troubleshooting.md#container-not-routed)
+walks through the usual causes.
 
 ## Development
 
 No local Go toolchain is required — every Make target runs Go inside the
-`golang` image (with a persistent module/build cache), so **Docker is the only
-prerequisite**:
+`golang` image, so **Docker is the only prerequisite**:
 
 ```sh
 make build      # build bin/proximo-<os>-<arch> for the host (Go runs in Docker)
-make build-all  # cross-compile all targets (darwin,linux × amd64,arm64)
-make test       # run the test suite (always Linux, in the golang image)
-make vet        # go vet
-make tidy       # go mod tidy
+make test       # run the test suite
 ```
 
-The binary is named per OS/arch (`bin/proximo-darwin-arm64`,
-`bin/proximo-linux-amd64`, …) so a macOS and a Linux build never overwrite each
-other in a shared working tree. Override the host target with
-`make build GOOS=linux GOARCH=amd64`.
-
-### Running it via Make
-
-The lifecycle targets build first (so the binary always matches the host) and
-run the host binary, which talks to the host Docker socket:
-
-```sh
-make install   # host setup (CA, resolver, trust) + start stack — asks for sudo
-make up         # start the stack (no host changes)
-make status     # list routed containers
-make down        # stop the stack
-make uninstall  # reverse host changes + tear down
-make e2e         # install + start the whoami demo + open https://whoami.test
-make e2e-down    # stop demo + uninstall
-```
-
-### Local testing without publishing
-
-The stack's `dns` and `watcher` images are normally built with
-`go install github.com/filippolmt/proximo/cmd/...@<ref>`, which needs the module
-to be published. The Make lifecycle targets above pass `PROXIMO_SRC=$(pwd)`
-automatically, so those images build **from local source** (no push, no module
-fetch) via a generated `docker-compose.override.yml`. Run the binary directly
-without `PROXIMO_SRC` to use the published images instead.
+Everything else — all Make targets, the lifecycle targets, running the stack
+from local source (`PROXIMO_SRC`), versioning, embedded assets, releases — is
+in the [development guide](docs/development.md).
 
 ## License
 
