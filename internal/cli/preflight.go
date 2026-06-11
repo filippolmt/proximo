@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/docker/docker/client"
 	"github.com/filippolmt/proximo/internal/platform"
+	"github.com/moby/moby/client"
 )
 
 // preflight verifies that the platform, package manager, and Docker daemon are
@@ -25,7 +25,7 @@ func checkDocker() error {
 	if !platform.Has("docker") {
 		return fmt.Errorf("docker is not installed or not on PATH")
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return fmt.Errorf("docker client: %w", err)
 	}
@@ -33,7 +33,7 @@ func checkDocker() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := cli.Ping(ctx); err != nil {
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
 		return fmt.Errorf("cannot reach the Docker daemon (is Docker running?): %w", err)
 	}
 	return nil

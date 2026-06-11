@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 )
 
 func makeSummary(labels map[string]string) container.Summary {
