@@ -13,28 +13,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/go-connections/nat"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/tls"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 // failInspect returns an inspector that fails the test if called — for cases
 // where port resolution must not need ContainerInspect.
 func failInspect(t *testing.T) inspector {
 	t.Helper()
-	return func(context.Context, string) (container.InspectResponse, error) {
+	return func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 		t.Fatal("inspect must not be called")
-		return container.InspectResponse{}, nil
+		return client.ContainerInspectResult{}, nil
 	}
 }
 
 // exposeInspect returns an inspector reporting the given exposed ports.
-func exposeInspect(ports nat.PortSet) inspector {
-	return func(context.Context, string) (container.InspectResponse, error) {
-		return container.InspectResponse{Config: &container.Config{ExposedPorts: ports}}, nil
+func exposeInspect(ports network.PortSet) inspector {
+	return func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		return client.ContainerInspectResult{Container: container.InspectResponse{Config: &container.Config{ExposedPorts: ports}}}, nil
 	}
 }
 
@@ -181,14 +181,14 @@ func TestClassifyExplicitPort(t *testing.T) {
 func TestClassifyPortResolution(t *testing.T) {
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test"})
 
-	rc, ok, _ := classify(context.Background(), exposeInspect(nat.PortSet{"3000/tcp": struct{}{}}), c)
+	rc, ok, _ := classify(context.Background(), exposeInspect(network.PortSet{network.MustParsePort("3000/tcp"): {}}), c)
 	if !ok || rc.port != 3000 {
 		t.Fatalf("single exposed port = (port=%d, ok=%v), want (3000,true)", rc.port, ok)
 	}
 
-	for name, ports := range map[string]nat.PortSet{
+	for name, ports := range map[string]network.PortSet{
 		"zero":     {},
-		"multiple": {"80/tcp": struct{}{}, "8080/tcp": struct{}{}},
+		"multiple": {network.MustParsePort("80/tcp"): {}, network.MustParsePort("8080/tcp"): {}},
 	} {
 		rc, ok, info := classify(context.Background(), exposeInspect(ports), c)
 		if ok {
@@ -231,19 +231,19 @@ func TestWatcherAndStatusShareClassify(t *testing.T) {
 }
 
 func TestPortFromExposed(t *testing.T) {
-	single := nat.PortSet{"3000/tcp": struct{}{}}
+	single := network.PortSet{network.MustParsePort("3000/tcp"): {}}
 	if p, n, ok := portFromExposed(single); !ok || p != 3000 || n != 1 {
 		t.Fatalf("single = (%d,%d,%v), want (3000,1,true)", p, n, ok)
 	}
 	// One TCP plus a UDP port still resolves to the single TCP port.
-	tcpAndUDP := nat.PortSet{"3000/tcp": struct{}{}, "53/udp": struct{}{}}
+	tcpAndUDP := network.PortSet{network.MustParsePort("3000/tcp"): {}, network.MustParsePort("53/udp"): {}}
 	if p, n, ok := portFromExposed(tcpAndUDP); !ok || p != 3000 || n != 1 {
 		t.Fatalf("tcp+udp = (%d,%d,%v), want (3000,1,true)", p, n, ok)
 	}
-	if _, n, ok := portFromExposed(nat.PortSet{}); ok || n != 0 {
+	if _, n, ok := portFromExposed(network.PortSet{}); ok || n != 0 {
 		t.Errorf("zero ports = (n=%d,ok=%v), want (0,false)", n, ok)
 	}
-	many := nat.PortSet{"80/tcp": struct{}{}, "8080/tcp": struct{}{}}
+	many := network.PortSet{network.MustParsePort("80/tcp"): {}, network.MustParsePort("8080/tcp"): {}}
 	if _, n, ok := portFromExposed(many); ok || n != 2 {
 		t.Errorf("multiple TCP ports = (n=%d,ok=%v), want (2,false)", n, ok)
 	}
@@ -449,36 +449,36 @@ func newFakeDocker() *fakeDocker {
 	}
 }
 
-func (f *fakeDocker) ContainerList(context.Context, container.ListOptions) ([]container.Summary, error) {
+func (f *fakeDocker) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listN++
-	return f.containers, nil
+	return client.ContainerListResult{Items: f.containers}, nil
 }
 
-func (f *fakeDocker) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
-	return f.inspect[id], nil
+func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+	return client.ContainerInspectResult{Container: f.inspect[id]}, nil
 }
 
-func (f *fakeDocker) NetworkConnect(_ context.Context, netID, _ string, _ *network.EndpointSettings) error {
+func (f *fakeDocker) NetworkConnect(_ context.Context, netID string, _ client.NetworkConnectOptions) (client.NetworkConnectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.connected = append(f.connected, netID)
-	return nil
+	return client.NetworkConnectResult{}, nil
 }
 
-func (f *fakeDocker) NetworkDisconnect(_ context.Context, netID, _ string, _ bool) error {
+func (f *fakeDocker) NetworkDisconnect(_ context.Context, netID string, _ client.NetworkDisconnectOptions) (client.NetworkDisconnectResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.disconnected = append(f.disconnected, netID)
-	return nil
+	return client.NetworkDisconnectResult{}, nil
 }
 
-func (f *fakeDocker) Events(context.Context, events.ListOptions) (<-chan events.Message, <-chan error) {
+func (f *fakeDocker) Events(context.Context, client.EventsListOptions) client.EventsResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.eventsN++
-	return f.events, f.errs
+	return client.EventsResult{Messages: f.events, Err: f.errs}
 }
 
 func (f *fakeDocker) listCount() int  { f.mu.Lock(); defer f.mu.Unlock(); return f.listN }

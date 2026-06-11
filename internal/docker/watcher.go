@@ -15,13 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/go-connections/nat"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/tls"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 const (
@@ -93,11 +92,11 @@ type routedContainer struct {
 // tests pass a fake. It mirrors the existing inspector seam: a minimal
 // interface, not the whole SDK surface.
 type dockerAPI interface {
-	ContainerList(context.Context, container.ListOptions) ([]container.Summary, error)
-	ContainerInspect(context.Context, string) (container.InspectResponse, error)
-	NetworkConnect(context.Context, string, string, *network.EndpointSettings) error
-	NetworkDisconnect(context.Context, string, string, bool) error
-	Events(context.Context, events.ListOptions) (<-chan events.Message, <-chan error)
+	ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error)
+	ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+	NetworkConnect(context.Context, string, client.NetworkConnectOptions) (client.NetworkConnectResult, error)
+	NetworkDisconnect(context.Context, string, client.NetworkDisconnectOptions) (client.NetworkDisconnectResult, error)
+	Events(context.Context, client.EventsListOptions) client.EventsResult
 }
 
 // Watcher keeps Traefik attached to the Docker networks of routed containers and
@@ -146,11 +145,11 @@ func NewWatcher() (*Watcher, error) {
 func (w *Watcher) Run(ctx context.Context) error {
 	w.reconcileLogged(ctx)
 
-	flt := filters.NewArgs(
-		filters.Arg("type", string(events.ContainerEventType)),
-		filters.Arg("type", string(events.NetworkEventType)),
-	)
-	msgs, errs := w.cli.Events(ctx, events.ListOptions{Filters: flt})
+	flt := make(client.Filters).
+		Add("type", string(events.ContainerEventType)).
+		Add("type", string(events.NetworkEventType))
+	res := w.cli.Events(ctx, client.EventsListOptions{Filters: flt})
+	msgs, errs := res.Messages, res.Err
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -169,7 +168,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 			log.Printf("proximo watcher: event stream error: %v; reconnecting", err)
 			time.Sleep(2 * time.Second)
-			msgs, errs = w.cli.Events(ctx, events.ListOptions{Filters: flt})
+			res := w.cli.Events(ctx, client.EventsListOptions{Filters: flt})
+			msgs, errs = res.Messages, res.Err
 		}
 	}
 }
@@ -181,10 +181,11 @@ func (w *Watcher) reconcileLogged(ctx context.Context) {
 }
 
 func (w *Watcher) reconcile(ctx context.Context) error {
-	containers, err := w.cli.ContainerList(ctx, container.ListOptions{})
+	result, err := w.cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return err
 	}
+	containers := result.Items
 
 	traefikID, traefikNets := findTraefik(containers)
 	if traefikID == "" {
@@ -218,7 +219,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 		if _, already := traefikNets[netID]; already {
 			continue
 		}
-		if err := w.cli.NetworkConnect(ctx, netID, traefikID, &network.EndpointSettings{}); err != nil {
+		if _, err := w.cli.NetworkConnect(ctx, netID, client.NetworkConnectOptions{Container: traefikID, EndpointConfig: &network.EndpointSettings{}}); err != nil {
 			log.Printf("proximo watcher: connect traefik to %s: %v", short(netID), err)
 			continue
 		}
@@ -229,7 +230,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 		if isStackNetwork(name) || desired[netID] {
 			continue
 		}
-		if err := w.cli.NetworkDisconnect(ctx, netID, traefikID, true); err != nil {
+		if _, err := w.cli.NetworkDisconnect(ctx, netID, client.NetworkDisconnectOptions{Container: traefikID, Force: true}); err != nil {
 			log.Printf("proximo watcher: disconnect traefik from %s: %v", short(netID), err)
 			continue
 		}
@@ -262,7 +263,7 @@ func (w *Watcher) dashboardRoute() routedContainer {
 // inspector inspects a container by ID. Both the watcher (w.cli.ContainerInspect)
 // and the host CLI (cli.ContainerInspect) satisfy it, so classify runs in either
 // context without a *Watcher receiver.
-type inspector func(context.Context, string) (container.InspectResponse, error)
+type inspector func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 
 // classifyInfo carries diagnostics produced by classify for the caller to log.
 // The watcher logs them; `proximo status` ignores them (it stays quiet).
@@ -340,11 +341,12 @@ func resolveBackendPort(ctx context.Context, inspect inspector, c container.Summ
 		return p, true, portResult{}
 	}
 
-	info, err := inspect(ctx, c.ID)
+	result, err := inspect(ctx, c.ID, client.ContainerInspectOptions{})
 	if err != nil {
 		return 0, false, portResult{inspectErr: err}
 	}
-	var ports nat.PortSet
+	info := result.Container
+	var ports network.PortSet
 	if info.Config != nil {
 		ports = info.Config.ExposedPorts
 	}
@@ -386,11 +388,11 @@ func (res portResult) hint() string {
 // portFromExposed returns the single exposed TCP port (ok=true) and the number
 // of TCP ports found. ok is false when the set holds zero or more than one TCP
 // port; count then explains the ambiguity for logging.
-func portFromExposed(ports nat.PortSet) (port, count int, ok bool) {
+func portFromExposed(ports network.PortSet) (port, count int, ok bool) {
 	var tcp []int
 	for p := range ports {
-		if p.Proto() == "tcp" {
-			tcp = append(tcp, p.Int())
+		if p.Proto() == network.TCP {
+			tcp = append(tcp, int(p.Num()))
 		}
 	}
 	if len(tcp) == 1 {

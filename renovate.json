@@ -2,5 +2,18 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "GO_IMAGE\\s*\\?=\\s*golang:(?<currentValue>[^-\\s]+)-alpine"
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "docker"
+    }
   ]
 }

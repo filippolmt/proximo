@@ -6,15 +6,16 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
-// newClient builds a Docker API client from the environment with API-version
-// negotiation — the single construction used by every host-side Docker query
-// (Routes, StackVersion) and the in-stack watcher, so they cannot drift.
+// newClient builds a Docker API client from the environment (moby/client
+// negotiates the daemon API version automatically) — the single construction
+// used by every host-side Docker query (Routes, StackVersion) and the in-stack
+// watcher, so they cannot drift.
 func newClient() (*client.Client, error) {
-	return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	return client.New(client.FromEnv)
 }
 
 // Route is a routed container and a URL it is reachable at. When Note is set the
@@ -43,10 +44,11 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	}
 	defer cli.Close()
 
-	cs, err := cli.ContainerList(ctx, container.ListOptions{})
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	cs := res.Items
 
 	routes := dashboardRoutes(cs, tld)
 	for _, c := range cs {
@@ -116,11 +118,11 @@ func StackVersion(ctx context.Context) (ver string, running bool, err error) {
 	}
 	defer cli.Close()
 
-	cs, err := cli.ContainerList(ctx, container.ListOptions{})
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return "", false, err
 	}
-	for _, c := range cs {
+	for _, c := range res.Items {
 		if _, isStack := c.Labels[roleLabel]; isStack {
 			return c.Labels[versionLabel], true, nil
 		}
