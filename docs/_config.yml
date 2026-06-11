@@ -1,0 +1,6 @@
+title: proximo
+description: Reach any Docker container at https://<name>.test — automatic DNS and trusted HTTPS
+theme: jekyll-theme-primer
+markdown: GFM
+plugins:
+  - jekyll-relative-links

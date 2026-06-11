@@ -110,7 +110,7 @@ map** of it — every `##` section of every guide is linked below.
 ## New here?
 
 The install-label-open walkthrough lives in the
-[README quick start](../README.md#quick-start); the mental model (one-shot CLI,
+[README quick start](https://github.com/filippolmt/proximo#quick-start); the mental model (one-shot CLI,
 no daemon, DNS + TLS produced natively in Go, opt-in routing) is in
 [Architecture — The CLI is a one-shot orchestrator](architecture.md#the-cli-is-a-one-shot-orchestrator)
 and [The big picture](architecture.md#the-big-picture).
