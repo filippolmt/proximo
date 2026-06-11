@@ -102,7 +102,7 @@ map** of it — every `##` section of every guide is linked below.
 
 [Build and test](development.md#build-and-test) ·
 [Lifecycle targets](development.md#lifecycle-targets) ·
-[Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds-proximo_src) ·
+[Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds) ·
 [Version and module ref](development.md#version-and-module-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
 [Releases](development.md#releases)

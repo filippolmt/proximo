@@ -32,7 +32,7 @@ open https://whoami.test     # trusted HTTPS, no warning
 proximo status
 ```
 
-## `proximo.hosts` — opt in and pick the host(s)
+## proximo.hosts — opt in and pick the host(s)
 
 Declaring `proximo.hosts` is the **only mandatory step** to be routed; no
 separate enable label is needed.
@@ -57,7 +57,7 @@ labels:
 > the dashboard route is injected by the watcher on every reconcile, so a
 > container claiming it collides with the stack's router.
 
-## `proximo.port` — usually you can omit it
+## proximo.port — usually you can omit it
 
 The backend port is resolved as:
 
@@ -77,7 +77,7 @@ labels:
   - "proximo.port=8080"      # needed only when EXPOSE is 0 or many ports
 ```
 
-## `proximo.enable` — temporary opt-out
+## proximo.enable — temporary opt-out
 
 Defaults to `true`. Park a container without deleting its labels:
 
@@ -90,7 +90,7 @@ labels:
 Falsy values are `false`, `0`, `no` (case-insensitive). Anything else (or
 absence) means enabled.
 
-## `proximo.redirect` — opt in to the HTTP→HTTPS redirect
+## proximo.redirect — opt in to the HTTP→HTTPS redirect
 
 Defaults to `false`. By default a routed container is served on HTTPS only:
 `https://<host>` routes, while a plain `http://<host>` request is **not**

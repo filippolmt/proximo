@@ -45,7 +45,7 @@ before touching the corresponding code:
 - Embedded stack assets & sentinels (edits need rebuild **and** re-materialize):
   [docs/development.md — Embedded stack assets](docs/development.md#embedded-stack-assets)
 - `PROXIMO_SRC` local-source builds vs published module:
-  [docs/development.md — Local source builds](docs/development.md#local-source-builds-proximo_src)
+  [docs/development.md — Local source builds](docs/development.md#local-source-builds)
 - Releases (tag → GoReleaser) and the CI workflows:
   [docs/development.md — Releases](docs/development.md#releases)
 - **OpenSpec** lives in `openspec/` — this repo uses a spec-driven change workflow for

@@ -77,7 +77,7 @@ This runs, in order:
 When it finishes, containers labeled with a host under the TLD are reachable at
 `https://<host>` with trusted HTTPS.
 
-## What `install` changes on your host
+## What install changes on your host
 
 Everything below is created by `install` and removed by `uninstall`.
 
@@ -86,7 +86,7 @@ Everything below is created by `install` and removed by `uninstall`.
 | **macOS** | `/etc/resolver/<tld>` → `nameserver 127.0.0.1` + `port 5354` | CA added to the system keychain trust store + NSS DBs (if any) |
 | **Linux** | `/etc/systemd/resolved.conf.d/proximo-<tld>.conf` → `DNS=127.0.0.1:5354`, `Domains=~<tld>`, then `systemd-resolved` is restarted | CA added to the system trust store + NSS DBs via `certutil` |
 
-## State home (`~/.proximo`)
+## State home (~/.proximo)
 
 All of proximo's per-user state lives under a single user-owned home directory,
 **`~/.proximo`** (literally `$HOME/.proximo` on both macOS and Linux — not the

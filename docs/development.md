@@ -40,7 +40,7 @@ directly; the Docker path is just the no-toolchain-required default.
 These build first (so the binary always matches the host) and run the host
 binary, which talks to the host Docker socket. They pass `PROXIMO_SRC=$(pwd)`
 automatically so the in-stack images build from
-[local source](#local-source-builds-proximo_src):
+[local source](#local-source-builds):
 
 ```sh
 make install    # host setup (CA, resolver, trust) + start stack — asks for sudo
@@ -52,7 +52,7 @@ make e2e        # install + start the whoami demo + open https://whoami.test
 make e2e-down   # stop demo + uninstall
 ```
 
-## Local source builds (`PROXIMO_SRC`)
+## Local source builds
 
 The stack's `dns` and `watcher` images are normally built with
 `go install github.com/filippolmt/proximo/cmd/...@<ref>`, which needs the
