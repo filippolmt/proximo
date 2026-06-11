@@ -19,7 +19,7 @@ governs both — the CLI is stamped with its version, and the in-stack `dns` /
   assets, rebuilds the in-stack images at the CLI version, and re-pulls Traefik,
   so the running stack matches the installed CLI.
 
-## `proximo update`
+## proximo update
 
 ```sh
 proximo update

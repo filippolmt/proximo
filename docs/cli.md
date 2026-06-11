@@ -24,7 +24,7 @@ proximo <command> [args]
 
 ---
 
-## `proximo install`
+## proximo install
 
 Preflight, generate the CA, configure the host resolver, install CA trust, and
 start the stack. This is the only command that changes privileged host state.
@@ -38,7 +38,7 @@ resolver and trust steps re-apply cleanly. See
 [Installation](installation.md#step-2--one-time-host-setup) for the full step
 list and exactly what it writes to your host.
 
-## `proximo up`
+## proximo up
 
 Start (or rebuild) the embedded stack **without** touching host configuration.
 Use it after a reboot or a `down`.
@@ -61,7 +61,7 @@ your own containers.
 applies any pending update — rebuilding the in-stack images at the installed CLI
 version and re-pulling Traefik. See [Updating](updating.md).
 
-### `--observability`
+### --observability
 
 ```sh
 proximo up --observability
@@ -74,7 +74,7 @@ HTTP→HTTPS redirect, so `http://logs.<tld>` / `http://metrics.<tld>` auto-redi
 to the trusted https host. Off by default: a plain `up` starts neither. `down` /
 `uninstall` tear them down too. See [Dev-time observability](observability.md).
 
-## `proximo down`
+## proximo down
 
 Stop and remove the stack containers — the core services **and** the opt-in
 observability dashboards (the profile is enabled on teardown, so they do not
@@ -87,7 +87,7 @@ proximo down
 
 A no-op if the stack was never materialized.
 
-### `--observability`
+### --observability
 
 Stop **only** the observability dashboards (Dozzle + Beszel), leaving the core
 stack running:
@@ -96,7 +96,7 @@ stack running:
 proximo down --observability
 ```
 
-## `proximo update`
+## proximo update
 
 Converge the running stack to the **installed CLI version**: re-materialize the
 embedded assets, rebuild the `dns` / `watcher` images at the CLI version, and
@@ -119,7 +119,7 @@ proximo update --force   # rebuild images without the build cache
 
 See [Updating proximo](updating.md) for the full model.
 
-## `proximo status`
+## proximo status
 
 List the **effective** routing state — the routes the watcher actually serves,
 not just declared intent. It uses the same classifier the watcher uses, so the
@@ -163,7 +163,7 @@ read-only **skew warning** recommending `proximo update` (it never rebuilds):
 ⚠ stack is running 0.1.0 but the CLI is 0.2.0; run `proximo update` to converge
 ```
 
-## `proximo config tld`
+## proximo config tld
 
 Change the top-level domain routed to the local proxy. Updates the host resolver
 for the new TLD, persists it, and restarts the stack so routing follows.
@@ -180,7 +180,7 @@ proximo config tld dev    # containers become reachable at <name>.dev
 
 Default TLD is `.test` (reserved by RFC 6761, never collides with mDNS).
 
-## `proximo config ca-path`
+## proximo config ca-path
 
 Print the absolute path of the local CA certificate (PEM):
 
@@ -196,7 +196,7 @@ does not exist yet (proximo not installed yet), so callers must check existence
 themselves; the command itself is side-effect free and never creates
 directories.
 
-## `proximo uninstall`
+## proximo uninstall
 
 Reverse everything `install` did and tear down the stack:
 
@@ -218,7 +218,7 @@ proximo uninstall
 
 The host is restored to its prior state.
 
-## `proximo version`
+## proximo version
 
 Print the build metadata (version, commit, build date). Works without Docker.
 
