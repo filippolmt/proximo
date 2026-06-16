@@ -24,7 +24,7 @@ func newClient() (*client.Client, error) {
 type Route struct {
 	Container   string
 	Host        string
-	Path        string   // proximo.path prefix scoping the route ("" = all paths)
+	Path        string // proximo.path prefix scoping the route ("" = all paths)
 	URL         string
 	Note        string
 	Middlewares []string // active proximo middlewares (auth/cors/headers), in chain order

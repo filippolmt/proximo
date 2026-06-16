@@ -94,16 +94,16 @@ var unsafeNameRe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
 // routedContainer is the per-container routing model built during reconcile.
 type routedContainer struct {
-	name     string   // primary container name (used as the backend DNS name)
-	id       string   // container ID (for collision disambiguation)
-	safe     string   // sanitized name used for filenames / router ids
-	hosts    []string // routed hostnames
-	port     int      // resolved backend port (proximo path only)
-	proximo  bool     // true when routed via proximo.hosts (generate dynamic config)
-	redirect bool     // true when proximo.redirect opts in to an HTTP->HTTPS redirect
-	path     string   // proximo.path prefix scoping the routes ("" = match all paths)
-	strip    bool     // true when proximo.path.strip removes the prefix before the backend
-	internal bool     // routed to a Traefik internal service (api@internal): no backend port is resolved
+	name     string        // primary container name (used as the backend DNS name)
+	id       string        // container ID (for collision disambiguation)
+	safe     string        // sanitized name used for filenames / router ids
+	hosts    []string      // routed hostnames
+	port     int           // resolved backend port (proximo path only)
+	proximo  bool          // true when routed via proximo.hosts (generate dynamic config)
+	redirect bool          // true when proximo.redirect opts in to an HTTP->HTTPS redirect
+	path     string        // proximo.path prefix scoping the routes ("" = match all paths)
+	strip    bool          // true when proximo.path.strip removes the prefix before the backend
+	internal bool          // routed to a Traefik internal service (api@internal): no backend port is resolved
 	mw       middlewareSet // curated proximo middlewares (auth/cors/headers) attached to the router
 }
 
