@@ -17,6 +17,9 @@ keep working for advanced cases.
 | `proximo.path` | no | — | Path **prefix** (must start with `/`) scoping the routes, so several containers can share one host on distinct prefixes. Invalid values skip the container. |
 | `proximo.path.strip` | no | `false` | Strip the matched prefix before the backend (so `/api/users` arrives as `/users`). Truthy: `true`/`1`/`yes`. |
 | `proximo.health` | no | `true` | Gate routing on the container's Docker healthcheck: a container that declares one is routed only while `healthy`. Set to `false`/`0`/`no` to route as soon as it is running. No effect on containers without a healthcheck. |
+| `proximo.auth` | no | — | Require HTTP basic auth. Comma-separated `user:password` pairs; plaintext passwords are hashed on disk. A pair missing `:` is skipped with a warning. |
+| `proximo.cors` | no | — | Add CORS response headers. `true` for permissive CORS, or a comma-separated allowed-origin list. A blank value is skipped with a warning. |
+| `proximo.header.<Name>` | no | — | Add a custom response header `<Name>: <value>`. Repeatable; an invalid header name is skipped with a warning. |
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
 single port:
@@ -198,6 +201,55 @@ services:
 `proximo status` lists each container with its prefix in the URL
 (`https://app.test/api`), so you can see the split at a glance.
 
+## proximo middlewares — auth, CORS, custom headers
+
+Three curated labels reproduce the edge behavior you usually need in front of a
+dev container without hand-writing `traefik.*` middleware blocks. They are opt-in
+and compose: a router can carry all three, applied in the fixed order
+**auth → CORS → custom headers**. Each validates independently — a malformed
+value invalidates only *that* middleware (skipped with a warning), leaving the
+container's routing and its other middlewares intact.
+
+```yaml
+services:
+  api:
+    image: my/api
+    labels:
+      - "proximo.hosts=api.test"
+      - "proximo.auth=alice:s3cret, bob:hunter2"  # basic auth, two users
+      - "proximo.cors=true"                        # permissive CORS
+      - "proximo.header.X-Env=dev"                 # X-Env: dev on responses
+```
+
+**`proximo.auth`** — comma-separated `user:password` pairs. Requests without
+valid credentials get `401`; valid ones are forwarded. Plaintext passwords are
+**bcrypt-hashed when written to the proxy config**, so the dynamic file never
+stores a cleartext secret. A value already in htpasswd hash form (`$2y$`/`$2a$`/
+`$2b$`/`$apr1$`/`$1$` prefix) is passed through unchanged — use it to keep the
+plaintext out of your compose file entirely.
+
+> **Security note.** The password you put in the label is visible in
+> `docker inspect` (Docker stores labels verbatim). proximo hashes it *on disk*
+> in the proxy config, not in the label. This is a dev-time tool; for a host you
+> care about, pass a pre-hashed value so no cleartext lives anywhere.
+
+**`proximo.cors`** — `true` (or `1`/`yes`) emits permissive CORS response
+headers (all origins, common methods, any header) and answers `OPTIONS`
+preflight. Scope it instead with a comma-separated origin list, e.g.
+`proximo.cors=https://app.test`, to advertise only those origins.
+
+**`proximo.header.<Name>`** — adds a custom response header. Repeat the label
+for several headers (`proximo.header.X-Env=dev`,
+`proximo.header.X-Region=eu`); they accumulate.
+
+`proximo status` shows a **MIDDLEWARES** column listing the active middlewares
+per container so you can confirm what is wired.
+
+> **The curated set is deliberately small.** Rate limiting, retries,
+> forward-auth, IP allowlists and the rest of Traefik's catalog are out of scope
+> — raw `traefik.*` middlewares remain the escape hatch (see
+> [Native Traefik labels](#native-traefik-labels-backward-compatible)).
+
 ## What happens behind the scenes
 
 For each routed container the watcher:
@@ -225,10 +277,13 @@ labels:
 ```
 
 Reach for raw `traefik.*` labels when you need features not expressible with
-proximo labels — custom middlewares, exact-`Path` or regex rules, header
-matching. Path-**prefix** composition no longer needs them: use
-[`proximo.path`](#proximopath--split-one-host-across-containers) for the common
-SPA-plus-API split. You can mix schemes across containers freely.
+proximo labels — middlewares beyond the curated set, exact-`Path` or regex
+rules, header matching. The common edge needs no longer require them: use
+[`proximo.path`](#proximopath--split-one-host-across-containers) for the
+SPA-plus-API split and the
+[proximo middlewares](#proximo-middlewares--auth-cors-custom-headers) for basic
+auth, CORS, and custom response headers. You can mix schemes across containers
+freely.
 
 > **Avoid declaring the same host in both schemes.** If a host appears in both a
 > `proximo.hosts` label and a native `traefik.*` router rule, Traefik sees a
@@ -272,6 +327,12 @@ labels:
 - "proximo.hosts=app.test"
 - "proximo.path=/api"          # app.test/api/... -> this container
 - "proximo.path.strip=true"    # strip /api before the backend (optional)
+
+# Middlewares: basic auth, CORS, custom response headers (compose in order)
+- "proximo.hosts=api.test"
+- "proximo.auth=alice:s3cret"  # plaintext hashed on disk; or pass a $2y$ hash
+- "proximo.cors=true"          # or a comma-separated allowed-origin list
+- "proximo.header.X-Env=dev"   # repeatable
 
 # Advanced: native Traefik labels
 - "traefik.enable=true"

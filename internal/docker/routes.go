@@ -22,11 +22,12 @@ func newClient() (*client.Client, error) {
 // container opted in but is not effectively served (e.g. an unresolved backend
 // port the watcher skips); URL is then empty and Note explains why.
 type Route struct {
-	Container string
-	Host      string
-	Path      string // proximo.path prefix scoping the route ("" = all paths)
-	URL       string
-	Note      string
+	Container   string
+	Host        string
+	Path        string // proximo.path prefix scoping the route ("" = all paths)
+	URL         string
+	Note        string
+	Middlewares []string // active proximo middlewares (auth/cors/headers), in chain order
 }
 
 // Routes lists the effective routing state `proximo status` reports. It uses the
@@ -87,7 +88,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	kept, _ := resolveRouteConflicts(served)
 	for _, rc := range kept {
 		for _, host := range rc.hosts {
-			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path})
+			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active()})
 		}
 	}
 	sort.Slice(routes, func(i, j int) bool {
