@@ -24,6 +24,7 @@ func newClient() (*client.Client, error) {
 type Route struct {
 	Container string
 	Host      string
+	Path      string // proximo.path prefix scoping the route ("" = all paths)
 	URL       string
 	Note      string
 }
@@ -51,6 +52,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	cs := res.Items
 
 	routes := dashboardRoutes(cs, tld)
+	var served []routedContainer
 	for _, c := range cs {
 		if !isRouted(c) {
 			continue
@@ -59,24 +61,32 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 		if !ok && !info.portFailed {
 			continue // not a host route (e.g. a native container with no Host rule)
 		}
-		// A proximo route the watcher skips for an unresolved port is surfaced
-		// with the same reason the watcher logs, so status explains why it is
-		// missing instead of hiding it.
-		note := ""
 		if !ok {
-			note = info.port.hint()
-		}
-		for _, host := range rc.hosts {
-			r := Route{Container: rc.name, Host: host}
-			if ok {
-				r.URL = "https://" + host
-			} else {
-				r.Note = note
+			// A proximo route the watcher skips for an unresolved port is
+			// surfaced with the same reason the watcher logs, so status explains
+			// why it is missing instead of hiding it.
+			for _, host := range rc.hosts {
+				routes = append(routes, Route{Container: rc.name, Host: host, Note: info.port.hint()})
 			}
-			routes = append(routes, r)
+			continue
+		}
+		served = append(served, rc)
+	}
+	// Apply the same (host, prefix) conflict resolution the watcher uses so
+	// status lists only the routes actually served (status stays quiet about
+	// the dropped losers — the watcher logs them).
+	kept, _ := resolveRouteConflicts(served)
+	for _, rc := range kept {
+		for _, host := range rc.hosts {
+			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path})
 		}
 	}
-	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Host != routes[j].Host {
+			return routes[i].Host < routes[j].Host
+		}
+		return routes[i].Path < routes[j].Path
+	})
 	return routes, nil
 }
 

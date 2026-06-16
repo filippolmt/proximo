@@ -973,3 +973,171 @@ func TestDynamicWritesLeaveNoTemps(t *testing.T) {
 		}
 	}
 }
+
+// TestIsProximoPathStrip: path.strip reuses the redirect truthy helper — on for
+// true/1/yes (case-insensitive), off otherwise and by default (1.1).
+func TestIsProximoPathStrip(t *testing.T) {
+	for _, v := range []string{"true", "TRUE", "1", "yes", " Yes "} {
+		if !isProximoPathStrip(map[string]string{proximoPathStripLabel: v}) {
+			t.Errorf("proximo.path.strip=%q should strip", v)
+		}
+	}
+	for _, v := range []string{"", "false", "0", "no", "garbage"} {
+		if isProximoPathStrip(map[string]string{proximoPathStripLabel: v}) {
+			t.Errorf("proximo.path.strip=%q should not strip", v)
+		}
+	}
+}
+
+// TestParseProximoPath: absent label is valid (no prefix); a leading-slash value
+// is accepted; a value without a leading slash (or with unsafe characters) is
+// rejected so the container is skipped (1.1).
+func TestParseProximoPath(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+		ok   bool
+	}{
+		{"", "", true},
+		{"/api", "/api", true},
+		{"/api/v2", "/api/v2", true},
+		{" /api ", "/api", true},
+		{"api", "api", false},
+		{"/bad`inject", "/bad`inject", false},
+		{"/bad space", "/bad space", false},
+	}
+	for _, tt := range tests {
+		got, ok := parseProximoPath(map[string]string{proximoPathLabel: tt.raw})
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("parseProximoPath(%q) = (%q,%v), want (%q,%v)", tt.raw, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+// TestClassifyInvalidPath: a proximo.path without a leading slash makes the
+// container not-routed and surfaces the bad value for the watcher to log (1.1).
+func TestClassifyInvalidPath(t *testing.T) {
+	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoPathLabel: "api"})
+	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	if ok {
+		t.Fatal("invalid path should not route")
+	}
+	if info.invalidPath != "api" {
+		t.Errorf("invalidPath = %q, want %q", info.invalidPath, "api")
+	}
+	if info.portFailed {
+		t.Error("invalid path should short-circuit before port resolution")
+	}
+	if !slices.Equal(rc.hosts, []string{"app.test"}) {
+		t.Errorf("rc should keep its hosts, got %v", rc.hosts)
+	}
+}
+
+// TestClassifyPathThreaded: a valid proximo.path and proximo.path.strip flow
+// into the route model alongside the resolved port (1.2).
+func TestClassifyPathThreaded(t *testing.T) {
+	c := makeSummary(map[string]string{
+		proximoHostsLabel:     "app.test",
+		proximoPortLabel:      "8080",
+		proximoPathLabel:      "/api",
+		proximoPathStripLabel: "true",
+	})
+	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	if !ok || rc.path != "/api" || !rc.strip || rc.port != 8080 {
+		t.Fatalf("classify path = (path=%q, strip=%v, port=%d, ok=%v), want (/api,true,8080,true)",
+			rc.path, rc.strip, rc.port, ok)
+	}
+}
+
+// TestRenderRouterPath: a path prefix produces a Host&&PathPrefix rule with a
+// prefix-length priority; multiple hosts are parenthesized before the && (2.1, 2.2).
+func TestRenderRouterPath(t *testing.T) {
+	one := routedContainer{name: "api", safe: "api", hosts: []string{"app.test"}, port: 80, proximo: true, path: "/api"}
+	out := string(renderRouter(one))
+	for _, w := range []string{
+		"rule: \"Host(`app.test`) && PathPrefix(`/api`)\"",
+		"priority: 4\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("single-host path router missing %q\n---\n%s", w, out)
+		}
+	}
+
+	multi := routedContainer{name: "api", safe: "api", hosts: []string{"app.test", "api.test"}, port: 80, proximo: true, path: "/api"}
+	out = string(renderRouter(multi))
+	if !strings.Contains(out, "rule: \"(Host(`app.test`) || Host(`api.test`)) && PathPrefix(`/api`)\"") {
+		t.Errorf("multi-host path rule should parenthesize the host alternation\n---\n%s", out)
+	}
+
+	// No path → no PathPrefix and no priority line (bare host keeps the default).
+	bare := string(renderRouter(routedContainer{name: "app", safe: "app", hosts: []string{"app.test"}, port: 80, proximo: true}))
+	for _, unwanted := range []string{"PathPrefix", "priority:"} {
+		if strings.Contains(bare, unwanted) {
+			t.Errorf("bare host should not emit %q\n---\n%s", unwanted, bare)
+		}
+	}
+}
+
+// TestRenderRouterStrip: proximo.path.strip emits a StripPrefix middleware
+// referenced by the websecure router; without it no strip middleware appears (2.3).
+func TestRenderRouterStrip(t *testing.T) {
+	strip := routedContainer{name: "api", safe: "api", hosts: []string{"app.test"}, port: 80, proximo: true, path: "/api", strip: true}
+	out := string(renderRouter(strip))
+	for _, w := range []string{
+		"- proximo-api-strip\n",
+		"proximo-api-strip:",
+		"stripPrefix:",
+		"prefixes:",
+		"- \"/api\"\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("strip router missing %q\n---\n%s", w, out)
+		}
+	}
+
+	noStrip := string(renderRouter(routedContainer{name: "api", safe: "api", hosts: []string{"app.test"}, port: 80, proximo: true, path: "/api"}))
+	for _, unwanted := range []string{"stripPrefix", "-strip"} {
+		if strings.Contains(noStrip, unwanted) {
+			t.Errorf("path without strip should not emit %q\n---\n%s", unwanted, noStrip)
+		}
+	}
+}
+
+// TestResolveRouteConflicts: two containers on the same host with different
+// prefixes are both kept; the same (host, prefix) pair is a conflict the
+// lexicographically-first name wins; native routes are untouched (2.4, 3.2).
+func TestResolveRouteConflicts(t *testing.T) {
+	// Different prefixes on one host: both served (the intended split).
+	front := routedContainer{name: "front", hosts: []string{"app.test"}, proximo: true}
+	api := routedContainer{name: "api", hosts: []string{"app.test"}, proximo: true, path: "/api"}
+	kept, conflicts := resolveRouteConflicts([]routedContainer{front, api})
+	if len(kept) != 2 || len(conflicts) != 0 {
+		t.Fatalf("distinct prefixes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
+	}
+
+	// Same (host, prefix): the lexicographically-first name (api) wins, zzz loses.
+	dup := routedContainer{name: "zzz", hosts: []string{"app.test"}, proximo: true, path: "/api"}
+	kept, conflicts = resolveRouteConflicts([]routedContainer{dup, api})
+	if len(kept) != 1 || kept[0].name != "api" {
+		t.Fatalf("conflict winner = %v, want [api]", names(kept))
+	}
+	if len(conflicts) != 1 || conflicts[0].name != "zzz" || conflicts[0].host != "app.test" || conflicts[0].path != "/api" {
+		t.Fatalf("conflict = %+v, want {zzz app.test /api}", conflicts)
+	}
+
+	// Native routes never conflict (Traefik's Docker provider owns them).
+	nat1 := routedContainer{name: "n1", hosts: []string{"x.test"}}
+	nat2 := routedContainer{name: "n2", hosts: []string{"x.test"}}
+	kept, conflicts = resolveRouteConflicts([]routedContainer{nat1, nat2})
+	if len(kept) != 2 || len(conflicts) != 0 {
+		t.Fatalf("native routes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
+	}
+}
+
+func names(rcs []routedContainer) []string {
+	out := make([]string, len(rcs))
+	for i, rc := range rcs {
+		out[i] = rc.name
+	}
+	return out
+}

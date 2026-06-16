@@ -14,6 +14,8 @@ keep working for advanced cases.
 | `proximo.port` | no | auto-detected | Backend port. Omit when the image `EXPOSE`s exactly one port. |
 | `proximo.enable` | no | `true` | Opt-out switch. Set to `false`/`0`/`no` to park the container. |
 | `proximo.redirect` | no | `false` | Opt in to an HTTP→HTTPS redirect for the container's hosts. Truthy: `true`/`1`/`yes`. |
+| `proximo.path` | no | — | Path **prefix** (must start with `/`) scoping the routes, so several containers can share one host on distinct prefixes. Invalid values skip the container. |
+| `proximo.path.strip` | no | `false` | Strip the matched prefix before the backend (so `/api/users` arrives as `/users`). Truthy: `true`/`1`/`yes`. |
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
 single port:
@@ -116,6 +118,44 @@ sticky in browser caches. The HTTPS router is unchanged.
 > `proximo.redirect=true` to keep it; the one-line fix is the label above. This
 > takes effect on the next `proximo update`/`up`.
 
+## proximo.path — split one host across containers
+
+By default a host maps wholesale to one container. `proximo.path=<prefix>` scopes
+a container's routes to a URL **prefix**, so several containers can share one host
+under different prefixes — the classic SPA-plus-API split:
+
+```yaml
+services:
+  frontend:
+    image: my/spa
+    labels:
+      - "proximo.hosts=app.test"          # serves everything else: app.test/
+  backend:
+    image: my/api
+    labels:
+      - "proximo.hosts=app.test"
+      - "proximo.path=/api"               # app.test/api/... routes here
+      - "proximo.path.strip=true"         # backend sees /users, not /api/users
+```
+
+- The match is a **prefix**, not an exact path: `proximo.path=/api` matches
+  `/api`, `/api/`, `/api/users`, etc. (`proximo.path=/` is equivalent to no path.)
+- The prefix **must start with `/`**; an invalid value skips the container and
+  logs a warning (see
+  [where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings)).
+- The most specific (longest) prefix wins automatically — `/api/v2` beats `/api`
+  beats a bare host — so you never tune Traefik priorities by hand.
+- `proximo.path.strip=true` removes the matched prefix before the request reaches
+  the backend (off by default, since many backends expect the full path).
+- A bare container with no `proximo.path` (the `frontend` above) keeps matching
+  **all** paths for its hosts, so it naturally serves as the fallback.
+- Two containers claiming the same host **and** the same prefix conflict; the
+  lexicographically-first container name wins and the other is logged — same
+  deterministic resolution as other host conflicts.
+
+`proximo status` lists each container with its prefix in the URL
+(`https://app.test/api`), so you can see the split at a glance.
+
 ## What happens behind the scenes
 
 For each routed container the watcher:
@@ -143,8 +183,10 @@ labels:
 ```
 
 Reach for raw `traefik.*` labels when you need features not expressible with
-proximo labels — middlewares, `PathPrefix` rules, header matching. You can mix
-schemes across containers freely.
+proximo labels — custom middlewares, exact-`Path` or regex rules, header
+matching. Path-**prefix** composition no longer needs them: use
+[`proximo.path`](#proximopath--split-one-host-across-containers) for the common
+SPA-plus-API split. You can mix schemes across containers freely.
 
 > **Avoid declaring the same host in both schemes.** If a host appears in both a
 > `proximo.hosts` label and a native `traefik.*` router rule, Traefik sees a
@@ -183,6 +225,11 @@ labels:
 # Opt in to the HTTP->HTTPS redirect (off by default)
 - "proximo.hosts=app.test"
 - "proximo.redirect=true"
+
+# Share one host across containers by path prefix
+- "proximo.hosts=app.test"
+- "proximo.path=/api"          # app.test/api/... -> this container
+- "proximo.path.strip=true"    # strip /api before the backend (optional)
 
 # Advanced: native Traefik labels
 - "traefik.enable=true"

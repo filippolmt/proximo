@@ -43,6 +43,13 @@ const (
 	// proximoRedirectLabel opts a routed container in to an HTTP->HTTPS redirect
 	// for its hosts; defaults to false (truthy: true/1/yes, case-insensitive).
 	proximoRedirectLabel = "proximo.redirect"
+	// proximoPathLabel scopes a container's routes to a URL path prefix (must
+	// start with "/"), letting several containers share one host on distinct
+	// prefixes. Absent means match all paths, as before.
+	proximoPathLabel = "proximo.path"
+	// proximoPathStripLabel strips the matched path prefix before the request
+	// reaches the backend; defaults to false (truthy: true/1/yes).
+	proximoPathStripLabel = "proximo.path.strip"
 
 	// routerFilePrefix prefixes the per-container Traefik dynamic config files
 	// the watcher writes into the file-provider directory.
@@ -70,6 +77,11 @@ var hostRuleRe = regexp.MustCompile("Host\\(`([^`]+)`\\)")
 // hostnameRe validates a single hostname (RFC 1123 label charset, dot-joined).
 var hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
 
+// pathPrefixRe validates a proximo.path prefix: a leading slash followed by the
+// URL pchar set. It deliberately excludes backticks, quotes and whitespace so
+// the prefix is safe to template into the PathPrefix(`…`) router rule.
+var pathPrefixRe = regexp.MustCompile(`^/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*$`)
+
 // unsafeNameRe matches runs of characters not allowed in a safe filename /
 // router id.
 var unsafeNameRe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
@@ -83,6 +95,8 @@ type routedContainer struct {
 	port     int      // resolved backend port (proximo path only)
 	proximo  bool     // true when routed via proximo.hosts (generate dynamic config)
 	redirect bool     // true when proximo.redirect opts in to an HTTP->HTTPS redirect
+	path     string   // proximo.path prefix scoping the routes ("" = match all paths)
+	strip    bool     // true when proximo.path.strip removes the prefix before the backend
 	internal bool     // routed to a Traefik internal service (api@internal): no backend port is resolved
 }
 
@@ -218,6 +232,10 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// container that claims the reserved traefik.<tld> host.
 	routed = append(routed, w.dashboardRoute())
 	warnDuplicateHosts(containers, routed)
+	routed, conflicts := resolveRouteConflicts(routed)
+	for _, c := range conflicts {
+		log.Printf("proximo watcher: container %s conflicts on host %q path %q with an already-routed container; the lexicographically-first name wins, %s is not routed", c.name, c.host, c.path, c.name)
+	}
 
 	for netID := range desired {
 		if _, already := traefikNets[netID]; already {
@@ -273,6 +291,7 @@ type inspector func(context.Context, string, client.ContainerInspectOptions) (cl
 // The watcher logs them; `proximo status` ignores them (it stays quiet).
 type classifyInfo struct {
 	invalidHosts []string   // invalid entries found in proximo.hosts
+	invalidPath  string     // proximo.path value that failed validation (skips the container)
 	portFailed   bool       // proximo route whose backend port could not be resolved
 	port         portResult // detail explaining a port-resolution failure
 }
@@ -301,9 +320,17 @@ func classify(ctx context.Context, inspect inspector, c container.Summary) (rout
 	}
 
 	// Proximo routes are translated into Traefik dynamic config by the watcher,
-	// so they need a backend port; native traefik.* routes are configured by
-	// Traefik's Docker provider and only need a certificate.
+	// so they parse the path prefix and resolve a backend port; native traefik.*
+	// routes are configured by Traefik's Docker provider and only need a cert.
 	if proximo {
+		prefix, ok := parseProximoPath(c.Labels)
+		if !ok {
+			info.invalidPath = strings.TrimSpace(c.Labels[proximoPathLabel])
+			return rc, false, info
+		}
+		rc.path = prefix
+		rc.strip = isProximoPathStrip(c.Labels)
+
 		port, ok, res := resolveBackendPort(ctx, inspect, c)
 		if !ok {
 			info.portFailed = true
@@ -323,6 +350,9 @@ func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedC
 	rc, ok, info := classify(ctx, w.cli.ContainerInspect, c)
 	for _, h := range info.invalidHosts {
 		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
+	}
+	if info.invalidPath != "" {
+		log.Printf("proximo watcher: container %s: invalid %s=%q (must start with %q); not routed", rc.name, proximoPathLabel, info.invalidPath, "/")
 	}
 	if info.portFailed {
 		logPortFailure(rc.name, info.port)
@@ -441,19 +471,38 @@ func (w *Watcher) syncDynamic(routed []routedContainer) {
 	}
 }
 
-// renderRouter renders the Traefik dynamic config (HTTP router + service) for a
-// single proximo-routed container. Hosts are validated to a hostname charset
-// before reaching here, so templating them into the rule is safe. When rc.redirect
-// is set it additionally emits a web-entrypoint router (same Host rule) attached
-// to a redirectScheme middleware, so http://<host> 302-redirects to https://; the
-// middleware rides this same file, so it is cleaned up with the rest of the config.
-func renderRouter(rc routedContainer) []byte {
-	id := "proximo-" + rc.safe
+// routerRule builds a container's Traefik rule: the host alternation, combined
+// with PathPrefix when rc.path is set. Hosts and the path prefix are validated
+// to safe charsets before reaching here, so templating them into the rule is
+// safe. The host alternation is parenthesized when a prefix is present so the
+// `&&` binds across all hosts (`(Host(a) || Host(b)) && PathPrefix(/p)`).
+func routerRule(rc routedContainer) string {
 	rules := make([]string, 0, len(rc.hosts))
 	for _, h := range rc.hosts {
 		rules = append(rules, "Host(`"+h+"`)")
 	}
 	rule := strings.Join(rules, " || ")
+	if rc.path == "" {
+		return rule
+	}
+	if len(rules) > 1 {
+		rule = "(" + rule + ")"
+	}
+	return rule + " && PathPrefix(`" + rc.path + "`)"
+}
+
+// renderRouter renders the Traefik dynamic config (HTTP router + service) for a
+// single proximo-routed container. Hosts are validated to a hostname charset
+// before reaching here, so templating them into the rule is safe. When rc.path
+// is set the router rule gains a PathPrefix matcher and a prefix-length priority
+// so the most specific prefix wins; when rc.strip is also set a StripPrefix
+// middleware removes the prefix before the backend. When rc.redirect is set it
+// additionally emits a web-entrypoint router (same rule) attached to a
+// redirectScheme middleware, so http://<host> 302-redirects to https://; the
+// middlewares ride this same file, so they are cleaned up with the rest of the config.
+func renderRouter(rc routedContainer) []byte {
+	id := "proximo-" + rc.safe
+	rule := routerRule(rc)
 
 	// Internal self-route (the dashboard): targets Traefik's built-in
 	// api@internal service, so there is no backend service/loadbalancer
@@ -463,31 +512,61 @@ func renderRouter(rc routedContainer) []byte {
 		service = "api@internal"
 	}
 
+	redirectID := id + "-redirect"
+	stripID := id + "-strip"
+	stripping := rc.strip && rc.path != ""
+
 	var b strings.Builder
+	// writeRuleAndService emits the rule, prefix-length priority, and service —
+	// shared verbatim by the websecure router and the optional web (redirect)
+	// router. Priority from prefix byte length makes the most specific prefix
+	// win, and keeps a bare host (no priority => Traefik default) below any
+	// PathPrefix.
+	writeRuleAndService := func() {
+		fmt.Fprintf(&b, "      rule: %q\n", rule)
+		if rc.path != "" {
+			fmt.Fprintf(&b, "      priority: %d\n", len(rc.path))
+		}
+		fmt.Fprintf(&b, "      service: %s\n", service)
+	}
+
 	b.WriteString("http:\n")
 	b.WriteString("  routers:\n")
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      entryPoints:\n        - websecure\n")
-	fmt.Fprintf(&b, "      rule: %q\n", rule)
-	fmt.Fprintf(&b, "      service: %s\n", service)
+	writeRuleAndService()
+	if stripping {
+		b.WriteString("      middlewares:\n")
+		fmt.Fprintf(&b, "        - %s\n", stripID)
+	}
 	b.WriteString("      tls: {}\n")
 	if rc.redirect {
-		// HTTP router on :80 for the same hosts plus the redirectScheme
-		// middleware it references — emitted together so both ride this file and
-		// are cleaned up together. middlewares: is a sibling of routers:/services:
-		// under http:, so writing it here (before services) is order-free.
-		redirectID := id + "-redirect"
+		// HTTP router on :80 for the same rule plus the redirectScheme
+		// middleware it references. Strip is not applied here: the redirect
+		// router 302s to https:// without forwarding to the backend.
 		fmt.Fprintf(&b, "    %s:\n", redirectID)
 		b.WriteString("      entryPoints:\n        - web\n")
-		fmt.Fprintf(&b, "      rule: %q\n", rule)
-		fmt.Fprintf(&b, "      service: %s\n", service)
+		writeRuleAndService()
 		b.WriteString("      middlewares:\n")
 		fmt.Fprintf(&b, "        - %s\n", redirectID)
+	}
+	// middlewares: is a sibling of routers:/services: under http:, so emitting
+	// it here (before services) is order-free. Both the strip and redirect
+	// middlewares ride this same file, so they are cleaned up with the router.
+	if stripping || rc.redirect {
 		b.WriteString("  middlewares:\n")
-		fmt.Fprintf(&b, "    %s:\n", redirectID)
-		b.WriteString("      redirectScheme:\n")
-		b.WriteString("        scheme: https\n")
-		b.WriteString("        permanent: false\n")
+		if stripping {
+			fmt.Fprintf(&b, "    %s:\n", stripID)
+			b.WriteString("      stripPrefix:\n")
+			b.WriteString("        prefixes:\n")
+			fmt.Fprintf(&b, "          - %q\n", rc.path)
+		}
+		if rc.redirect {
+			fmt.Fprintf(&b, "    %s:\n", redirectID)
+			b.WriteString("      redirectScheme:\n")
+			b.WriteString("        scheme: https\n")
+			b.WriteString("        permanent: false\n")
+		}
 	}
 	if rc.internal {
 		return []byte(b.String())
@@ -763,16 +842,45 @@ func isProximoEnabled(labels map[string]string) bool {
 	return true
 }
 
+// isTruthyLabel reports whether labels[key] holds an explicit truthy value
+// (true/1/yes, case-insensitive). It is the shared opt-in bool helper behind
+// the off-by-default proximo labels (proximo.redirect, proximo.path.strip).
+func isTruthyLabel(labels map[string]string, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(labels[key])) {
+	case "true", "1", "yes":
+		return true
+	}
+	return false
+}
+
 // isProximoRedirect reports whether a container opted in to an HTTP->HTTPS
 // redirect for its hosts. It defaults to false and is enabled only by an
 // explicit truthy proximo.redirect value (true/1/yes, case-insensitive) —
 // mirroring isProximoEnabled with the inverted default.
 func isProximoRedirect(labels map[string]string) bool {
-	switch strings.ToLower(strings.TrimSpace(labels[proximoRedirectLabel])) {
-	case "true", "1", "yes":
-		return true
+	return isTruthyLabel(labels, proximoRedirectLabel)
+}
+
+// isProximoPathStrip reports whether a container opted in to stripping the
+// matched path prefix before the backend (default false), reusing the same
+// truthy-value helper as proximo.redirect.
+func isProximoPathStrip(labels map[string]string) bool {
+	return isTruthyLabel(labels, proximoPathStripLabel)
+}
+
+// parseProximoPath reads the proximo.path prefix. An absent (empty) label is
+// valid and means "match all paths" (prefix ""). A present value is valid only
+// when it starts with "/" and matches the safe path charset; otherwise ok is
+// false and the caller skips the container with a warning.
+func parseProximoPath(labels map[string]string) (prefix string, ok bool) {
+	v := strings.TrimSpace(labels[proximoPathLabel])
+	if v == "" {
+		return "", true
 	}
-	return false
+	if !pathPrefixRe.MatchString(v) {
+		return v, false
+	}
+	return v, true
 }
 
 // hostsFromLabels extracts the Host(...) values from a container's Traefik
@@ -847,6 +955,49 @@ func warnDuplicateHosts(containers []container.Summary, routed []routedContainer
 			}
 		}
 	}
+}
+
+// routeConflict names a proximo route dropped because another container already
+// claimed the same (host, path prefix) pair.
+type routeConflict struct {
+	name string // dropped container's name
+	host string // the host it collided on
+	path string // the path prefix both claimed ("" = bare host)
+}
+
+// resolveRouteConflicts drops proximo routes that collide on a (host, path
+// prefix) pair: the lexicographically-first container name wins, the rest are
+// returned as conflicts for the caller to log. Two containers on the same host
+// with different prefixes do not collide. Native (non-proximo) routes never
+// conflict here — Traefik's Docker provider owns them. It is the shared
+// resolver behind both the watcher (which logs the losers) and `proximo status`
+// (which stays quiet), so the two agree on which routes are served.
+func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, conflicts []routeConflict) {
+	sorted := append([]routedContainer(nil), routed...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
+	claimed := map[[2]string]string{} // {host, prefix} -> winning container name
+	for _, rc := range sorted {
+		if !rc.proximo {
+			kept = append(kept, rc)
+			continue
+		}
+		clash := ""
+		for _, h := range rc.hosts {
+			if owner, ok := claimed[[2]string{h, rc.path}]; ok && owner != rc.name {
+				clash = h
+				break
+			}
+		}
+		if clash != "" {
+			conflicts = append(conflicts, routeConflict{name: rc.name, host: clash, path: rc.path})
+			continue
+		}
+		for _, h := range rc.hosts {
+			claimed[[2]string{h, rc.path}] = rc.name
+		}
+		kept = append(kept, rc)
+	}
+	return kept, conflicts
 }
 
 // targetNetworks returns the network IDs Traefik must join to reach a backend,
