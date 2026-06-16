@@ -10,6 +10,9 @@ prerequisite is Docker; DNS and certificates are produced natively in Go.
 
 ## Documentation
 
+📖 **[Read the full guide](https://filippolmt.github.io/proximo/)** — the docs
+below, rendered and searchable.
+
 Full guides live in [`docs/`](docs/README.md):
 
 - [Installation](docs/installation.md) — requirements, install steps, what it
