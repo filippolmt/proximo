@@ -28,3 +28,6 @@ Thumbs.db
 *.swp
 
 .toolbox*
+
+# graphify — local-only knowledge graph tooling, never versioned
+graphify-out/
