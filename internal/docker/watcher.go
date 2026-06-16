@@ -143,6 +143,10 @@ func NewWatcher() (*Watcher, error) {
 
 // Run reconciles once, then reacts to Docker events with a periodic resync.
 func (w *Watcher) Run(ctx context.Context) error {
+	// Sweep temp files a prior crash mid-write may have stranded: atomicWrite
+	// removes its own temps, so only a hard kill leaves one behind — one sweep at
+	// startup is enough (covers the certs dir and the dynamic root).
+	cleanStrayTemps(filepath.Join(w.dynamicDir, "certs"), w.dynamicDir)
 	w.reconcileLogged(ctx)
 
 	flt := make(client.Filters).
@@ -534,11 +538,11 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 			log.Printf("proximo watcher: issue cert for %s: %v", rc.safe, err)
 			continue
 		}
-		if err := os.WriteFile(crt, certPEM, 0o644); err != nil {
+		if err := atomicWrite(crt, certPEM, 0o644); err != nil {
 			log.Printf("proximo watcher: write cert %s: %v", rc.safe, err)
 			continue
 		}
-		if err := os.WriteFile(pkey, keyPEM, 0o600); err != nil {
+		if err := atomicWrite(pkey, keyPEM, 0o600); err != nil {
 			log.Printf("proximo watcher: write key %s: %v", rc.safe, err)
 			continue
 		}
@@ -550,8 +554,12 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 	w.writeTLSConfig(certsDir, entries)
 }
 
-// removeStaleCerts deletes cert/key files (and forgets cached host sets) for
-// containers that are no longer routed.
+// removeStaleCerts deletes cert/key files (and forgets cached host sets) only
+// for containers absent from the current routed set. A still-routed container
+// keeps its cert: when its host set changes the cert is rewritten in place via
+// atomicWrite (see syncCerts), so a host-set change never goes through a
+// remove-then-recreate empty-file window — only a genuinely departed container's
+// cert is removed here.
 func (w *Watcher) removeStaleCerts(certsDir string, active map[string]bool) {
 	matches, _ := filepath.Glob(filepath.Join(certsDir, "*.crt"))
 	for _, crt := range matches {
@@ -597,12 +605,67 @@ func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer) {
 // writeFileIfChanged writes data to path only when the current content differs.
 // The reconcile loop regenerates every dynamic-config file each pass (30s + on
 // Docker events); skipping no-op writes spares Traefik's file-provider watcher
-// spurious change events and config reloads.
+// spurious change events and config reloads. The write itself is atomic so the
+// file provider never reloads against a half-written router/TLS file.
 func writeFileIfChanged(path string, data []byte, perm os.FileMode) error {
 	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, data) {
 		return nil
 	}
-	return os.WriteFile(path, data, perm)
+	return atomicWrite(path, data, perm)
+}
+
+// atomicWrite materializes data at path atomically: it writes a temp file in
+// path's own directory (so the rename stays on one filesystem), Syncs and Closes
+// it, Chmods to mode, then renames it over path. A concurrent reader (Traefik's
+// file provider) therefore only ever sees the old complete file or the new
+// complete file, never a torn write. The temp file is removed on any error,
+// leaving the original untouched. The "*.tmp-*" name matches cleanStrayTemps so a
+// temp stranded by a hard crash is swept on the next startup.
+func atomicWrite(path string, data []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+		}
+	}()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// os.CreateTemp makes the file 0600; Chmod sets the exact requested mode
+	// (0644 cert / 0600 key) regardless of the process umask.
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// cleanStrayTemps removes leftover atomicWrite temp files. A crash mid-write can
+// strand a "*.tmp-*" file; Traefik ignores non-.crt/.yml files so a stray temp is
+// inert, but sweeping them keeps the dynamic dir tidy.
+func cleanStrayTemps(dirs ...string) {
+	for _, dir := range dirs {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
+		for _, p := range matches {
+			_ = os.Remove(p)
+		}
+	}
 }
 
 func findTraefik(cs []container.Summary) (id string, nets map[string]string) {

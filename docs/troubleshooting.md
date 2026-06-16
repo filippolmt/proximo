@@ -57,6 +57,23 @@ These browsers use NSS, not the system store. `proximo install` adds the CA via
 `certutil` (installing `nss-tools` if needed). Fully restart the browser after
 install.
 
+## Traefik logs failed to find any PEM data
+
+Older versions logged a recurring, harmless error on every container restart:
+
+```
+ERR Unable to parse certificate .../certs/<name>.crt error="... tls: failed to find any PEM data in certificate input"
+```
+
+It came from a race: the watcher rewrote a `.crt` with a plain truncate-then-write
+while Traefik's file provider reloaded mid-write, briefly reading an empty file.
+Certificate materialization is now atomic (write-temp-then-rename), so the proxy
+only ever sees a complete file and this error no longer appears on reissue.
+
+If you still see it, the cert is genuinely malformed — a corrupted CA or a
+hand-edited file under `certs/`. Re-run `proximo install` to regenerate the CA,
+then restart the stack.
+
 ## macOS Gatekeeper blocks the binary
 
 Gatekeeper's "is damaged" dialog is handled by the cask. For a manually

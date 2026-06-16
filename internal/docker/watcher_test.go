@@ -1,10 +1,12 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -858,5 +860,116 @@ func TestWriteFileIfChanged(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(path); string(data) != "v2" {
 		t.Errorf("content = %q, want v2", data)
+	}
+}
+
+// TestAtomicWrite: atomicWrite produces correct content and mode, fully replaces
+// an existing file, and leaves no temp file behind.
+func TestAtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.crt")
+
+	if err := atomicWrite(path, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("atomicWrite: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "hello" {
+		t.Errorf("content = %q, want hello", data)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0o600", st.Mode().Perm())
+	}
+
+	// Overwrite atomically: content is fully replaced (no torn/truncated leftover).
+	if err := atomicWrite(path, []byte("world!!"), 0o644); err != nil {
+		t.Fatalf("atomicWrite overwrite: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "world!!" {
+		t.Errorf("content = %q, want world!!", data)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %v, want 0o644", st.Mode().Perm())
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*")); len(leftovers) != 0 {
+		t.Errorf("temp files left behind: %v", leftovers)
+	}
+}
+
+// TestAtomicWriteCleansTempOnError: a failed rename (target is a directory)
+// must surface the error and remove the temp file, leaving the dir clean.
+func TestAtomicWriteCleansTempOnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "busy")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(path, []byte("data"), 0o644); err == nil {
+		t.Fatal("expected error renaming a file over a directory")
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*")); len(leftovers) != 0 {
+		t.Errorf("temp file not cleaned on error: %v", leftovers)
+	}
+}
+
+// TestSyncCertsRetainsRoutedContainer: a still-routed container keeps its cert
+// across reconciles (no delete, no rewrite when hosts are unchanged); only a
+// container that leaves the routed set has its cert/key removed.
+func TestSyncCertsRetainsRoutedContainer(t *testing.T) {
+	w := testWatcher(t)
+	certsDir := filepath.Join(w.dynamicDir, "certs")
+	app := routedContainer{name: "app", safe: "app", hosts: []string{"app.test"}, proximo: true}
+	db := routedContainer{name: "db", safe: "db", hosts: []string{"db.test"}, proximo: true}
+
+	w.syncCerts([]routedContainer{app, db})
+	appCrt := filepath.Join(certsDir, "app.crt")
+	appKey := filepath.Join(certsDir, "app.key")
+	first, _ := os.ReadFile(appCrt)
+
+	// Both stay routed → no delete log, cert retained and not rewritten.
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	w.syncCerts([]routedContainer{app, db})
+	log.SetOutput(old)
+
+	if !fileExists(appCrt) || !fileExists(appKey) {
+		t.Fatal("still-routed container must keep its cert/key")
+	}
+	if again, _ := os.ReadFile(appCrt); !slices.Equal(first, again) {
+		t.Error("unchanged host set must not rewrite the cert")
+	}
+	if strings.Contains(logs.String(), "removed certificate") {
+		t.Errorf("still-routed container must not be deleted; log: %q", logs.String())
+	}
+
+	// app leaves the routed set → its cert/key are removed; db survives.
+	w.syncCerts([]routedContainer{db})
+	if fileExists(appCrt) || fileExists(appKey) {
+		t.Error("departed container's cert/key must be removed")
+	}
+	if !fileExists(filepath.Join(certsDir, "db.crt")) {
+		t.Error("still-routed db cert must survive")
+	}
+}
+
+// TestDynamicWritesLeaveNoTemps: the route file and TLS config are written
+// through the atomic helper and leave no stray temp files in either directory.
+func TestDynamicWritesLeaveNoTemps(t *testing.T) {
+	w := testWatcher(t)
+	app := routedContainer{name: "app", safe: "app", hosts: []string{"app.test"}, port: 80, proximo: true}
+
+	w.syncDynamic([]routedContainer{app})
+	w.syncCerts([]routedContainer{app})
+
+	if !fileExists(filepath.Join(w.dynamicDir, routerFilePrefix+"app.yml")) {
+		t.Fatal("route file not written")
+	}
+	tlsYAML, err := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if err != nil || !strings.Contains(string(tlsYAML), "app.crt") {
+		t.Fatalf("tls config missing app.crt: %v", err)
+	}
+	for _, dir := range []string{w.dynamicDir, filepath.Join(w.dynamicDir, "certs")} {
+		if leftovers, _ := filepath.Glob(filepath.Join(dir, "*.tmp-*")); len(leftovers) != 0 {
+			t.Errorf("temp files left in %s: %v", dir, leftovers)
+		}
 	}
 }
