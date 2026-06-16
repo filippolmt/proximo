@@ -111,6 +111,26 @@ A container with proximo labels is not reachable. Check in order:
 
 The full label contract is in [Routing](routing.md#the-proximo-labels).
 
+## 502/503 right after a container restarts
+
+A container that is up but still booting (DB migrations, JIT warmup, slow start)
+gets traffic the instant it is running and answers `502`/`503` until it is
+actually ready — most visible on a frequently-restarting container, which
+repeats the failed-request window on every cycle.
+
+Declare a Docker `HEALTHCHECK` on the image (or `healthcheck:` in Compose).
+proximo then gates the route on health: it publishes the router + certificate
+only once the container reports `healthy` and withdraws them when it turns
+`unhealthy`, so requests never reach a backend that cannot serve. While the
+container is starting, `proximo status` lists it as `starting (waiting for
+healthy)` rather than as a working URL.
+
+- A container with **no** healthcheck is unchanged — it routes on running, so if
+  you still see the 502 window, the fix is to add a healthcheck.
+- A healthcheck stricter than "can serve HTTP" can hold the route off
+  indefinitely; `proximo.health=false` opts out and routes on running. See
+  [proximo.health](routing.md#proximohealth--wait-for-the-container-to-be-healthy).
+
 ## VPN or corporate DNS overrides the resolver
 
 VPN clients and corporate DNS setups often install their own resolver

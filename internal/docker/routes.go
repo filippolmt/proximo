@@ -61,6 +61,15 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 		if !ok && !info.portFailed {
 			continue // not a host route (e.g. a native container with no Host rule)
 		}
+		if note := healthGateNote(c); note != "" {
+			// Health-gated and not yet healthy: the watcher withholds the route,
+			// so surface it as starting/unhealthy (recognized, opted in, not
+			// serving) instead of as a working URL or an absent container.
+			for _, host := range rc.hosts {
+				routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, Note: note})
+			}
+			continue
+		}
 		if !ok {
 			// A proximo route the watcher skips for an unresolved port is
 			// surfaced with the same reason the watcher logs, so status explains

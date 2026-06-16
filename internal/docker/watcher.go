@@ -50,6 +50,11 @@ const (
 	// proximoPathStripLabel strips the matched path prefix before the request
 	// reaches the backend; defaults to false (truthy: true/1/yes).
 	proximoPathStripLabel = "proximo.path.strip"
+	// proximoHealthLabel gates route publication on the container's Docker
+	// health. It defaults to true: a container that declares a healthcheck is
+	// routed only while healthy. Setting it to a falsy value (false/0/no) opts
+	// out — the container routes as soon as it is running, regardless of health.
+	proximoHealthLabel = "proximo.health"
 
 	// routerFilePrefix prefixes the per-container Traefik dynamic config files
 	// the watcher writes into the file-provider directory.
@@ -163,6 +168,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 	cleanStrayTemps(filepath.Join(w.dynamicDir, "certs"), w.dynamicDir)
 	w.reconcileLogged(ctx)
 
+	// Subscribe to all container and network events. The container type already
+	// carries Docker `health_status` actions (no event-action filter is added —
+	// that would whitelist and drop start/stop), so a container turning
+	// healthy/unhealthy triggers an immediate reconcile that re-evaluates
+	// isHealthRoutable, not just the 30s resync.
 	flt := make(client.Filters).
 		Add("type", string(events.ContainerEventType)).
 		Add("type", string(events.NetworkEventType))
@@ -214,6 +224,13 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	var routed []routedContainer
 	for _, c := range containers {
 		if !isRouted(c) {
+			continue
+		}
+		if !isHealthRoutable(c) {
+			// Health-gated and not yet healthy: withhold the network attach,
+			// router, and cert. Leaving it out of `desired`/`routed` makes the
+			// existing stale-route/cert sweep and the traefik-network disconnect
+			// withdraw a route when a healthy container later turns unhealthy.
 			continue
 		}
 		for _, netID := range targetNetworks(c) {
@@ -835,11 +852,52 @@ func splitHosts(raw string) (valid, invalid []string) {
 // defaults to true and is disabled only by an explicit falsy proximo.enable
 // value (false/0/no, case-insensitive).
 func isProximoEnabled(labels map[string]string) bool {
-	switch strings.ToLower(strings.TrimSpace(labels[proximoEnableLabel])) {
-	case "false", "0", "no":
-		return false
+	return !isFalsyLabel(labels, proximoEnableLabel)
+}
+
+// isProximoHealthGated reports whether route publication should be gated on the
+// container's Docker health. It defaults to true and is disabled only by an
+// explicit falsy proximo.health value (false/0/no, case-insensitive) — mirroring
+// isProximoEnabled, so the opt-out reads the same as the other proximo bools.
+func isProximoHealthGated(labels map[string]string) bool {
+	return !isFalsyLabel(labels, proximoHealthLabel)
+}
+
+// isHealthRoutable reports whether a container's health permits publishing its
+// route now. A container is routable when gating is opted out (proximo.health
+// falsy), when it declares no healthcheck (Health nil or "none"), or when its
+// healthcheck reports healthy. A health-gated container that is starting or
+// unhealthy is withheld until it becomes healthy — the running filter is already
+// applied by ContainerList, so being in the list means the container is up.
+func isHealthRoutable(c container.Summary) bool {
+	if !isProximoHealthGated(c.Labels) {
+		return true
 	}
-	return true
+	if c.Health == nil {
+		return true
+	}
+	switch c.Health.Status {
+	case container.Healthy, container.NoHealthcheck, "":
+		return true
+	}
+	return false
+}
+
+// healthGateNote returns the `proximo status` note for a health-gated container
+// that is not yet routable, or "" when the container is routable (no note). It
+// distinguishes a not-yet-ready container (starting) from one whose route was
+// withdrawn (unhealthy), so status reads as "not serving yet" rather than
+// "misconfigured/absent".
+func healthGateNote(c container.Summary) string {
+	if isHealthRoutable(c) {
+		return ""
+	}
+	// Not routable here implies gating is on and c.Health is non-nil with a
+	// starting/unhealthy status (a nil or healthy/none status is routable above).
+	if c.Health.Status == container.Unhealthy {
+		return "unhealthy (route withdrawn until healthy)"
+	}
+	return "starting (waiting for healthy)"
 }
 
 // isTruthyLabel reports whether labels[key] holds an explicit truthy value
@@ -848,6 +906,18 @@ func isProximoEnabled(labels map[string]string) bool {
 func isTruthyLabel(labels map[string]string, key string) bool {
 	switch strings.ToLower(strings.TrimSpace(labels[key])) {
 	case "true", "1", "yes":
+		return true
+	}
+	return false
+}
+
+// isFalsyLabel reports whether labels[key] holds an explicit falsy value
+// (false/0/no, case-insensitive). It is the inverse of isTruthyLabel and the
+// shared opt-out bool helper behind the on-by-default proximo labels
+// (proximo.enable, proximo.health).
+func isFalsyLabel(labels map[string]string, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(labels[key])) {
+	case "false", "0", "no":
 		return true
 	}
 	return false

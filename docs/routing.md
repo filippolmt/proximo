@@ -16,6 +16,7 @@ keep working for advanced cases.
 | `proximo.redirect` | no | `false` | Opt in to an HTTP→HTTPS redirect for the container's hosts. Truthy: `true`/`1`/`yes`. |
 | `proximo.path` | no | — | Path **prefix** (must start with `/`) scoping the routes, so several containers can share one host on distinct prefixes. Invalid values skip the container. |
 | `proximo.path.strip` | no | `false` | Strip the matched prefix before the backend (so `/api/users` arrives as `/users`). Truthy: `true`/`1`/`yes`. |
+| `proximo.health` | no | `true` | Gate routing on the container's Docker healthcheck: a container that declares one is routed only while `healthy`. Set to `false`/`0`/`no` to route as soon as it is running. No effect on containers without a healthcheck. |
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
 single port:
@@ -117,6 +118,47 @@ sticky in browser caches. The HTTPS router is unchanged.
 > opt-in per container. A host that relied on the automatic redirect must add
 > `proximo.redirect=true` to keep it; the one-line fix is the label above. This
 > takes effect on the next `proximo update`/`up`.
+
+## proximo.health — wait for the container to be healthy
+
+Defaults to `true`. When a container declares a Docker `HEALTHCHECK`, proximo
+publishes its route and certificate **only while it reports `healthy`**, and
+withdraws the route when it turns `unhealthy`. This closes the window where a
+container is up but still booting (DB migrations, JIT warmup, slow start) and
+would otherwise answer `502`/`503` until it is actually ready.
+
+```yaml
+services:
+  app:
+    image: my/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 5s
+      retries: 5
+    labels:
+      - "proximo.hosts=app.test"   # routed only once health == healthy
+```
+
+- A container **without** a healthcheck is unaffected: it routes as soon as it
+  is running, exactly as before. The gating is strictly additive.
+- While a health-gated container is starting, `proximo status` lists it as
+  `starting (waiting for healthy)` — recognized and opted in, just not serving
+  yet — so "not ready" is distinct from "misconfigured/absent".
+- The watcher reacts to Docker `health_status` events, so the route appears
+  within moments of the container turning healthy, not at the next 30s resync.
+- Opt out with `proximo.health=false` (truthy off-values `false`/`0`/`no`) when
+  the healthcheck is stricter than "can serve HTTP" (e.g. it waits for a warm
+  cache); the container then routes on running regardless of health.
+
+```yaml
+labels:
+  - "proximo.hosts=app.test"
+  - "proximo.health=false"   # route on running, ignore the healthcheck
+```
+
+> A broken healthcheck never reaches `healthy`, so the route never appears.
+> `proximo status` shows the container as `starting` (not silently missing);
+> `proximo.health=false` is the escape hatch.
 
 ## proximo.path — split one host across containers
 

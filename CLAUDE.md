@@ -10,6 +10,13 @@ local CA. Docker is the only mandatory prerequisite — DNS and certificates are
 natively in Go. Full picture: [docs/architecture.md](docs/architecture.md); section-level
 index of all guides: [docs/README.md](docs/README.md).
 
+## Engineering standard
+
+Always apply best practices, even when it means writing new code or rewriting
+existing code. Do the right thing now rather than deferring quality — shortcuts
+become gaps we have to close later. This holds for production code, tests, and
+docs alike.
+
 ## Build / test / run
 
 All Go work runs **inside Docker** via the Makefile — no local Go toolchain is assumed.
@@ -30,7 +37,9 @@ ownership: [docs/architecture.md — Source map](docs/architecture.md#source-map
 | Routing label contract & port resolution rules | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels) |
 | Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
 | HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
+| Health-gated routing & the `proximo.health=false` opt-out | [docs/routing.md — proximo.health](docs/routing.md#proximohealth--wait-for-the-container-to-be-healthy) |
 | Where watcher warnings appear | [docs/troubleshooting.md — Where to read watcher warnings](docs/troubleshooting.md#where-to-read-watcher-warnings) |
+| 502/503 right after a container restarts (health gating fix) | [docs/troubleshooting.md — 502/503 right after a container restarts](docs/troubleshooting.md#502503-right-after-a-container-restarts) |
 | Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |
 | What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
 | Observability bootstrap (Beszel hub/agent) | [docs/observability.md — How it is wired](docs/observability.md#how-it-is-wired) |
