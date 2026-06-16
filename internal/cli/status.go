@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/filippolmt/proximo/internal/config"
@@ -47,14 +48,33 @@ func newStatusCmd() *cobra.Command {
 				fmt.Fprintln(out, "No routed containers.")
 				return nil
 			}
+			// The MIDDLEWARES column appears only when at least one route carries
+			// proximo middlewares, so the common (no-middleware) listing stays a
+			// two-column table.
+			anyMW := false
+			for _, r := range routes {
+				if len(r.Middlewares) > 0 {
+					anyMW = true
+					break
+				}
+			}
+
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "CONTAINER\tURL")
+			if anyMW {
+				fmt.Fprintln(w, "CONTAINER\tURL\tMIDDLEWARES")
+			} else {
+				fmt.Fprintln(w, "CONTAINER\tURL")
+			}
 			for _, r := range routes {
 				val := r.URL
 				if r.Note != "" {
 					val = warnPrefix + r.Note
 				}
-				fmt.Fprintf(w, "%s\t%s\n", r.Container, val)
+				if anyMW {
+					fmt.Fprintf(w, "%s\t%s\t%s\n", r.Container, val, strings.Join(r.Middlewares, ", "))
+				} else {
+					fmt.Fprintf(w, "%s\t%s\n", r.Container, val)
+				}
 			}
 			return w.Flush()
 		},

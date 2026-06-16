@@ -21,6 +21,7 @@ import (
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -103,6 +104,7 @@ type routedContainer struct {
 	path     string   // proximo.path prefix scoping the routes ("" = match all paths)
 	strip    bool     // true when proximo.path.strip removes the prefix before the backend
 	internal bool     // routed to a Traefik internal service (api@internal): no backend port is resolved
+	mw       middlewareSet // curated proximo middlewares (auth/cors/headers) attached to the router
 }
 
 // dockerAPI is the narrow slice of the Docker client the watcher depends on —
@@ -132,6 +134,12 @@ type Watcher struct {
 	// lastHosts caches the last-issued host set per container (keyed by safe
 	// name) so certs are reissued only when a container's hosts change.
 	lastHosts map[string]string
+	// authHashes caches the bcrypt hash of each plaintext basic-auth secret
+	// (keyed by user+"\x00"+plaintext) so a stable hash is reused across
+	// reconciles. bcrypt's random salt would otherwise produce a different hash
+	// every pass, rewriting the router file and thrashing Traefik's file-provider
+	// reload on every reconcile.
+	authHashes map[string]string
 }
 
 // NewWatcher creates a Watcher from the Docker environment and loads the CA (for
@@ -146,6 +154,7 @@ func NewWatcher() (*Watcher, error) {
 		dynamicDir: getenv("PROXIMO_DYNAMIC_DIR", "/etc/traefik/dynamic"),
 		tld:        getenv("PROXIMO_TLD", config.DefaultTLD),
 		lastHosts:  map[string]string{},
+		authHashes: map[string]string{},
 	}
 
 	caCert, caKey, err := tls.LoadCA(
@@ -307,10 +316,11 @@ type inspector func(context.Context, string, client.ContainerInspectOptions) (cl
 // classifyInfo carries diagnostics produced by classify for the caller to log.
 // The watcher logs them; `proximo status` ignores them (it stays quiet).
 type classifyInfo struct {
-	invalidHosts []string   // invalid entries found in proximo.hosts
-	invalidPath  string     // proximo.path value that failed validation (skips the container)
-	portFailed   bool       // proximo route whose backend port could not be resolved
-	port         portResult // detail explaining a port-resolution failure
+	invalidHosts []string       // invalid entries found in proximo.hosts
+	invalidPath  string         // proximo.path value that failed validation (skips the container)
+	portFailed   bool           // proximo route whose backend port could not be resolved
+	port         portResult     // detail explaining a port-resolution failure
+	middleware   middlewareInfo // per-middleware validation diagnostics (auth/cors/headers)
 }
 
 // portResult explains why backend-port resolution failed; its zero value means
@@ -334,6 +344,12 @@ func classify(ctx context.Context, inspect inspector, c container.Summary) (rout
 	rc := routedContainer{name: primaryName(c), id: c.ID, hosts: hosts, proximo: proximo, redirect: isProximoRedirect(c.Labels)}
 	if len(hosts) == 0 {
 		return rc, false, info
+	}
+
+	// Curated middlewares apply only to proximo-translated routers; native
+	// traefik.* routes carry whatever middleware labels the user wrote directly.
+	if proximo {
+		rc.mw, info.middleware = parseMiddlewares(c.Labels)
 	}
 
 	// Proximo routes are translated into Traefik dynamic config by the watcher,
@@ -374,7 +390,23 @@ func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedC
 	if info.portFailed {
 		logPortFailure(rc.name, info.port)
 	}
+	logMiddlewareWarnings(rc.name, info.middleware)
 	return rc, ok
+}
+
+// logMiddlewareWarnings logs (watcher-side) each per-middleware validation
+// failure: a malformed auth pair, a blank CORS value, or an invalid header name.
+// Each leaves the container's routing and its other middlewares intact.
+func logMiddlewareWarnings(name string, info middlewareInfo) {
+	for _, pair := range info.invalidAuth {
+		log.Printf("proximo watcher: container %s: ignoring invalid %s entry %q (want user:password); other routing unaffected", name, proximoAuthLabel, pair)
+	}
+	if info.emptyCors {
+		log.Printf("proximo watcher: container %s: ignoring blank %s (want true or an origin list); other routing unaffected", name, proximoCorsLabel)
+	}
+	for _, h := range info.invalidHeaders {
+		log.Printf("proximo watcher: container %s: ignoring %s%s with invalid header name; other routing unaffected", name, proximoHeaderPrefix, h)
+	}
 }
 
 // resolveBackendPort returns the backend port for a proximo-routed container. It
@@ -462,6 +494,7 @@ func (w *Watcher) syncDynamic(routed []routedContainer) {
 			continue
 		}
 		active[rc.safe] = true
+		w.materializeAuth(&rc)
 		path := filepath.Join(w.dynamicDir, routerFilePrefix+rc.safe+".yml")
 		if rc.internal {
 			// The dashboard self-route lives under its own stable filename,
@@ -486,6 +519,34 @@ func (w *Watcher) syncDynamic(routed []routedContainer) {
 		}
 		log.Printf("proximo watcher: removed stale router config for %s", safe)
 	}
+}
+
+// materializeAuth replaces each plaintext basic-auth secret in rc with its
+// bcrypt hash (the form Traefik's basicAuth consumes), passing through secrets
+// already in htpasswd hash form. Hashes are cached per plaintext so the emitted
+// router file is byte-stable across reconciles (see Watcher.authHashes). A
+// hashing failure drops that one credential with a warning, leaving the rest.
+func (w *Watcher) materializeAuth(rc *routedContainer) {
+	kept := rc.mw.auth[:0]
+	for _, c := range rc.mw.auth {
+		if c.hashed {
+			kept = append(kept, c)
+			continue
+		}
+		key := c.user + "\x00" + c.secret
+		h, ok := w.authHashes[key]
+		if !ok {
+			b, err := bcrypt.GenerateFromPassword([]byte(c.secret), bcrypt.DefaultCost)
+			if err != nil {
+				log.Printf("proximo watcher: container %s: hashing %s password for %q: %v; credential dropped", rc.name, proximoAuthLabel, c.user, err)
+				continue
+			}
+			h = string(b)
+			w.authHashes[key] = h
+		}
+		kept = append(kept, authCred{user: c.user, secret: h, hashed: true})
+	}
+	rc.mw.auth = kept
 }
 
 // routerRule builds a container's Traefik rule: the host alternation, combined
@@ -533,6 +594,13 @@ func renderRouter(rc routedContainer) []byte {
 	stripID := id + "-strip"
 	stripping := rc.strip && rc.path != ""
 
+	// The websecure router references its curated middlewares in the fixed chain
+	// order auth -> cors -> headers, then the path-strip (closest to the backend).
+	websecureMW := rc.mw.chainRefs(id)
+	if stripping {
+		websecureMW = append(websecureMW, stripID)
+	}
+
 	var b strings.Builder
 	// writeRuleAndService emits the rule, prefix-length priority, and service —
 	// shared verbatim by the websecure router and the optional web (redirect)
@@ -552,9 +620,11 @@ func renderRouter(rc routedContainer) []byte {
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      entryPoints:\n        - websecure\n")
 	writeRuleAndService()
-	if stripping {
+	if len(websecureMW) > 0 {
 		b.WriteString("      middlewares:\n")
-		fmt.Fprintf(&b, "        - %s\n", stripID)
+		for _, name := range websecureMW {
+			fmt.Fprintf(&b, "        - %s\n", name)
+		}
 	}
 	b.WriteString("      tls: {}\n")
 	if rc.redirect {
@@ -568,10 +638,11 @@ func renderRouter(rc routedContainer) []byte {
 		fmt.Fprintf(&b, "        - %s\n", redirectID)
 	}
 	// middlewares: is a sibling of routers:/services: under http:, so emitting
-	// it here (before services) is order-free. Both the strip and redirect
-	// middlewares ride this same file, so they are cleaned up with the router.
-	if stripping || rc.redirect {
+	// it here (before services) is order-free. The curated, strip, and redirect
+	// middlewares all ride this same file, so they are cleaned up with the router.
+	if !rc.mw.empty() || stripping || rc.redirect {
 		b.WriteString("  middlewares:\n")
+		rc.mw.renderDefs(&b, id)
 		if stripping {
 			fmt.Fprintf(&b, "    %s:\n", stripID)
 			b.WriteString("      stripPrefix:\n")
