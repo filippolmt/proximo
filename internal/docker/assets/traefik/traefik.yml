@@ -16,12 +16,19 @@ entryPoints:
   # an HTTP->HTTPS redirect per host with the proximo.redirect label; the watcher
   # then writes a web-entrypoint router + redirectScheme middleware for it. A host
   # that has not opted in gets no web router (Traefik 404s its :80 requests).
+  # sanitizePath keeps v3's secure default (encoded-character path normalization,
+  # a path-traversal / split-view mitigation) explicit so Traefik does not log
+  # the "encoded characters in the request path" startup warning. No behavior
+  # change for RFC-3986-compliant backends.
   web:
     address: ":80"
+    http:
+      sanitizePath: true
   websecure:
     address: ":443"
     http:
       tls: {}
+      sanitizePath: true
 
 providers:
   # Routing: opt-in only. A container is routed when it sets `traefik.enable=true`
