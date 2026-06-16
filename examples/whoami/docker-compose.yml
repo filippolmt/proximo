@@ -12,8 +12,44 @@
 name: proximo-demo
 
 services:
+  # Baseline: no healthcheck → routed as soon as it is running (unchanged by the
+  # health-gating feature).
   whoami:
     image: traefik/whoami
     container_name: whoami
     labels:
       - "proximo.hosts=whoami.test"
+
+  # Health gating: a container with a slow boot. The healthcheck only passes once
+  # nginx is actually serving, so proximo withholds the route while the container
+  # is `starting` and publishes it only once `healthy`. `proximo status` lists it
+  # as `starting (waiting for healthy)` during the ~25s warmup, then as routed —
+  # no 502/503 window. (whoami is a scratch image with no shell, so this demo
+  # uses nginx:alpine, whose busybox `wget` can run the healthcheck.)
+  slow:
+    image: nginx:alpine
+    container_name: slow
+    command: ["sh", "-c", "sleep 25 && exec nginx -g 'daemon off;'"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    labels:
+      - "proximo.hosts=slow.test"
+
+  # Opt-out: same slow boot, but `proximo.health=false` makes proximo ignore the
+  # healthcheck and route on running — so https://slow-optout.test 502s until
+  # nginx comes up. Use this when a healthcheck is stricter than "can serve HTTP".
+  slow-optout:
+    image: nginx:alpine
+    container_name: slow-optout
+    command: ["sh", "-c", "sleep 25 && exec nginx -g 'daemon off;'"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    labels:
+      - "proximo.hosts=slow-optout.test"
+      - "proximo.health=false"

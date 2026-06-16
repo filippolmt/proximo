@@ -2,6 +2,7 @@ package docker
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -24,6 +25,45 @@ func TestHostsFromLabels(t *testing.T) {
 	want := []string{"api.test", "api2.test", "web.test"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("hostsFromLabels = %v, want %v", got, want)
+	}
+}
+
+func TestHealthRoutableAndNote(t *testing.T) {
+	mk := func(status container.HealthStatus, labels map[string]string) container.Summary {
+		c := container.Summary{Labels: labels}
+		if status != "" {
+			c.Health = &container.HealthSummary{Status: status}
+		}
+		return c
+	}
+
+	cases := []struct {
+		name     string
+		c        container.Summary
+		routable bool
+		noteHas  string // substring expected in healthGateNote ("" = empty note)
+	}{
+		{"no healthcheck", mk("", nil), true, ""},
+		{"explicit none", mk(container.NoHealthcheck, nil), true, ""},
+		{"healthy", mk(container.Healthy, nil), true, ""},
+		{"starting gated", mk(container.Starting, nil), false, "starting"},
+		{"unhealthy gated", mk(container.Unhealthy, nil), false, "unhealthy"},
+		{"starting opt-out", mk(container.Starting, map[string]string{proximoHealthLabel: "false"}), true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isHealthRoutable(tc.c); got != tc.routable {
+				t.Errorf("isHealthRoutable = %v, want %v", got, tc.routable)
+			}
+			note := healthGateNote(tc.c)
+			if tc.noteHas == "" {
+				if note != "" {
+					t.Errorf("healthGateNote = %q, want empty", note)
+				}
+			} else if !strings.Contains(note, tc.noteHas) {
+				t.Errorf("healthGateNote = %q, want substring %q", note, tc.noteHas)
+			}
+		})
 	}
 }
 

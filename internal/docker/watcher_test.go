@@ -759,6 +759,84 @@ func TestReconcileDashboardSurvivesStaleCleanup(t *testing.T) {
 	}
 }
 
+// TestReconcileHealthGating: a health-gated container is not routed while
+// starting, gains its route+cert once healthy, and has them withdrawn when it
+// turns unhealthy — driven by the Health status the watcher reads each reconcile
+// (the same status a `health_status` event delivers).
+func TestReconcileHealthGating(t *testing.T) {
+	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}}
+	app := container.Summary{
+		ID:     "appcid",
+		Names:  []string{"/app"},
+		Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
+		Health: &container.HealthSummary{Status: container.Starting},
+	}
+
+	f := newFakeDocker()
+	w := testWatcher(t)
+	w.cli = f
+	appRoute := filepath.Join(w.dynamicDir, routerFilePrefix+"app.yml")
+	appCrt := filepath.Join(w.dynamicDir, "certs", "app.crt")
+
+	setHealth := func(s container.HealthStatus) {
+		app.Health = &container.HealthSummary{Status: s}
+		f.mu.Lock()
+		f.containers = []container.Summary{traefik, app}
+		f.mu.Unlock()
+		if err := w.reconcile(context.Background()); err != nil {
+			t.Fatalf("reconcile (%s): %v", s, err)
+		}
+	}
+
+	setHealth(container.Starting)
+	if fileExists(appRoute) || fileExists(appCrt) {
+		t.Error("a starting health-gated container must not be routed")
+	}
+
+	setHealth(container.Healthy)
+	if !fileExists(appRoute) || !fileExists(appCrt) {
+		t.Error("a healthy container must be routed (route + cert present)")
+	}
+
+	setHealth(container.Unhealthy)
+	if fileExists(appRoute) || fileExists(appCrt) {
+		t.Error("an unhealthy container's route + cert must be withdrawn")
+	}
+}
+
+// TestReconcileHealthGatingExemptions: a container with no healthcheck, and one
+// that opts out with proximo.health=false, are both routed immediately on
+// running regardless of (missing) health — the change stays additive for the
+// common no-healthcheck case.
+func TestReconcileHealthGatingExemptions(t *testing.T) {
+	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}}
+	noHealth := container.Summary{
+		ID:     "nohealthcid",
+		Names:  []string{"/nohealth"},
+		Labels: map[string]string{proximoHostsLabel: "nohealth.test", proximoPortLabel: "8080"},
+	}
+	optOut := container.Summary{
+		ID:     "optoutcid",
+		Names:  []string{"/optout"},
+		Labels: map[string]string{proximoHostsLabel: "optout.test", proximoPortLabel: "8080", proximoHealthLabel: "false"},
+		Health: &container.HealthSummary{Status: container.Starting},
+	}
+
+	f := newFakeDocker()
+	f.containers = []container.Summary{traefik, noHealth, optOut}
+	w := testWatcher(t)
+	w.cli = f
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, safe := range []string{"nohealth", "optout"} {
+		if !fileExists(filepath.Join(w.dynamicDir, routerFilePrefix+safe+".yml")) {
+			t.Errorf("%s should be routed immediately (no gating)", safe)
+		}
+	}
+}
+
 // TestNewWatcherTLDFromEnv: the watcher reads the TLD from PROXIMO_TLD and
 // falls back to the default TLD when unset (4.5).
 func TestNewWatcherTLDFromEnv(t *testing.T) {
