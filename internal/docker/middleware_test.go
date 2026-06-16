@@ -26,17 +26,17 @@ func TestParseAuth(t *testing.T) {
 }
 
 func TestParseCors(t *testing.T) {
-	if spec, empty := parseCors("", map[string]string{}); spec != nil || empty {
+	if spec, empty := parseCors(map[string]string{}); spec != nil || empty {
 		t.Errorf("absent label = (%v, empty=%v), want (nil, false)", spec, empty)
 	}
-	if spec, _ := parseCors("true", map[string]string{proximoCorsLabel: "true"}); spec == nil || !spec.allowAll {
+	if spec, _ := parseCors(map[string]string{proximoCorsLabel: "true"}); spec == nil || !spec.allowAll {
 		t.Errorf("true = %+v, want allowAll", spec)
 	}
-	spec, _ := parseCors("https://app.test, https://b.test", map[string]string{proximoCorsLabel: "https://app.test, https://b.test"})
+	spec, _ := parseCors(map[string]string{proximoCorsLabel: "https://app.test, https://b.test"})
 	if spec == nil || spec.allowAll || !slices.Equal(spec.origins, []string{"https://app.test", "https://b.test"}) {
 		t.Errorf("origin list = %+v, want origins", spec)
 	}
-	if spec, empty := parseCors("  ", map[string]string{proximoCorsLabel: "  "}); spec != nil || !empty {
+	if spec, empty := parseCors(map[string]string{proximoCorsLabel: "  "}); spec != nil || !empty {
 		t.Errorf("blank = (%v, empty=%v), want (nil, true)", spec, empty)
 	}
 }

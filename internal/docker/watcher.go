@@ -905,11 +905,7 @@ func proximoHosts(labels map[string]string) []string {
 // splitHosts splits a comma-separated host list into valid and invalid entries.
 // Whitespace is trimmed and empty entries are dropped.
 func splitHosts(raw string) (valid, invalid []string) {
-	for part := range strings.SplitSeq(raw, ",") {
-		h := strings.TrimSpace(part)
-		if h == "" {
-			continue
-		}
+	for _, h := range splitCommaTrim(raw) {
 		if hostnameRe.MatchString(h) {
 			valid = append(valid, h)
 		} else {
@@ -917,6 +913,19 @@ func splitHosts(raw string) (valid, invalid []string) {
 		}
 	}
 	return valid, invalid
+}
+
+// splitCommaTrim splits a comma-separated label value into trimmed, non-empty
+// entries — the shared first step of every comma-list proximo label
+// (proximo.hosts, proximo.auth, the proximo.cors origin list).
+func splitCommaTrim(raw string) []string {
+	var out []string
+	for part := range strings.SplitSeq(raw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // isProximoEnabled reports whether routing is enabled for a container. It

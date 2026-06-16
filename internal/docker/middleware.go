@@ -96,7 +96,7 @@ func parseMiddlewares(labels map[string]string) (middlewareSet, middlewareInfo) 
 	var info middlewareInfo
 
 	m.auth, info.invalidAuth = parseAuth(labels[proximoAuthLabel])
-	m.cors, info.emptyCors = parseCors(labels[proximoCorsLabel], labels)
+	m.cors, info.emptyCors = parseCors(labels)
 	m.headers, info.invalidHeaders = parseHeaders(labels)
 
 	return m, info
@@ -106,11 +106,7 @@ func parseMiddlewares(labels map[string]string) (middlewareSet, middlewareInfo) 
 // A pair missing the ":" separator (or with an empty user) is invalid and
 // returned for the caller to warn; the rest are kept.
 func parseAuth(raw string) (creds []authCred, invalid []string) {
-	for part := range strings.SplitSeq(raw, ",") {
-		pair := strings.TrimSpace(part)
-		if pair == "" {
-			continue
-		}
+	for _, pair := range splitCommaTrim(raw) {
 		user, secret, ok := strings.Cut(pair, ":")
 		if !ok || user == "" || secret == "" {
 			invalid = append(invalid, pair)
@@ -136,19 +132,15 @@ func isPreHashed(secret string) bool {
 // permissive CORS, any other non-empty value is a comma-separated allowed-origin
 // list. A present-but-blank value (or one whose entries are all empty) yields no
 // middleware and empty=true for the caller to warn. An absent label yields nil.
-func parseCors(raw string, labels map[string]string) (spec *corsSpec, empty bool) {
-	if _, present := labels[proximoCorsLabel]; !present {
+func parseCors(labels map[string]string) (spec *corsSpec, empty bool) {
+	raw, present := labels[proximoCorsLabel]
+	if !present {
 		return nil, false
 	}
 	if isTruthyLabel(labels, proximoCorsLabel) {
 		return &corsSpec{allowAll: true}, false
 	}
-	var origins []string
-	for part := range strings.SplitSeq(raw, ",") {
-		if o := strings.TrimSpace(part); o != "" {
-			origins = append(origins, o)
-		}
-	}
+	origins := splitCommaTrim(raw)
 	if len(origins) == 0 {
 		return nil, true
 	}
