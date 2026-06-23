@@ -717,8 +717,14 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 		log.Printf("proximo watcher: issued certificate for %s: %s", rc.safe, key)
 	}
 
-	w.removeStaleCerts(certsDir, active)
+	// Order matters: regenerate the TLS config (dropping references to departed
+	// containers) before unlinking their cert files. The reverse order leaves a
+	// window where proximo-tls.yml still points at an already-removed .crt, so
+	// Traefik's file provider reloads against a missing cert and logs
+	// "failed to find any PEM data". Writing the config first makes the
+	// intermediate state "cert present but no longer referenced" — harmless.
 	w.writeTLSConfig(certsDir, entries)
+	w.removeStaleCerts(certsDir, active)
 }
 
 // removeStaleCerts deletes cert/key files (and forgets cached host sets) only
@@ -726,7 +732,9 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 // keeps its cert: when its host set changes the cert is rewritten in place via
 // atomicWrite (see syncCerts), so a host-set change never goes through a
 // remove-then-recreate empty-file window — only a genuinely departed container's
-// cert is removed here.
+// cert is removed here. Callers must run writeTLSConfig first (see syncCerts):
+// the certs removed here are already unreferenced by proximo-tls.yml, so
+// Traefik's reload on the deletion event never hits a referenced-but-absent cert.
 func (w *Watcher) removeStaleCerts(certsDir string, active map[string]bool) {
 	matches, _ := filepath.Glob(filepath.Join(certsDir, "*.crt"))
 	for _, crt := range matches {
