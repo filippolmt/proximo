@@ -20,6 +20,9 @@ go.work.sum
 .env
 .env.local
 
+# Claude Code local settings (machine-specific, never versioned)
+.claude/settings.local.json
+
 # OS / editor
 .DS_Store
 Thumbs.db
