@@ -410,13 +410,26 @@ func TestSyncCertsPerContainer(t *testing.T) {
 		t.Error("host change should reissue the certificate")
 	}
 
-	// Dropping a container removes its cert files.
+	// Dropping a container removes its cert files and, crucially, drops the
+	// reference from proximo-tls.yml. syncCerts writes the TLS config before
+	// unlinking stale certs precisely so this end state is never "cert removed
+	// but still referenced" — the window that made Traefik log "no PEM data".
 	w.syncCerts([]routedContainer{db})
 	if fileExists(appCrt) || fileExists(filepath.Join(certsDir, "app.key")) {
 		t.Error("cert files should be removed when a container stops being routed")
 	}
 	if !fileExists(dbCrt) {
 		t.Error("remaining container's cert should survive")
+	}
+	tlsYAML, err = os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if err != nil {
+		t.Fatalf("read tls config: %v", err)
+	}
+	if strings.Contains(string(tlsYAML), "app.crt") {
+		t.Error("tls config must not reference a removed container's certificate")
+	}
+	if !strings.Contains(string(tlsYAML), "db.crt") {
+		t.Error("tls config should still list the surviving certificate")
 	}
 
 	// No routed containers → TLS config removed.
