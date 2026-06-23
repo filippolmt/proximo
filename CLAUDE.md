@@ -39,6 +39,7 @@ ownership: [docs/architecture.md — Source map](docs/architecture.md#source-map
 | HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
 | Health-gated routing & the `proximo.health=false` opt-out | [docs/routing.md — proximo.health](docs/routing.md#proximohealth--wait-for-the-container-to-be-healthy) |
 | Curated middleware labels (auth/CORS/custom headers) & escape hatch | [docs/routing.md — proximo middlewares](docs/routing.md#proximo-middlewares--auth-cors-custom-headers) |
+| Browser stops trusting the cert; re-trust the CA stack-safe | [docs/cli.md — proximo trust](docs/cli.md#proximo-trust) / [troubleshooting.md — Certificate warnings](docs/troubleshooting.md#certificate-warnings-in-firefox-or-chrome) |
 | Where watcher warnings appear | [docs/troubleshooting.md — Where to read watcher warnings](docs/troubleshooting.md#where-to-read-watcher-warnings) |
 | 502/503 right after a container restarts (health gating fix) | [docs/troubleshooting.md — 502/503 right after a container restarts](docs/troubleshooting.md#502503-right-after-a-container-restarts) |
 | Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |

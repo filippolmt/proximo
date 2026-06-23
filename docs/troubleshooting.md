@@ -53,9 +53,22 @@ to check.
 
 ## Certificate warnings in Firefox or Chrome
 
-These browsers use NSS, not the system store. `proximo install` adds the CA via
-`certutil` (installing `nss-tools` if needed). Fully restart the browser after
-install.
+A browser that flags `https://<name>.<tld>` as untrusted
+(`ERR_CERT_AUTHORITY_INVALID` / "issuer not trusted") almost always means the
+local CA is not in the store the browser reads — Firefox and Chrome on Linux use
+NSS, not the system store; Chrome and Safari on macOS use the system keychain.
+
+First **fully restart the browser** (NSS loads CAs only at process start). If the
+warning persists, re-trust the CA:
+
+```sh
+proximo trust
+```
+
+[`proximo trust`](cli.md#proximo-trust) re-adds the CA to the system and NSS
+stores via `certutil` (installing `nss-tools` if needed). Unlike `install` it is
+stack-safe — it skips the DNS port check, so it works while proximo is up,
+without a `down`/`up` cycle. Restart the browser again afterwards.
 
 ## Traefik logs failed to find any PEM data
 
