@@ -16,6 +16,7 @@ proximo <command> [args]
 | [`up`](#proximo-up) | Start the stack only (`--observability` adds the dashboards) | no | yes |
 | [`down`](#proximo-down) | Stop the stack only | no | yes |
 | [`update`](#proximo-update) | Converge the running stack to the installed CLI | no | yes |
+| [`trust`](#proximo-trust) | Re-trust the local CA (system + NSS), stack-safe | yes | no |
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
@@ -27,7 +28,9 @@ proximo <command> [args]
 ## proximo install
 
 Preflight, generate the CA, configure the host resolver, install CA trust, and
-start the stack. This is the only command that changes privileged host state.
+start the stack. The widest-reaching privileged command — it is the only one
+that touches the host resolver (`trust` and `config tld` also need sudo, but for
+narrower changes).
 
 ```sh
 proximo install
@@ -118,6 +121,27 @@ proximo update --force   # rebuild images without the build cache
   "update on next start" cannot drift.
 
 See [Updating proximo](updating.md) for the full model.
+
+## proximo trust
+
+Re-add the local CA to the OS system trust store and, when present, the NSS
+store (Firefox / Chromium). It is the trust step of `install` on its own:
+
+```sh
+proximo trust
+```
+
+Use it when a browser stops trusting `https://<name>.<tld>` (an
+`ERR_CERT_AUTHORITY_INVALID` / "issuer not trusted" warning) — typically because
+the CA never made it into the browser's store or was regenerated.
+
+- **Stack-safe**: unlike `install` it skips the DNS port check and never touches
+  DNS or the Docker stack, so it runs while proximo is up — no `down`/`up` cycle.
+- **Idempotent**: the system-store add is a no-op when already trusted; the NSS
+  add removes any stale entry first. Re-run it freely.
+- **Needs sudo, no Docker**: it only writes host trust stores.
+- Reuses the existing CA (it never rotates it), so already-issued certificates
+  stay valid. **Fully restart the browser afterwards** to pick up the CA.
 
 ## proximo status
 
