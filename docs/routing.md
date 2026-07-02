@@ -21,7 +21,7 @@ keep working for advanced cases.
 | `proximo.cors` | no | — | Add CORS response headers. `true` for permissive CORS, or a comma-separated allowed-origin list. A blank value is skipped with a warning. |
 | `proximo.header.<Name>` | no | — | Add a custom response header `<Name>: <value>`. Repeatable; an invalid header name is skipped with a warning. |
 | `proximo.tcp.port` | no | — | Route the container's hosts over **TCP-over-TLS by SNI** on the given backend port (for DBs, gRPC, MQTT, HTTPS backends). Invalid values are skipped with a warning. |
-| `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port` for several ports. |
+| `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port`. Note: SNI routes by host only, so several ports on one host cannot be told apart — give each TCP service its own host. |
 | `proximo.tcp.tls` | no | `terminate` | TLS mode for TCP routes: `terminate` (proxy terminates with the per-host proximo cert, forwards plaintext) or `passthrough` (proxy routes the raw TLS stream by SNI; the backend terminates). |
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
@@ -274,7 +274,9 @@ services:
 
 ```sh
 docker compose up -d
-psql "postgresql://postgres:dev@db.test:5432/postgres?sslmode=require"
+# Connect on :443 (where the SNI router listens), not the backend port 5432.
+# db.test resolves to 127.0.0.1; SNI db.test routes the TLS stream to the backend's 5432.
+psql "postgresql://postgres:dev@db.test:443/postgres?sslmode=require"
 proximo status                       # lists the TCP route + its TLS mode
 ```
 
@@ -298,8 +300,8 @@ Two or more containers declaring the **same host and the same backend port** —
 HTTP (`proximo.port`) or TCP (`proximo.tcp.port`) — are treated as replicas of one
 service: proximo emits a single router whose load balancer carries one server per
 container and distributes traffic round-robin. A lone container is unchanged (one
-server). Containers that share a host but differ in path, middleware, or redirect
-are **not** merged — they still resolve deterministically as a conflict (see
+server). Containers on the same host and the same path that differ in middleware or
+redirect are **not** merged — they still resolve deterministically as a conflict (see
 [proximo.path](#proximopath--split-one-host-across-containers)). `proximo status`
 marks a balanced route with `(balanced ×N)`.
 

@@ -107,7 +107,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	// Apply the same (host, prefix) conflict resolution the watcher uses so
 	// status lists only the routes actually served (status stays quiet about
 	// the dropped losers — the watcher logs them).
-	kept, _ := resolveRouteConflicts(served)
+	kept, _, _ := resolveRouteConflicts(served)
 	for _, rc := range kept {
 		backends := len(rc.backends())
 		for _, host := range rc.hosts {

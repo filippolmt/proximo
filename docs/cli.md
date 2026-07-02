@@ -177,6 +177,9 @@ db         tcp://db.test:5432 (terminate)
 web        https://app.test (balanced ×2)
 ```
 
+The port in a `tcp://` line is the **backend** port; clients still connect on
+`:443` with SNI (`db.test`), and the proxy routes the stream to that port.
+
 A `proximo.hosts` container whose backend port is **ambiguous** (no
 `proximo.port`, and the image exposes zero or several ports) is not served by the
 watcher, so it is **not** shown as a working route — it is flagged instead so you

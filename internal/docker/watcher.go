@@ -122,8 +122,13 @@ type routedContainer struct {
 	mw       middlewareSet // curated proximo middlewares (auth/cors/headers) attached to the router
 	tcpPorts []int         // TCP backend ports (proximo.tcp.port/.ports); non-empty makes the container TCP-routed instead of HTTP
 	tcpTLS   string        // TCP TLS mode: tcpTLSTerminate (default) or tcpTLSPassthrough (only meaningful when tcpPorts is set)
-	servers  []string      // backend container names for this route's load balancer; nil means the single backend rc.name. >1 => round-robin replicas
+	servers  []string      // backend container names for the load balancer; read via backends(), never directly (nil means the single backend rc.name; >1 => round-robin replicas)
 }
+
+// Invariant (enforced at the sole constructor, classify): a routedContainer is
+// either TCP-routed (tcpPorts non-empty; port/path/strip are then unused and
+// tcpTLS is one of tcpTLSTerminate/tcpTLSPassthrough) or HTTP-routed. Direct
+// struct literals in tests may break this; production code must not.
 
 // isTCP reports whether a routed container is TCP-routed (SNI) rather than HTTP.
 // A container declaring any valid TCP port is served over TCP-over-TLS for its
@@ -293,9 +298,12 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// container that claims the reserved traefik.<tld> host.
 	routed = append(routed, w.dashboardRoute())
 	warnDuplicateHosts(containers, routed)
-	routed, conflicts := resolveRouteConflicts(routed)
+	routed, merges, conflicts := resolveRouteConflicts(routed)
 	for _, c := range conflicts {
 		log.Printf("proximo watcher: container %s conflicts on host %q path %q with an already-routed container; the lexicographically-first name wins, %s is not routed", c.name, c.host, c.path, c.name)
+	}
+	for _, m := range merges {
+		log.Printf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host)
 	}
 
 	for netID := range desired {
@@ -358,6 +366,8 @@ type classifyInfo struct {
 	middleware      middlewareInfo // per-middleware validation diagnostics (auth/cors/headers)
 	invalidTCPPorts []string       // proximo.tcp.port/.ports entries that failed to parse (skipped)
 	invalidTCPTLS   string         // proximo.tcp.tls value that was neither terminate nor passthrough
+	tcpDowngraded   bool           // TCP labels were set but all invalid, so the container is not TCP-routed
+	tcpIgnoredHTTP  []string       // HTTP-only labels (middlewares, proximo.path) set on a TCP route and dropped
 }
 
 // portResult explains why backend-port resolution failed; its zero value means
@@ -401,8 +411,24 @@ func classify(ctx context.Context, inspect inspector, c container.Summary) (rout
 		rc.tcpPorts, info.invalidTCPPorts = parseTCPPorts(c.Labels)
 		rc.tcpTLS, info.invalidTCPTLS = parseTCPTLSMode(c.Labels)
 		if rc.isTCP() {
+			// Middlewares and the path prefix are HTTP-layer concepts: a TCP (SNI)
+			// route cannot apply them. Flag any that were set — a user expecting
+			// proximo.auth to guard a TCP service would otherwise be silently
+			// exposed — and drop them so they never leak into the route or its
+			// replica identity.
+			if !rc.mw.empty() {
+				info.tcpIgnoredHTTP = append(info.tcpIgnoredHTTP, "middlewares (auth/cors/headers)")
+			}
+			if strings.TrimSpace(c.Labels[proximoPathLabel]) != "" {
+				info.tcpIgnoredHTTP = append(info.tcpIgnoredHTTP, proximoPathLabel)
+			}
+			rc.mw = middlewareSet{}
 			return rc, true, info
 		}
+		// TCP labels were present but every port was invalid: the container is not
+		// TCP-routed and falls back to HTTP classification below. Record it so the
+		// watcher can warn that the intended TCP route did not take effect.
+		info.tcpDowngraded = len(info.invalidTCPPorts) > 0
 
 		prefix, ok := parseProximoPath(c.Labels)
 		if !ok {
@@ -441,8 +467,17 @@ func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedC
 	for _, p := range info.invalidTCPPorts {
 		log.Printf("proximo watcher: container %s: ignoring invalid TCP port %q in %s/%s", rc.name, p, proximoTCPPortLabel, proximoTCPPortsLabel)
 	}
-	if info.invalidTCPTLS != "" {
+	if info.tcpDowngraded {
+		log.Printf("proximo watcher: container %s: no valid TCP port left; not TCP-routed, falling back to HTTP classification", rc.name)
+	}
+	// The TLS mode only matters for a TCP route; warn about a bad value only when
+	// the container is actually TCP-routed, so a stray label on an HTTP container
+	// is not reported as if it changed anything.
+	if info.invalidTCPTLS != "" && rc.isTCP() {
 		log.Printf("proximo watcher: container %s: invalid %s=%q (want %s or %s); defaulting to %s", rc.name, proximoTCPTLSLabel, info.invalidTCPTLS, tcpTLSTerminate, tcpTLSPassthrough, tcpTLSTerminate)
+	}
+	for _, lbl := range info.tcpIgnoredHTTP {
+		log.Printf("proximo watcher: container %s: %s set on a TCP route but ignored — SNI routing has no HTTP layer; remove the label or drop %s if you need HTTP middlewares/path", rc.name, lbl, proximoTCPPortLabel)
 	}
 	logMiddlewareWarnings(rc.name, info.middleware)
 	return rc, ok
@@ -1284,28 +1319,47 @@ type routeConflict struct {
 // the backend identity (name/safe/servers) neutralized: two containers are
 // replicas exactly when they would produce byte-identical routers except for the
 // backend server. Deriving the key from renderRouter keeps it in lockstep with
-// what actually affects a route, so a new routing field can never silently merge
-// containers that differ on it.
+// what actually affects a route, so any field rendered into the router config can
+// never silently merge containers that differ on it. (A routing decision applied
+// outside renderRouter — e.g. health gating — would not enter the key; keep such
+// fields out of the merge or fold them into the render.)
 func replicaKey(rc routedContainer) string {
 	norm := rc
 	norm.name = "\x00"
 	norm.safe = "\x00"
 	norm.servers = nil
+	// Host order must not affect replica identity: two containers listing the same
+	// hosts in a different order are the same route. Sort a copy for the key (the
+	// representative keeps its own host order for the rendered rule).
+	norm.hosts = append([]string(nil), rc.hosts...)
+	sort.Strings(norm.hosts)
 	return string(renderRouter(norm))
+}
+
+// routeMerge names a proximo container merged into an existing route as a
+// round-robin replica: identical routing config (see replicaKey) to the
+// representative, differing only in the backend. The watcher logs merges so an
+// accidental duplicate (a stale or mislabeled container) is visible, not silently
+// balanced; `proximo status` stays quiet and shows the (balanced ×N) marker.
+type routeMerge struct {
+	rep    string // representative (winning) container whose route absorbs the replica
+	member string // the container merged in as an extra backend
+	host   string // a host they share
 }
 
 // resolveRouteConflicts merges replica containers and drops genuine conflicts.
 // Containers with identical routing config (see replicaKey) but different
 // backends are merged into one route whose load balancer carries every backend
-// (round-robin), the lexicographically-first name representing the group. Distinct
+// (round-robin), the lexicographically-first name representing the group — plain
+// host routes only, since path-scoped routes are never replica-merged. Distinct
 // routes that still collide on a (host, path prefix) pair are resolved as before:
 // the lexicographically-first group wins, the rest are returned as conflicts for
 // the caller to log. Two routes on the same host with different prefixes do not
 // collide. Native (non-proximo) routes are never merged or conflicted — Traefik's
 // Docker provider owns them. It is the shared resolver behind both the watcher
-// (which logs the losers) and `proximo status` (which stays quiet), so the two
-// agree on which routes are served and which are balanced.
-func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, conflicts []routeConflict) {
+// (which logs the losers and the merges) and `proximo status` (which stays quiet),
+// so the two agree on which routes are served and which are balanced.
+func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, merges []routeMerge, conflicts []routeConflict) {
 	sorted := append([]routedContainer(nil), routed...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
 
@@ -1318,24 +1372,23 @@ func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, co
 	var groups []*routedContainer
 	byKey := map[string]*routedContainer{}
 	for _, rc := range sorted {
-		if !rc.proximo {
+		if !rc.proximo || rc.path != "" {
 			g := rc
+			if rc.proximo {
+				g.servers = []string{rc.name}
+			}
 			groups = append(groups, &g)
 			continue
 		}
-		if rc.path == "" {
-			if g, ok := byKey[replicaKey(rc)]; ok {
-				g.servers = append(g.servers, rc.name)
-				continue
-			}
-			g := rc
-			g.servers = []string{rc.name}
-			byKey[replicaKey(rc)] = &g
-			groups = append(groups, &g)
+		key := replicaKey(rc)
+		if g, ok := byKey[key]; ok {
+			g.servers = append(g.servers, rc.name)
+			merges = append(merges, routeMerge{rep: g.name, member: rc.name, host: g.hosts[0]})
 			continue
 		}
 		g := rc
 		g.servers = []string{rc.name}
+		byKey[key] = &g
 		groups = append(groups, &g)
 	}
 
@@ -1362,7 +1415,7 @@ func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, co
 		}
 		kept = append(kept, *g)
 	}
-	return kept, conflicts
+	return kept, merges, conflicts
 }
 
 // targetNetworks returns the network IDs Traefik must join to reach a backend,
