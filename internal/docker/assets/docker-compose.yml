@@ -76,7 +76,7 @@ services:
 
   dozzle:
     # Realtime container log viewer; open by default (no auth) — local only.
-    image: amir20/dozzle:v10.6.6
+    image: amir20/dozzle:v10.6.7
     profiles: [observability]
     restart: unless-stopped
     logging: *proximo-logging
