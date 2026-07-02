@@ -78,3 +78,27 @@ func TestIsRoutedOptIn(t *testing.T) {
 		t.Error("stack containers must never be routed")
 	}
 }
+
+// TestRouteDisplay: an HTTP route shows its URL; a TCP route shows a
+// tcp://host:ports (mode) summary; a route with more than one backend is marked
+// balanced.
+func TestRouteDisplay(t *testing.T) {
+	tests := []struct {
+		name  string
+		route Route
+		want  string
+	}{
+		{"http", Route{Host: "web.test", URL: "https://web.test", Backends: 1}, "https://web.test"},
+		{"http balanced", Route{Host: "app.test", URL: "https://app.test", Backends: 2}, "https://app.test (balanced ×2)"},
+		{"tcp terminate", Route{Host: "db.test", TCPPorts: []int{5432}, TLSMode: "terminate", Backends: 1}, "tcp://db.test:5432 (terminate)"},
+		{"tcp passthrough multi-port", Route{Host: "mqtt.test", TCPPorts: []int{8883, 1883}, TLSMode: "passthrough", Backends: 1}, "tcp://mqtt.test:8883,1883 (passthrough)"},
+		{"tcp balanced", Route{Host: "db.test", TCPPorts: []int{5432}, TLSMode: "terminate", Backends: 3}, "tcp://db.test:5432 (terminate) (balanced ×3)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.route.Display(); got != tt.want {
+				t.Errorf("Display() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

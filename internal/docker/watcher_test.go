@@ -1201,14 +1201,14 @@ func TestResolveRouteConflicts(t *testing.T) {
 	// Different prefixes on one host: both served (the intended split).
 	front := routedContainer{name: "front", hosts: []string{"app.test"}, proximo: true}
 	api := routedContainer{name: "api", hosts: []string{"app.test"}, proximo: true, path: "/api"}
-	kept, conflicts := resolveRouteConflicts([]routedContainer{front, api})
+	kept, _, conflicts := resolveRouteConflicts([]routedContainer{front, api})
 	if len(kept) != 2 || len(conflicts) != 0 {
 		t.Fatalf("distinct prefixes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
 	}
 
 	// Same (host, prefix): the lexicographically-first name (api) wins, zzz loses.
 	dup := routedContainer{name: "zzz", hosts: []string{"app.test"}, proximo: true, path: "/api"}
-	kept, conflicts = resolveRouteConflicts([]routedContainer{dup, api})
+	kept, _, conflicts = resolveRouteConflicts([]routedContainer{dup, api})
 	if len(kept) != 1 || kept[0].name != "api" {
 		t.Fatalf("conflict winner = %v, want [api]", names(kept))
 	}
@@ -1219,7 +1219,7 @@ func TestResolveRouteConflicts(t *testing.T) {
 	// Native routes never conflict (Traefik's Docker provider owns them).
 	nat1 := routedContainer{name: "n1", hosts: []string{"x.test"}}
 	nat2 := routedContainer{name: "n2", hosts: []string{"x.test"}}
-	kept, conflicts = resolveRouteConflicts([]routedContainer{nat1, nat2})
+	kept, _, conflicts = resolveRouteConflicts([]routedContainer{nat1, nat2})
 	if len(kept) != 2 || len(conflicts) != 0 {
 		t.Fatalf("native routes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
 	}
@@ -1231,4 +1231,248 @@ func names(rcs []routedContainer) []string {
 		out[i] = rc.name
 	}
 	return out
+}
+
+// TestParseTCPPorts: proximo.tcp.port and proximo.tcp.ports merge into one
+// deduplicated, order-preserving port list; invalid entries are collected
+// separately and never drop the valid ones.
+func TestParseTCPPorts(t *testing.T) {
+	tests := []struct {
+		name        string
+		port, ports string
+		want        []int
+		wantInvalid []string
+	}{
+		{"absent", "", "", nil, nil},
+		{"single", "5432", "", []int{5432}, nil},
+		{"list", "", "5432,6379", []int{5432, 6379}, nil},
+		{"port and list merge, dedup", "5432", "5432,6379", []int{5432, 6379}, nil},
+		{"invalid skipped, valid kept", "notaport", "6379", []int{6379}, []string{"notaport"}},
+		{"out of range", "0,70000", "", nil, []string{"0", "70000"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ports, invalid := parseTCPPorts(map[string]string{proximoTCPPortLabel: tt.port, proximoTCPPortsLabel: tt.ports})
+			if !slices.Equal(ports, tt.want) {
+				t.Errorf("ports = %v, want %v", ports, tt.want)
+			}
+			if !slices.Equal(invalid, tt.wantInvalid) {
+				t.Errorf("invalid = %v, want %v", invalid, tt.wantInvalid)
+			}
+		})
+	}
+}
+
+// TestParseTCPTLSMode: absent/terminate default to terminate; passthrough is
+// honored; any other value defaults to terminate and is flagged invalid.
+func TestParseTCPTLSMode(t *testing.T) {
+	tests := []struct {
+		raw         string
+		wantMode    string
+		wantInvalid string
+	}{
+		{"", tcpTLSTerminate, ""},
+		{"terminate", tcpTLSTerminate, ""},
+		{"PASSTHROUGH", tcpTLSPassthrough, ""},
+		{" Passthrough ", tcpTLSPassthrough, ""},
+		{"garbage", tcpTLSTerminate, "garbage"},
+	}
+	for _, tt := range tests {
+		mode, invalid := parseTCPTLSMode(map[string]string{proximoTCPTLSLabel: tt.raw})
+		if mode != tt.wantMode || invalid != tt.wantInvalid {
+			t.Errorf("parseTCPTLSMode(%q) = (%q,%q), want (%q,%q)", tt.raw, mode, invalid, tt.wantMode, tt.wantInvalid)
+		}
+	}
+}
+
+// TestClassifyTCP: a proximo container declaring a TCP port is TCP-routed by SNI
+// and needs no HTTP backend-port resolution (failInspect must not be called);
+// the TLS mode is carried through and multiple ports are collected.
+func TestClassifyTCP(t *testing.T) {
+	c := makeSummary(map[string]string{proximoHostsLabel: "db.test", proximoTCPPortLabel: "5432"})
+	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	if !ok || !rc.isTCP() || !slices.Equal(rc.tcpPorts, []int{5432}) || rc.tcpTLS != tcpTLSTerminate {
+		t.Fatalf("classify TCP = (ok=%v, tcpPorts=%v, tls=%q), want (true,[5432],terminate)", ok, rc.tcpPorts, rc.tcpTLS)
+	}
+	if rc.port != 0 {
+		t.Errorf("TCP-routed container should not resolve an HTTP port, got %d", rc.port)
+	}
+
+	pass := makeSummary(map[string]string{proximoHostsLabel: "mqtt.test", proximoTCPPortsLabel: "8883,1883", proximoTCPTLSLabel: "passthrough"})
+	rc, ok, _ = classify(context.Background(), failInspect(t), pass)
+	if !ok || !slices.Equal(rc.tcpPorts, []int{8883, 1883}) || rc.tcpTLS != tcpTLSPassthrough {
+		t.Fatalf("classify TCP passthrough = (ok=%v, tcpPorts=%v, tls=%q), want (true,[8883 1883],passthrough)", ok, rc.tcpPorts, rc.tcpTLS)
+	}
+}
+
+// TestClassifyTCPInvalidPortSkipped: an invalid TCP port is reported for warning;
+// when it is the only TCP label the container falls back to HTTP classification.
+func TestClassifyTCPInvalidPortSkipped(t *testing.T) {
+	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoTCPPortLabel: "notaport", proximoPortLabel: "8080"})
+	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	if !ok || rc.isTCP() || rc.port != 8080 {
+		t.Fatalf("invalid-only TCP should fall back to HTTP = (ok=%v, isTCP=%v, port=%d), want (true,false,8080)", ok, rc.isTCP(), rc.port)
+	}
+	if !slices.Equal(info.invalidTCPPorts, []string{"notaport"}) {
+		t.Errorf("invalidTCPPorts = %v, want [notaport]", info.invalidTCPPorts)
+	}
+}
+
+// TestResolveRouteConflictsReplicas: containers with identical bare-host routing
+// but different backends are merged into one round-robin route (HTTP and TCP);
+// the lexicographically-first name represents the group and carries every backend
+// as a server. Divergent config on the same host is not merged — it conflicts.
+func TestResolveRouteConflictsReplicas(t *testing.T) {
+	// Three identical HTTP backends on app.test:8080 -> one balanced route with a
+	// server per backend and a reported merge per absorbed replica.
+	web1 := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"app.test"}, port: 8080, proximo: true}
+	web2 := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"app.test"}, port: 8080, proximo: true}
+	web3 := routedContainer{name: "web-3", safe: "web-3", hosts: []string{"app.test"}, port: 8080, proximo: true}
+	kept, merges, conflicts := resolveRouteConflicts([]routedContainer{web3, web1, web2})
+	if len(kept) != 1 || len(conflicts) != 0 || len(merges) != 2 {
+		t.Fatalf("HTTP replicas: kept=%d conflicts=%d merges=%d, want 1, 0, 2", len(kept), len(conflicts), len(merges))
+	}
+	if kept[0].name != "web-1" || !slices.Equal(kept[0].backends(), []string{"web-1", "web-2", "web-3"}) {
+		t.Fatalf("HTTP replicas: rep=%q backends=%v, want web-1 [web-1 web-2 web-3]", kept[0].name, kept[0].backends())
+	}
+	if merges[0].rep != "web-1" || merges[0].host != "app.test" {
+		t.Fatalf("merge event = %+v, want rep web-1 on app.test", merges[0])
+	}
+
+	// Two identical TCP backends on db.test:5432 -> one balanced TCP route.
+	db1 := routedContainer{name: "db-1", safe: "db-1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
+	db2 := routedContainer{name: "db-2", safe: "db-2", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
+	kept, _, conflicts = resolveRouteConflicts([]routedContainer{db2, db1})
+	if len(kept) != 1 || len(conflicts) != 0 || !slices.Equal(kept[0].backends(), []string{"db-1", "db-2"}) {
+		t.Fatalf("TCP replicas: kept=%d conflicts=%d backends=%v, want 1, 0, [db-1 db-2]", len(kept), len(conflicts), kept[0].backends())
+	}
+
+	// Same host, different port: not replicas -> conflict, not a merge.
+	a := routedContainer{name: "a", safe: "a", hosts: []string{"app.test"}, port: 8080, proximo: true}
+	b := routedContainer{name: "b", safe: "b", hosts: []string{"app.test"}, port: 9090, proximo: true}
+	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{a, b})
+	if len(kept) != 1 || kept[0].name != "a" || len(conflicts) != 1 || conflicts[0].name != "b" || len(merges) != 0 {
+		t.Fatalf("divergent port: kept=%v conflicts=%v merges=%d, want [a], one {b}, 0", names(kept), conflicts, len(merges))
+	}
+
+	// Same host + port but divergent redirect -> not replicas, conflict (any router
+	// difference beyond the backend blocks merging, protecting the replicaKey invariant).
+	r1 := routedContainer{name: "r1", safe: "r1", hosts: []string{"app.test"}, port: 8080, proximo: true}
+	r2 := routedContainer{name: "r2", safe: "r2", hosts: []string{"app.test"}, port: 8080, proximo: true, redirect: true}
+	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{r1, r2})
+	if len(kept) != 1 || len(merges) != 0 || len(conflicts) != 1 {
+		t.Fatalf("divergent redirect: kept=%d merges=%d conflicts=%d, want 1, 0, 1", len(kept), len(merges), len(conflicts))
+	}
+
+	// Same host + TCP port but divergent TLS mode -> not replicas, conflict.
+	t1 := routedContainer{name: "t1", safe: "t1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
+	t2 := routedContainer{name: "t2", safe: "t2", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSPassthrough}
+	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{t1, t2})
+	if len(kept) != 1 || len(merges) != 0 || len(conflicts) != 1 {
+		t.Fatalf("divergent tcpTLS: kept=%d merges=%d conflicts=%d, want 1, 0, 1", len(kept), len(merges), len(conflicts))
+	}
+
+	// An HTTP route and a TCP route on distinct hosts coexist — both served.
+	httpC := routedContainer{name: "web", safe: "web", hosts: []string{"web.test"}, port: 80, proximo: true}
+	tcpC := routedContainer{name: "cache", safe: "cache", hosts: []string{"cache.test"}, proximo: true, tcpPorts: []int{6379}, tcpTLS: tcpTLSTerminate}
+	kept, _, conflicts = resolveRouteConflicts([]routedContainer{httpC, tcpC})
+	if len(kept) != 2 || len(conflicts) != 0 {
+		t.Fatalf("HTTP+TCP coexistence: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
+	}
+
+	// Host order must not defeat replica detection: same hosts, different order, merge.
+	o1 := routedContainer{name: "o1", safe: "o1", hosts: []string{"a.test", "b.test"}, port: 80, proximo: true}
+	o2 := routedContainer{name: "o2", safe: "o2", hosts: []string{"b.test", "a.test"}, port: 80, proximo: true}
+	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{o1, o2})
+	if len(kept) != 1 || len(merges) != 1 || len(conflicts) != 0 {
+		t.Fatalf("host-order replicas: kept=%d merges=%d conflicts=%d, want 1, 1, 0", len(kept), len(merges), len(conflicts))
+	}
+
+	// A lone container is a one-backend route, identical to pre-replica behavior.
+	kept, _, _ = resolveRouteConflicts([]routedContainer{web1})
+	if len(kept) != 1 || !slices.Equal(kept[0].backends(), []string{"web-1"}) {
+		t.Fatalf("single: backends=%v, want [web-1]", kept[0].backends())
+	}
+}
+
+// TestRenderRouterReplicas: a merged route renders one server per backend for both
+// HTTP (url) and TCP (address), while a single backend renders exactly one server.
+func TestRenderRouterReplicas(t *testing.T) {
+	http := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"app.test"}, port: 8080, proximo: true, servers: []string{"web-1", "web-2"}}
+	out := string(renderRouter(http))
+	for _, w := range []string{"url: \"http://web-1:8080\"", "url: \"http://web-2:8080\""} {
+		if !strings.Contains(out, w) {
+			t.Errorf("HTTP replicas render missing %q\n---\n%s", w, out)
+		}
+	}
+
+	tcp := routedContainer{name: "db-1", safe: "db-1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate, servers: []string{"db-1", "db-2"}}
+	out = string(renderRouter(tcp))
+	for _, w := range []string{"address: \"db-1:5432\"", "address: \"db-2:5432\""} {
+		if !strings.Contains(out, w) {
+			t.Errorf("TCP replicas render missing %q\n---\n%s", w, out)
+		}
+	}
+
+	single := string(renderRouter(routedContainer{name: "solo", safe: "solo", hosts: []string{"solo.test"}, port: 80, proximo: true}))
+	if strings.Count(single, "- url:") != 1 {
+		t.Errorf("single backend should render exactly one server\n---\n%s", single)
+	}
+}
+
+// TestClassifyTCPIgnoresHTTPLabels: a TCP route cannot apply HTTP-layer labels
+// (middlewares, proximo.path), so classify flags them for a warning and drops the
+// middleware set rather than leaving a user to believe auth guards a TCP service.
+func TestClassifyTCPIgnoresHTTPLabels(t *testing.T) {
+	c := makeSummary(map[string]string{
+		proximoHostsLabel:   "db.test",
+		proximoTCPPortLabel: "5432",
+		proximoAuthLabel:    "alice:s3cret",
+		proximoPathLabel:    "/db",
+	})
+	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	if !ok || !rc.isTCP() {
+		t.Fatalf("expected a routed TCP container, got ok=%v isTCP=%v", ok, rc.isTCP())
+	}
+	if !rc.mw.empty() {
+		t.Errorf("middlewares must be dropped on a TCP route, got %+v", rc.mw)
+	}
+	if len(info.tcpIgnoredHTTP) != 2 {
+		t.Errorf("tcpIgnoredHTTP = %v, want two entries (middlewares + proximo.path)", info.tcpIgnoredHTTP)
+	}
+}
+
+// TestRenderTCPRouter: TCP-routed containers emit a tcp: section with a HostSNI
+// rule and an address backend, one router/service per port; the default is TLS
+// termination (tls: {}), passthrough opts into tls.passthrough. No HTTP url and
+// never a HostSNI(`*`) catch-all.
+func TestRenderTCPRouter(t *testing.T) {
+	rc := routedContainer{name: "db", safe: "db", hosts: []string{"db.test", "pg.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
+	out := string(renderRouter(rc))
+	wants := []string{
+		"tcp:\n",
+		"proximo-tcp-db-5432:",
+		"rule: \"HostSNI(`db.test`) || HostSNI(`pg.test`)\"",
+		"address: \"db:5432\"",
+		"tls: {}",
+		"- websecure",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("renderTCPRouter missing %q\n---\n%s", w, out)
+		}
+	}
+	for _, unwanted := range []string{"http:", "url:", "HostSNI(`*`)"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("renderTCPRouter should not emit %q\n---\n%s", unwanted, out)
+		}
+	}
+
+	pass := routedContainer{name: "mq", safe: "mq", hosts: []string{"mqtt.test"}, proximo: true, tcpPorts: []int{8883, 1883}, tcpTLS: tcpTLSPassthrough}
+	out = string(renderRouter(pass))
+	for _, w := range []string{"proximo-tcp-mq-8883:", "proximo-tcp-mq-1883:", "passthrough: true", "address: \"mq:1883\""} {
+		if !strings.Contains(out, w) {
+			t.Errorf("renderTCPRouter passthrough missing %q\n---\n%s", w, out)
+		}
+	}
 }

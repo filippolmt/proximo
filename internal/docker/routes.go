@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
@@ -28,6 +29,27 @@ type Route struct {
 	URL         string
 	Note        string
 	Middlewares []string // active proximo middlewares (auth/cors/headers), in chain order
+	TCPPorts    []int    // backend ports for a TCP-over-TLS (SNI) route; empty means an HTTP route
+	TLSMode     string   // TCP TLS mode (terminate/passthrough); set only for TCP routes
+	Backends    int      // number of backend containers serving this route; >1 means round-robin balanced
+}
+
+// Display renders the route's target for `proximo status`: the HTTPS URL for an
+// HTTP route, or a `tcp://host:ports (mode)` summary for a TCP-over-TLS route,
+// suffixed with a balanced marker when more than one backend serves it.
+func (r Route) Display() string {
+	s := r.URL
+	if len(r.TCPPorts) > 0 {
+		ports := make([]string, len(r.TCPPorts))
+		for i, p := range r.TCPPorts {
+			ports[i] = strconv.Itoa(p)
+		}
+		s = fmt.Sprintf("tcp://%s:%s (%s)", r.Host, strings.Join(ports, ","), r.TLSMode)
+	}
+	if r.Backends > 1 {
+		s += fmt.Sprintf(" (balanced ×%d)", r.Backends)
+	}
+	return s
 }
 
 // Routes lists the effective routing state `proximo status` reports. It uses the
@@ -85,10 +107,15 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	// Apply the same (host, prefix) conflict resolution the watcher uses so
 	// status lists only the routes actually served (status stays quiet about
 	// the dropped losers — the watcher logs them).
-	kept, _ := resolveRouteConflicts(served)
+	kept, _, _ := resolveRouteConflicts(served)
 	for _, rc := range kept {
+		backends := len(rc.backends())
 		for _, host := range rc.hosts {
-			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active()})
+			if rc.isTCP() {
+				routes = append(routes, Route{Container: rc.name, Host: host, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends})
+				continue
+			}
+			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends})
 		}
 	}
 	sort.Slice(routes, func(i, j int) bool {

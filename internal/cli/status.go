@@ -66,7 +66,7 @@ func newStatusCmd() *cobra.Command {
 				fmt.Fprintln(w, "CONTAINER\tURL")
 			}
 			for _, r := range routes {
-				val := r.URL
+				val := r.Display()
 				if r.Note != "" {
 					val = warnPrefix + r.Note
 				}
