@@ -167,6 +167,16 @@ The `traefik.<tld>` route is the stack's own
 [dashboard](#proximo-up) — listed whenever the stack is running, since the
 watcher serves it unconditionally.
 
+[TCP routes](routing.md#proximotcpport--route-tcp-services-by-name-sni) appear
+alongside HTTP ones, showing the SNI host, backend port(s), and TLS mode; a route
+served by several replica containers is marked `(balanced ×N)`:
+
+```
+CONTAINER  URL
+db         tcp://db.test:5432 (terminate)
+web        https://app.test (balanced ×2)
+```
+
 A `proximo.hosts` container whose backend port is **ambiguous** (no
 `proximo.port`, and the image exposes zero or several ports) is not served by the
 watcher, so it is **not** shown as a working route — it is flagged instead so you

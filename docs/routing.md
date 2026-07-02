@@ -20,6 +20,9 @@ keep working for advanced cases.
 | `proximo.auth` | no | — | Require HTTP basic auth. Comma-separated `user:password` pairs; plaintext passwords are hashed on disk. A pair missing `:` is skipped with a warning. |
 | `proximo.cors` | no | — | Add CORS response headers. `true` for permissive CORS, or a comma-separated allowed-origin list. A blank value is skipped with a warning. |
 | `proximo.header.<Name>` | no | — | Add a custom response header `<Name>: <value>`. Repeatable; an invalid header name is skipped with a warning. |
+| `proximo.tcp.port` | no | — | Route the container's hosts over **TCP-over-TLS by SNI** on the given backend port (for DBs, gRPC, MQTT, HTTPS backends). Invalid values are skipped with a warning. |
+| `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port` for several ports. |
+| `proximo.tcp.tls` | no | `terminate` | TLS mode for TCP routes: `terminate` (proxy terminates with the per-host proximo cert, forwards plaintext) or `passthrough` (proxy routes the raw TLS stream by SNI; the backend terminates). |
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
 single port:
@@ -250,11 +253,65 @@ per container so you can confirm what is wired.
 > — raw `traefik.*` middlewares remain the escape hatch (see
 > [Native Traefik labels](#native-traefik-labels-backward-compatible)).
 
+## proximo.tcp.port — route TCP services by name (SNI)
+
+HTTP routing multiplexes every host on `:443` by the `Host` header, but raw TCP
+services (Postgres, Redis, MySQL, gRPC, MQTT, HTTPS backends) have no such key.
+Because those services speak TLS, proximo routes them by the connection's **TLS
+SNI** — the hostname in the ClientHello — on the *same* `:443` entrypoint, so a
+DB is reachable by name with no extra port and no host-port collisions between
+parallel stacks.
+
+```yaml
+services:
+  db:
+    image: postgres:17
+    environment: { POSTGRES_PASSWORD: dev }
+    labels:
+      - "proximo.hosts=db.test"
+      - "proximo.tcp.port=5432"     # TCP-over-TLS by SNI, no new port
+```
+
+```sh
+docker compose up -d
+psql "postgresql://postgres:dev@db.test:5432/postgres?sslmode=require"
+proximo status                       # lists the TCP route + its TLS mode
+```
+
+- **The client must use TLS with SNI.** SNI is the only routing key, so the
+  client connects to `db.test:443` with SNI `db.test` (e.g. `sslmode=require`).
+  Plain TCP without TLS/SNI has no key and is **not** supported (nor is UDP) —
+  publish those directly with `-p` and use the free `*.test` DNS name.
+- **TLS mode.** By default proximo **terminates** TLS at the proxy using the
+  per-host certificate its CA already issues (the same trust as HTTPS) and
+  forwards **plaintext** to the backend — zero TLS setup in the container. Set
+  `proximo.tcp.tls=passthrough` when the backend must terminate TLS itself.
+- **Hosts route, not ports.** Each host in `proximo.hosts` routes by SNI to the
+  declared port. Since SNI carries only the hostname, give each TCP service its
+  own host; declaring several ports on one host cannot be disambiguated by SNI.
+- **Coexists with HTTP.** A connection whose SNI matches a TCP route is served by
+  it; every other SNI falls through to the HTTP routers on the same `:443`.
+
+## Round-robin across replicas
+
+Two or more containers declaring the **same host and the same backend port** —
+HTTP (`proximo.port`) or TCP (`proximo.tcp.port`) — are treated as replicas of one
+service: proximo emits a single router whose load balancer carries one server per
+container and distributes traffic round-robin. A lone container is unchanged (one
+server). Containers that share a host but differ in path, middleware, or redirect
+are **not** merged — they still resolve deterministically as a conflict (see
+[proximo.path](#proximopath--split-one-host-across-containers)). `proximo status`
+marks a balanced route with `(balanced ×N)`.
+
 ## What happens behind the scenes
 
 For each routed container the watcher:
 
 - writes a Traefik HTTP router + service targeting `http://<container-name>:<port>`,
+  or, for a TCP-labeled container, a TCP router matching `HostSNI(<host>)` + service
+  targeting `<container-name>:<port>` on the shared `:443` entrypoint,
+- collapses replicas (same host + port) into one router/service with a server per
+  backend,
 - issues one CA-signed certificate whose SANs are exactly that container's hosts,
 - ensures DNS resolves those hosts to `127.0.0.1`.
 
@@ -333,6 +390,11 @@ labels:
 - "proximo.auth=alice:s3cret"  # plaintext hashed on disk; or pass a $2y$ hash
 - "proximo.cors=true"          # or a comma-separated allowed-origin list
 - "proximo.header.X-Env=dev"   # repeatable
+
+# TCP service by name (SNI) — e.g. a database; client uses TLS+SNI to <host>:443
+- "proximo.hosts=db.test"
+- "proximo.tcp.port=5432"      # default: proxy terminates TLS, plaintext to backend
+- "proximo.tcp.tls=passthrough"  # optional: backend terminates TLS end-to-end
 
 # Advanced: native Traefik labels
 - "traefik.enable=true"
