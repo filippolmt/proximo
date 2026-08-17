@@ -94,7 +94,7 @@ services:
     # first user is seeded via USER_EMAIL/USER_PASSWORD and AUTO_LOGIN lands the
     # developer straight in the dashboard. The password is generated at runtime
     # and supplied via the 0600 beszel-hub.env file (never embedded/committed).
-    image: henrygd/beszel:0.18.7
+    image: henrygd/beszel:0.18.8
     profiles: [observability]
     restart: unless-stopped
     logging: *proximo-logging
