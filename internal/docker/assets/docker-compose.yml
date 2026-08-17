@@ -127,7 +127,7 @@ services:
     # Pushes per-container metrics to the hub over the compose network (no host
     # networking — see design D6). HUB_URL/KEY/TOKEN are injected by the proximo
     # bootstrap via the 0600 beszel-agent.env file after the hub is up.
-    image: henrygd/beszel-agent:0.18.7
+    image: henrygd/beszel-agent:0.18.8
     profiles: [observability]
     restart: unless-stopped
     logging: *proximo-logging
