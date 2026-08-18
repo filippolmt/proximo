@@ -7,7 +7,7 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.1
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 )
 
 require (
@@ -32,7 +32,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/mod v0.31.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect
