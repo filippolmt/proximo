@@ -1,5 +1,11 @@
 name: proximo
 
+# The image the three Go services run — one image, one ref. PROXIMO_IMAGE comes
+# from the .env the CLI writes on every converge; the default is materialized
+# from the CLI's own canonical ref (__IMAGE__), so the asset holds no second
+# copy of the repo name to drift from internal/docker.
+x-image: &proximo-image ${PROXIMO_IMAGE:-__IMAGE__}
+
 # Small, rotated log caps for every stack container (json-file, so Dozzle can
 # still read them). Dozzle and Beszel store no logs of their own — this only
 # bounds each container's stdout/stderr that the Docker daemon retains. Your own
@@ -31,7 +37,7 @@ services:
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   dns:
-    image: ${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}
+    image: *proximo-image
     # One image, three services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/dnsserver"]
     restart: unless-stopped
@@ -43,11 +49,11 @@ services:
       - "127.0.0.1:__DNSPORT__:5353/udp"
     labels:
       - "proximo.role=dns"
-      - "proximo.image=${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}"
+      - "proximo.image=${PROXIMO_IMAGE:-__IMAGE__}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   watcher:
-    image: ${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}
+    image: *proximo-image
     # One image, three services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/watcher"]
     restart: unless-stopped
@@ -63,7 +69,7 @@ services:
       - __DATADIR__/traefik:/etc/traefik/dynamic
     labels:
       - "proximo.role=watcher"
-      - "proximo.image=${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}"
+      - "proximo.image=${PROXIMO_IMAGE:-__IMAGE__}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   inspector:
@@ -73,7 +79,7 @@ services:
     # path — when nothing carries the label, so it runs unconditionally rather
     # than behind a profile: labelling a container must not require restarting
     # the stack. It holds Exchanges in memory only and writes nothing to disk.
-    image: ${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}
+    image: *proximo-image
     # One image, three services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/inspector"]
     restart: unless-stopped
@@ -85,7 +91,7 @@ services:
       - "127.0.0.1:__INSPECTPORT__:9001"
     labels:
       - "proximo.role=inspector"
-      - "proximo.image=${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}"
+      - "proximo.image=${PROXIMO_IMAGE:-__IMAGE__}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   # --- Opt-in dev-time observability (profile: observability) ----------------

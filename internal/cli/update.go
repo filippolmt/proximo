@@ -47,24 +47,23 @@ const (
 )
 
 // decideUpdate maps observed state to the update action. dockerUp is whether the
-// daemon is reachable; stackRunning is whether any stack container is running;
-// stackVer is the running stack version ("" when the stack predates version
-// stamping — pre-0.4.0 stacks carry no label); cliVer is the installed CLI
-// version; stackImage is the image ref the running stack declares and wantImage
-// the one this run would give it. force overrides the up-to-date no-op so
-// `--force` always converges.
+// daemon is reachable; stack is what the running stack reports about itself (a
+// pre-0.4.0 stack is Running with an empty Version — it carries no label);
+// cliVer is the installed CLI version and wantImage the ref this run would give
+// the stack. mustConverge skips the up-to-date no-op outright: `--force`, and an
+// explicit --image, which must never be answered with "up to date".
 //
 // An unlabeled legacy stack never matches cliVer, so it converges. So does a
-// stack whose image differs from the one asked for — including a stack still
+// stack whose image differs from the one asked for — including one still
 // running a sticky --image override that this run is clearing: reporting "up to
 // date" while the stack runs something else is the defect, not the shortcut.
-func decideUpdate(dockerUp, stackRunning, force bool, stackVer, cliVer, stackImage, wantImage string) updateAction {
+func decideUpdate(dockerUp, mustConverge bool, stack docker.StackInfo, cliVer, wantImage string) updateAction {
 	switch {
 	case !dockerUp:
 		return actionDockerDown
-	case !stackRunning:
+	case !stack.Running:
 		return actionStackDown
-	case stackVer == cliVer && stackImage == wantImage && !force:
+	case stack.Version == cliVer && stack.Image == wantImage && !mustConverge:
 		return actionUpToDate
 	default:
 		return actionConverge
@@ -90,7 +89,7 @@ func runUpdate(cmd *cobra.Command, force bool, image string) error {
 	// An explicit --image always converges, even onto a stack already running
 	// that ref: while an override is in effect `update` must never claim the
 	// stack is up to date with the CLI, because it is not running the CLI's image.
-	switch decideUpdate(dockerUp, stack.Running, force || image != "", stack.Version, cliVer, stack.Image, wantImage) {
+	switch decideUpdate(dockerUp, force || image != "", stack, cliVer, wantImage) {
 	case actionDockerDown:
 		fmt.Fprintln(out, "Docker is not reachable; the update will apply on the next `proximo up`.")
 		return nil

@@ -52,7 +52,7 @@ compiler will not enforce:
   [Version and image ref](docs/development.md#version-and-image-ref)
 - Embedded stack assets & sentinels (edits need rebuild **and** re-materialize):
   [Embedded stack assets](docs/development.md#embedded-stack-assets)
-- `PROXIMO_SRC` local-source builds vs published module:
+- `PROXIMO_SRC` local-source builds vs the published image:
   [Local source builds](docs/development.md#local-source-builds)
 - The injected agent & its contract with the Go decoder (Chrome-only):
   [The injected agent](docs/development.md#the-injected-agent)

@@ -84,9 +84,9 @@ restarting at boot keep it. While it is in effect:
 - the next `up` or `update` **without** `--image` clears it and prints the
   reversal.
 
-A command that re-converges as a side effect — `proximo config tld` — carries
-the override forward instead of dropping it, and prints the image whenever it
-changes.
+Any other command that converges the stack — `proximo install`,
+`proximo config tld` — clears it too, since neither takes the flag. They print
+the same reversal line, so the swap is never silent.
 
 `proximo install` has no `--image`: first-run host setup installs the canonical
 thing.

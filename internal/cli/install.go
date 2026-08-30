@@ -50,7 +50,12 @@ func runInstall(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := docker.Converge(cfg.TLD, certDir, docker.ConvergeOpts{}); err != nil {
+	// First-run host setup installs the canonical thing, so it also clears a
+	// sticky --image override left by an earlier `up`. Say so rather than swap
+	// the image out from under the developer.
+	opts := docker.ConvergeOpts{}
+	reportImage(out, opts)
+	if err := docker.Converge(cfg.TLD, certDir, opts); err != nil {
 		return err
 	}
 

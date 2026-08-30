@@ -72,7 +72,9 @@ The exact command a developer runs to clear a failed check. proximo prints
 remedies; the developer runs them, so every mutation of the host stays a verb
 the developer typed.
 _Avoid_: fix, autofix, repair
-_Debt_: no implementation.
+_Debt_: one implementation only — a converge that leaves the stack image absent
+prints the `docker pull` that diagnoses it. Every other failed check still
+reports an error, not a remedy.
 
 **Access record**:
 The metadata of one request that passed through the stack — host, method,

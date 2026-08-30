@@ -151,45 +151,6 @@ func TestConvergeWritesImageEnv(t *testing.T) {
 	}
 }
 
-// TestStickyImage asserts an override is carried forward by a side-effect
-// converge while a published ref is not — so `config tld` never freezes the
-// stack on a superseded version tag, and never silently drops an --image.
-func TestStickyImage(t *testing.T) {
-	for _, tc := range []struct{ name, env, want string }{
-		{"override is sticky", "ghcr.io/other/proximo:v9", "ghcr.io/other/proximo:v9"},
-		{"digest override is sticky", "ghcr.io/other/proximo@sha256:abc", "ghcr.io/other/proximo@sha256:abc"},
-		// A ref this CLI computes for itself is recomputed, so a side-effect
-		// converge never freezes the stack on a superseded version.
-		{"release tag is recomputed", imageRepo + ":v0.1.0", ""},
-		{"branch tag is recomputed", imageRepo + ":main", ""},
-		// But a ref in the same repo that imageRef() never produces was named by
-		// the developer, and dropping it would silently undo their flag.
-		{"sha build in the published repo is sticky", imageRepo + ":sha-1a2b3c4", imageRepo + ":sha-1a2b3c4"},
-		{"latest is sticky", imageRepo + ":latest", imageRepo + ":latest"},
-		// Derived from PROXIMO_SRC, not from a flag: never carried forward.
-		{"local source image is not sticky", devImage, ""},
-		{"nothing materialized", "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-			t.Setenv("PROXIMO_SRC", "")
-			if tc.env != "" {
-				if _, err := Materialize("test", "", tc.env); err != nil {
-					t.Fatalf("Materialize: %v", err)
-				}
-			}
-			got, err := StickyImage()
-			if err != nil {
-				t.Fatalf("StickyImage: %v", err)
-			}
-			if got != tc.want {
-				t.Errorf("StickyImage = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // TestDevOverridePointsAtLocalSource asserts PROXIMO_SRC redirects all three Go
 // services to one locally built image (never a ghcr ref, which could be pushed
 // or pulled by accident), and that clearing PROXIMO_SRC removes the override so
@@ -383,14 +344,36 @@ func TestComposeRunsThePublishedImage(t *testing.T) {
 	}
 	// One image, three services — plus the label that records it, so a running
 	// stack can never declare a ref it is not running.
-	if n := strings.Count(compose, "image: ${"+imageEnvKey); n != 3 {
-		t.Errorf("compose points %d services at ${%s}, want 3", n, imageEnvKey)
+	if n := strings.Count(compose, "image: *proximo-image"); n != 3 {
+		t.Errorf("compose points %d services at the shared image anchor, want 3", n)
 	}
 	if n := strings.Count(compose, "proximo.image=${"+imageEnvKey); n != 3 {
 		t.Errorf("compose stamps proximo.image on %d services, want 3", n)
 	}
-	if want := "${" + imageEnvKey + ":-" + imageRef("dev") + "}"; !strings.Contains(compose, want) {
-		t.Errorf("compose default ref is not %q — it must match imageRef()", want)
+	// The asset must hold no second copy of the repo name: the compose-level
+	// fallback is materialized from the CLI's own canonical ref.
+	if strings.Contains(compose, imageRepo) {
+		t.Errorf("compose hardcodes the image repo instead of using %s", imageSentinel)
+	}
+	if !strings.Contains(compose, "x-image: &proximo-image ${"+imageEnvKey+":-"+imageSentinel+"}") {
+		t.Error("compose does not define the stack image ref in one place")
+	}
+}
+
+// TestImageSentinelSubstituted asserts the compose-level fallback materializes
+// to the ref this CLI pins itself to, so a stack brought up with a missing .env
+// still runs the version the binary asks for rather than a stale hardcoded tag.
+func TestImageSentinelSubstituted(t *testing.T) {
+	raw, err := assets.ReadFile("assets/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read embedded compose: %v", err)
+	}
+	out := string(replaceSentinels(raw, "test", config.DNSPort, "/home/u/.proximo/data"))
+	if strings.Contains(out, imageSentinel) {
+		t.Errorf("sentinel %q left unsubstituted", imageSentinel)
+	}
+	if want := "${" + imageEnvKey + ":-" + CanonicalImage() + "}"; !strings.Contains(out, want) {
+		t.Errorf("substituted compose missing %q", want)
 	}
 }
 
@@ -427,7 +410,7 @@ func TestObservabilitySentinelsInCompose(t *testing.T) {
 	if n := strings.Count(out, "proximo.redirect=true"); n != 2 {
 		t.Errorf("want proximo.redirect=true on both observability dashboards (x2), got %d", n)
 	}
-	for _, sentinel := range []string{tldSentinel, dnsPortSentinel, obsEmailSentinel, obsHubPortSentinel, inspectPortSentinel} {
+	for _, sentinel := range []string{tldSentinel, dnsPortSentinel, obsEmailSentinel, obsHubPortSentinel, inspectPortSentinel, imageSentinel} {
 		if strings.Contains(out, sentinel) {
 			t.Errorf("sentinel %q left unsubstituted", sentinel)
 		}

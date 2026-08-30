@@ -44,6 +44,9 @@ jobs:
       # The digest pins the exact manifest list this run produced, so the smoke
       # job below tests these bytes and not whatever the tag points at by then.
       digest: ${{ steps.build.outputs.digest }}
+      # The version stamped into the image, so the smoke job can build a CLI
+      # that resolves its own tag through imageRef() and land on this same run.
+      version: ${{ steps.v.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -126,10 +129,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Stamped with the version this run published, so the plain `up` below
+      # resolves the tag through imageRef()/imageTag() and lands on this run's
+      # own image — the mapping the two tag families exist to serve.
       - name: Build the CLI
-        run: go build -o proximo .
+        run: |
+          go build -ldflags "-X github.com/filippolmt/proximo/internal/version.Version=${{ needs.publish.outputs.version }}" \
+            -o proximo .
 
-      - name: Bring the stack up from the published image
+      - name: Bring the stack up from the published digest
         run: ./proximo up --image "${IMAGE}@${{ needs.publish.outputs.digest }}"
 
       - name: Every stack service is running its published binary
@@ -141,6 +149,20 @@ jobs:
           ./proximo status
           docker logs "$(docker ps -q --filter label=proximo.role=watcher)" 2>&1 | grep -q "proximo watcher: started" \
             || { echo "FAIL: the watcher never started"; exit 1; }
+
+      # A plain `up` clears the sticky override and resolves the ref the CLI
+      # computes for itself. Pinning the expected tag here means a broken
+      # version -> tag mapping fails CI instead of shipping.
+      - name: The CLI resolves its own tag, and clears the override
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then want="${IMAGE}:${GITHUB_REF_NAME}"; else want="${IMAGE}:main"; fi
+          ./proximo up
+          got=$(docker inspect "$(docker ps -q --filter label=proximo.role=watcher)" \
+            --format '{{ index .Config.Labels "proximo.image" }}')
+          if [ "$got" != "$want" ]; then
+            echo "FAIL: stack runs $got, but the CLI should have resolved $want"; exit 1
+          fi
+          echo "OK: resolved $got"
 
       - name: Tear down
         if: always()

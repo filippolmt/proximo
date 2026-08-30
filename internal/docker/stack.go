@@ -31,6 +31,7 @@ const (
 	obsEmailSentinel    = "__OBS_USER_EMAIL__"
 	obsHubPortSentinel  = "__OBS_HUBPORT__"
 	inspectPortSentinel = "__INSPECTPORT__"
+	imageSentinel       = "__IMAGE__"
 )
 
 // Observability profile + service names, used to bring the opt-in services up
@@ -113,13 +114,15 @@ func Materialize(tld, certDir, image string) (string, error) {
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
 // __DNSPORT__, __DATADIR__ — the absolute host data-dir path, the observability
-// user email, the observability hub port, and the Inspection read-API port) in an
-// embedded asset. It is pure
+// user email, the observability hub port, the Inspection read-API port, and the
+// canonical stack image) in an embedded asset. It is deterministic
 // so the substitution can be unit tested directly; the Materialize WalkDir
 // closure calls it per file. Data with no sentinel is returned unchanged. The
 // observability email is deterministic from the TLD (its canonical form is
 // observability.Email); only the generated password is injected at runtime via
-// the 0600 beszel-hub.env file.
+// the 0600 beszel-hub.env file. __IMAGE__ is only the compose-level fallback
+// for a missing .env — the ref the services actually run comes from
+// PROXIMO_IMAGE, which is what makes an override survive a boot-time restart.
 func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []byte {
 	for _, s := range []struct{ sentinel, value string }{
 		{tldSentinel, tld},
@@ -128,6 +131,7 @@ func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []by
 		{obsEmailSentinel, observability.Email(tld)},
 		{obsHubPortSentinel, strconv.Itoa(config.ObsHubPort)},
 		{inspectPortSentinel, strconv.Itoa(config.InspectAPIPort)},
+		{imageSentinel, CanonicalImage()},
 	} {
 		// Guard the substitution so an absent sentinel skips ReplaceAll's copy.
 		if needle := []byte(s.sentinel); bytes.Contains(data, needle) {
@@ -258,31 +262,6 @@ func EnvImage() (string, error) {
 	return "", nil
 }
 
-// StickyImage returns the --image override recorded in the materialized .env,
-// or "" when the stack is pinned to a ref this CLI computes for itself.
-// Commands that re-converge as a side effect (`config tld`) carry an override
-// forward with it, rather than silently dropping a flag the developer set.
-func StickyImage() (string, error) {
-	ref, err := EnvImage()
-	// devImage is derived from PROXIMO_SRC, not from a flag: carrying it forward
-	// into an environment that no longer sets PROXIMO_SRC would pin the stack to
-	// an image nothing builds.
-	if err != nil || ref == "" || ref == devImage || isSelfPinned(ref) {
-		return "", err
-	}
-	return ref, nil
-}
-
-// isSelfPinned reports whether ref is one imageRef() itself produces — the
-// published repo at :main or a :vX.Y.Z release tag. Those are recomputed on a
-// side-effect converge, so it never freezes the stack on a superseded version.
-// Every other ref in that repo (a :sha-<short> build, :latest) was named by the
-// developer and is kept.
-func isSelfPinned(ref string) bool {
-	tag, ok := strings.CutPrefix(ref, imageRepo+":")
-	return ok && (tag == "main" || semverTag.MatchString(tag))
-}
-
 // imageRepo is the published multi-architecture image holding all three
 // in-stack binaries. Old version tags are load-bearing: a binary installed at
 // vX.Y.Z asks for that tag for as long as it stays installed.
@@ -391,17 +370,28 @@ func Converge(tld, certDir string, opts ConvergeOpts) error {
 // assert the issued command sequence for mobile/immutable refs and Force
 // without Docker.
 func convergeWith(c Composer, tld, certDir string, opts ConvergeOpts) error {
+	_, err := convergeCore(c, tld, certDir, opts)
+	return err
+}
+
+// convergeCore materializes the stack and runs the core converge, returning the
+// stack directory so a caller can stage further compose commands into the same
+// project. It is the one place the effective image is resolved and the one
+// place a failure becomes a Remedy — which is why the observability bring-up
+// runs outside it: those services run their own upstream images, and the stack
+// image has nothing to do with them failing.
+func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, error) {
 	image := opts.EffectiveImage()
 	dir, err := Materialize(tld, certDir, image)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, args := range composeConvergeCmds(image, opts.Force) {
 		if err := c.Compose(dir, args...); err != nil {
-			return remedyFor(image, err)
+			return "", remedyFor(image, err)
 		}
 	}
-	return nil
+	return dir, nil
 }
 
 // imagePresent reports whether the image is already on the host. A var so the
@@ -445,15 +435,13 @@ func ConvergeObservability(tld, certDir string, opts ConvergeOpts, bootstrap fun
 // default `up` carries no --profile flag (core only); only the hub and agent
 // bring-ups activate the observability profile.
 func convergeObservabilityWith(c Composer, tld, certDir string, opts ConvergeOpts, bootstrap func(stackDir string) error) error {
-	image := opts.EffectiveImage()
-	dir, err := Materialize(tld, certDir, image)
+	dir, err := convergeCore(c, tld, certDir, opts)
 	if err != nil {
 		return err
 	}
-	hubCmds := append(composeConvergeCmds(image, opts.Force), composeObservabilityHubCmds()...)
-	for _, args := range hubCmds {
+	for _, args := range composeObservabilityHubCmds() {
 		if err := c.Compose(dir, args...); err != nil {
-			return remedyFor(image, err)
+			return err
 		}
 	}
 	if bootstrap != nil {
@@ -565,12 +553,20 @@ func purgeWith(c Composer) error {
 // image still referenced by something else is a reason to leave it, not to fail
 // an uninstall that has already reversed the host.
 var purgeImages = func() {
-	out, err := exec.Command("docker", "image", "ls", "-q", "--filter", "reference="+imageRepo).Output()
+	// By ref, never by image ID: one build publishes several tags, so an ID can
+	// be referenced more than once and `docker image rm <id>` refuses it.
+	out, err := exec.Command("docker", "image", "ls",
+		"--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference="+imageRepo).Output()
 	if err != nil {
 		return
 	}
-	ids := strings.Fields(string(out))
-	for _, ref := range append(ids, devImage) {
+	refs := []string{devImage}
+	for _, ref := range strings.Fields(string(out)) {
+		if !strings.Contains(ref, "<none>") {
+			refs = append(refs, ref)
+		}
+	}
+	for _, ref := range refs {
 		_ = exec.Command("docker", "image", "rm", ref).Run()
 	}
 }

@@ -14,7 +14,7 @@ import (
 
 // newClient builds a Docker API client from the environment (moby/client
 // negotiates the daemon API version automatically) — the single construction
-// used by every host-side Docker query (Routes, StackVersion) and the in-stack
+// used by every host-side Docker query (Routes, StackStatus) and the in-stack
 // watcher, so they cannot drift.
 func newClient() (*client.Client, error) {
 	return client.New(client.FromEnv)
