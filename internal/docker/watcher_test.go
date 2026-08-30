@@ -1534,6 +1534,26 @@ func TestClassifyInspectLabel(t *testing.T) {
 	}
 }
 
+// TestInspectRefusalReachesStatus: a refusal that lives only in the watcher's
+// log is, from `proximo status`, indistinguishable from Inspection not working.
+// Both refusals must therefore reach the route listing.
+func TestInspectRefusalReachesStatus(t *testing.T) {
+	_, _, info := classify(context.Background(), failInspect(t), makeSummary(map[string]string{
+		proximoHostsLabel:   "db.test",
+		proximoTCPPortLabel: "5432",
+		proximoInspectLabel: "true",
+	}))
+	if !slices.Contains(info.tcpIgnoredHTTP, proximoInspectLabel) {
+		t.Fatalf("classify must flag the TCP refusal for status to surface: %v", info.tcpIgnoredHTTP)
+	}
+
+	a := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
+	b := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
+	if dropped := resolveRouteConflicts([]routedContainer{a, b}).inspectDropped; len(dropped) != 1 {
+		t.Fatalf("the replica refusal must be reported for status too: %v", dropped)
+	}
+}
+
 // TestClassifyTCPIgnoresHTTPLabels: a TCP route cannot apply HTTP-layer labels
 // (middlewares, proximo.path), so classify flags them for a warning and drops the
 // middleware set rather than leaving a user to believe auth guards a TCP service.

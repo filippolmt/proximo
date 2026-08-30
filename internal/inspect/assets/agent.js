@@ -23,7 +23,6 @@
 
   var breadcrumbs = [];
   var sentDOM = false;
-  var lastKey = "";
 
   function now() {
     return Date.now() / 1000;
@@ -61,13 +60,11 @@
     }
   }
 
+  // Everything observed is sent. A render loop firing the same error a thousand
+  // times is bounded by the hop, which counts what it did not keep rather than
+  // discarding it here — a report dropped at the source cannot be recovered, and
+  // the count is itself worth seeing.
   function report(fields) {
-    // Two identical errors in a row are one story, not two — a render loop can
-    // otherwise fill the whole buffer with the same line.
-    var key = fields.type + "|" + fields.message + "|" + fields.line;
-    if (key === lastKey) return;
-    lastKey = key;
-
     fields.at = now();
     fields.breadcrumbs = breadcrumbs.slice();
     if (!sentDOM) {

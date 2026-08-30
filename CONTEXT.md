@@ -16,7 +16,7 @@ today's behaviour.
 
 **Stack**:
 The set of long-running services proximo itself manages — `traefik`, `dns`,
-`watcher`, plus the opt-in observability services. There is exactly one per host:
+`watcher`, `inspector`, plus the opt-in observability services. There is exactly one per host:
 it owns `:80`, `:443`, the DNS port, and the compose project name `proximo`.
 _Avoid_: proxy, infrastructure, services (when the user's containers are meant)
 
@@ -101,7 +101,9 @@ promise, a policy violation — together with the Breadcrumbs and the Snapshot t
 led up to it. The other half of an Exchange. Capture is deliberately wide and
 filtering happens at display: a report is never dropped at collection time
 because it looked redundant.
-_Avoid_: error, log, event, exception (alone)
+_Avoid_: error, log, event, exception (alone) — as names for the concept. The
+`proximo errors` command is exempt: it is the question a developer asks, not the
+name of the thing they get back.
 
 **Breadcrumb**:
 One thing that happened before a Client report — a console call, a request the

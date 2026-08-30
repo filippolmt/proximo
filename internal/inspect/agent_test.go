@@ -27,11 +27,23 @@ func TestAgent(t *testing.T) {
 		}
 	}
 
-	// Every field report.go reads must be one the agent actually sets — as an
-	// object literal key or by assignment, since the report is built both ways.
-	for _, field := range []string{"type", "level", "message", "file", "line", "col", "stack", "dom", "breadcrumbs"} {
-		if !strings.Contains(js, field+":") && !strings.Contains(js, "."+field+" =") {
-			t.Errorf("agent never sets the %q field that report.go decodes", field)
+	// Every field report.go reads must be one the agent actually sets. Matching a
+	// bare `field:` is too weak — `type:` alone is satisfied by the Blob's
+	// `type: "application/json"` — so each field is anchored to the line that
+	// really produces it.
+	for field, produces := range map[string]string{
+		"type":        `type: (err && err.name)`,
+		"level":       `level: "error"`,
+		"message":     `message: (err && err.message)`,
+		"file":        `file: ev.filename`,
+		"line":        `line: ev.lineno`,
+		"col":         `col: ev.colno`,
+		"stack":       `stack: (err && err.stack)`,
+		"dom":         `fields.dom = document.documentElement.outerHTML`,
+		"breadcrumbs": `fields.breadcrumbs = breadcrumbs.slice()`,
+	} {
+		if !strings.Contains(js, produces) {
+			t.Errorf("agent no longer produces the %q field the way report.go expects (looked for %q)", field, produces)
 		}
 	}
 

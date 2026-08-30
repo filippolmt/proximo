@@ -55,6 +55,11 @@ type Exchange struct {
 	Warnings []string      `json:"warnings,omitempty"`
 	Reports  []Report      `json:"reports,omitempty"`
 
+	// Suppressed counts the reports this Exchange saw beyond maxReports. They are
+	// bounded, not discarded quietly: a page in a render loop must not be able to
+	// evict every other Exchange, and a developer must still be told it happened.
+	Suppressed int `json:"suppressed,omitempty"`
+
 	// HasSnapshot tells a consumer of the JSON that `proximo errors dom` would
 	// return something for this Exchange. Set by List.
 	HasSnapshot bool `json:"has_snapshot"`
@@ -107,6 +112,11 @@ type Store struct {
 // evicting the oldest Exchanges.
 const DefaultBudget = 64 << 20
 
+// maxReports is how many Client reports one Exchange keeps. Past it the rest are
+// counted, not kept: one looping page would otherwise push every other Exchange
+// out of the buffer.
+const maxReports = 50
+
 // NewStore returns a Store bounded to budget bytes. A budget of zero or less
 // uses DefaultBudget.
 func NewStore(budget int64) *Store {
@@ -141,6 +151,23 @@ func (s *Store) Add(e *Exchange) {
 	s.evict()
 }
 
+// Complete fills in the half of an Access record that is only known once the
+// response has gone out. The Exchange was registered before that, so the page it
+// served could already have reported against it.
+func (s *Store) Complete(id string, status int, took time.Duration, bytes int64, warnings []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return
+	}
+	before := e.size()
+	e.Status, e.Duration, e.Bytes = status, took, bytes
+	e.Warnings = append(e.Warnings, warnings...)
+	s.used += e.size() - before
+	s.evict()
+}
+
 // Attach adds a Client report — and, the first time one carries it, the DOM
 // Snapshot — to the Exchange that served the page. It reports whether the id was
 // known: an unknown id means the Exchange has already been evicted.
@@ -150,6 +177,10 @@ func (s *Store) Attach(id string, in ingested) bool {
 	e, ok := s.byID[id]
 	if !ok {
 		return false
+	}
+	if len(e.Reports) >= maxReports {
+		e.Suppressed++
+		return true
 	}
 	before := e.size()
 	e.Reports = append(e.Reports, in.Report)

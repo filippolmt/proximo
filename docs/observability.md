@@ -164,7 +164,10 @@ real file already.
 
 Capture is deliberately wide and **filtering happens at display time**: `proximo
 errors` hides breadcrumbs below warning level so framework chatter does not bury
-the report, and `--all` shows everything. Nothing is dropped at collection.
+the report, and `--all` shows everything. Nothing is dropped at collection — the
+agent sends everything it sees. Past fifty reports on one page the hop stops
+keeping them and starts counting them instead, so a render loop cannot push every
+other Exchange out of the buffer, and the count is shown with the rest.
 
 ### Trying it by hand
 
@@ -212,12 +215,6 @@ only Traefik reaches it, over the stack network.
 
 An inspected route also gains a hop, so it pays a little latency and has one more
 way to fail. Both are confined to the routes you labelled.
-
-### One thing that trips everyone up
-
-An error typed into the browser console is caught by DevTools and never reaches
-`window.onerror`, so the agent never sees it. Throw from a task instead —
-`setTimeout(function(){ null.foo }, 0)` — or just use the app until it breaks.
 
 ### If you only use Vite
 

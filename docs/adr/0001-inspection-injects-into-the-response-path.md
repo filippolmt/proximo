@@ -76,9 +76,14 @@ through.
   is always kept so one proximo cannot parse into frames is still shown.
 - Because it must work on any stack, the hop cannot assume a permissive page. It
   drops the browser's `Accept-Encoding` so the only encoding offered upstream is
-  the gzip Go's own transport adds and unwraps, which keeps injection working
-  even against a backend that compresses regardless, and it reconciles the
-  response's
+  the gzip Go's own transport adds and unwraps, which keeps injection working even
+  against a backend that compresses regardless. That applies to every request on
+  an inspected route, not only the ones that turn out to be documents — what a
+  response is cannot be known before it arrives — so assets on such a route travel
+  gzipped rather than br or zstd. Guessing from the `Accept` header was tried and
+  rejected: it silently fails to inject whenever the guess is wrong, and on a local
+  route the bandwidth is not real while the missed injection would be. It also
+  reconciles the response's
   `Content-Security-Policy` on two axes, because a policy can defeat Inspection by
   refusing to load the agent *or* by refusing to let it report. For loading it
   carries the page's own nonce onto the injected tag where there is one, and
@@ -108,6 +113,8 @@ through.
   cleanup on `uninstall`. Moving to disk later is possible; un-writing data from
   users' disks is not.
 - Interactive inspection — a DOM tree to click through, an element picker, step
-  debugging, screenshots — is not provided and is not delegated elsewhere either.
-  It is simply out of reach of an injected script, and proximo does not pretend
-  otherwise.
+  debugging, screenshots — is out of scope: it is out of reach of an injected
+  script, and proximo does not pretend otherwise. That is not a gap proximo means
+  to fill later, because the browser's own DevTools already does it well; what
+  DevTools cannot do, and the only reason this feature exists, is see the server
+  half of the exchange.

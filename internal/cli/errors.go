@@ -51,8 +51,8 @@ func newErrorsCmd() *cobra.Command {
 			if all {
 				q.Set("all", "1")
 			}
-			exchanges, err := fetchExchanges(inspectAPI("/exchanges?" + q.Encode()))
-			if err != nil {
+			var exchanges []inspect.Exchange
+			if err := getJSON("/exchanges?"+q.Encode(), &exchanges); err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
@@ -122,36 +122,28 @@ func newErrorsDOMCmd() *cobra.Command {
 	return cmd
 }
 
-func fetchExchanges(url string) ([]inspect.Exchange, error) {
-	resp, err := http.Get(url)
+// getJSON reads one endpoint of the hop's loopback API into v.
+func getJSON(path string, v any) error {
+	resp, err := http.Get(inspectAPI(path))
 	if err != nil {
-		return nil, hopUnreachable(err)
+		return hopUnreachable(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("inspection hop returned %s", resp.Status)
+		return fmt.Errorf("inspection hop returned %s", resp.Status)
 	}
-	var out []inspect.Exchange
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("inspection hop returned something unreadable: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("inspection hop returned something unreadable: %w", err)
 	}
-	return out, nil
+	return nil
 }
 
 // inspectRouteWarnings asks the hop what it had to do to the routes it serves.
 // Best-effort by design: `proximo status` must still list routes when the hop is
 // not up, so an unreachable hop simply yields nothing.
 func inspectRouteWarnings() map[string][]string {
-	resp, err := http.Get(inspectAPI("/warnings"))
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
 	var out map[string][]string
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := getJSON("/warnings", &out); err != nil {
 		return nil
 	}
 	return out
@@ -178,15 +170,10 @@ func writeNothingFound(out io.Writer, all bool) {
 // hopUptime returns how long the hop has been running, or zero when it cannot be
 // asked. Best-effort: this only ever adds a hint to a message.
 func hopUptime() time.Duration {
-	resp, err := http.Get(inspectAPI("/info"))
-	if err != nil {
-		return 0
-	}
-	defer resp.Body.Close()
 	var info struct {
 		Started time.Time `json:"started"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.Started.IsZero() {
+	if err := getJSON("/info", &info); err != nil || info.Started.IsZero() {
 		return 0
 	}
 	return time.Since(info.Started)
@@ -244,6 +231,9 @@ func writeExchange(w io.Writer, e inspect.Exchange, show detail) {
 		for _, b := range visibleBreadcrumbs(r.Breadcrumbs, show) {
 			fmt.Fprintf(w, "      · %-8s %-9s %s\n", b.Level, b.Category, b.Message)
 		}
+	}
+	if e.Suppressed > 0 {
+		fmt.Fprintf(w, "  … and %d more report(s), not kept: this page kept throwing\n", e.Suppressed)
 	}
 	if e.HasSnapshot {
 		fmt.Fprintf(w, "  DOM captured — `proximo errors dom %s`\n", e.ID)

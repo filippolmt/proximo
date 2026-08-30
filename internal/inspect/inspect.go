@@ -47,8 +47,8 @@ type Handler struct {
 	// The agent is fixed for the life of the binary, so it is addressed by a
 	// digest of its own content and served immutable: a page pays for it once per
 	// proximo version instead of on every load. Both encodings are prepared up
-	// front — it is ~87 KB raw and ~30 KB gzipped, and compressing it per request
-	// would be work repeated for no reason.
+	// front, because compressing the same bytes per request is work repeated for
+	// no reason.
 	agent     []byte
 	agentGzip []byte
 	agentPath string // "agent.<digest>.js"
@@ -61,19 +61,14 @@ func NewHandler(store *Store, agent []byte) *Handler {
 	sum := sha256.Sum256(agent)
 	digest := hex.EncodeToString(sum[:8])
 
-	var gz bytes.Buffer
-	if w, err := gzip.NewWriterLevel(&gz, gzip.BestCompression); err == nil {
-		if _, err := w.Write(agent); err == nil && w.Close() == nil {
-			// only trusted when the whole round-trip succeeded
-		} else {
-			gz.Reset()
-		}
-	}
+	// A gzip copy is prepared once, and used only if every step of making it
+	// worked: serving a truncated script is worse than serving it uncompressed.
+	gz := gzipped(agent)
 
 	h := &Handler{
 		store:     store,
 		agent:     agent,
-		agentGzip: gz.Bytes(),
+		agentGzip: gz,
 		agentPath: "agent." + digest + ".js",
 		agentETag: `"` + digest + `"`,
 	}
@@ -118,22 +113,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recorded before the response goes out, not after: the id is already in the
+	// HTML by then, so a page that fails while it is still loading can report
+	// before this handler returns. Registering afterwards left that report with
+	// no Exchange to attach to.
 	st := &state{id: NewID(), host: r.Host, backend: backend}
-	cw := &countingWriter{ResponseWriter: w}
 	start := time.Now()
-	h.proxy.ServeHTTP(cw, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
-
 	h.store.Add(&Exchange{
-		ID:       st.id,
-		At:       start,
-		Host:     r.Host,
-		Method:   r.Method,
-		Path:     r.URL.Path,
-		Status:   st.status,
-		Duration: time.Since(start),
-		Bytes:    cw.n,
-		Warnings: st.warnings,
+		ID: st.id, At: start, Host: r.Host, Method: r.Method, Path: r.URL.Path,
 	})
+
+	cw := &countingWriter{ResponseWriter: w}
+	h.proxy.ServeHTTP(cw, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+	h.store.Complete(st.id, st.status, time.Since(start), cw.n, st.warnings)
 }
 
 func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
@@ -144,10 +136,16 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.Host = pr.In.Host
 	pr.Out.Header.Del(BackendHeader)
 	// Drop the browser's encoding list. Go's transport then advertises gzip on
-	// its own and decompresses the response transparently, so injection always
-	// sees clear text — including from a backend that compresses regardless.
-	// Passing the browser's list through would invite br or zstd, which the
-	// transport does not decode.
+	// its own and decompresses transparently, so injection always sees clear text
+	// — including from a backend that compresses regardless of what was asked.
+	//
+	// This applies to every request on an inspected route, not only the ones that
+	// come back as documents, because what a response is cannot be known before it
+	// arrives. The cost is that assets on an inspected route travel gzipped rather
+	// than br or zstd; the alternative — guessing from the Accept header — silently
+	// fails to inject whenever the guess is wrong, which is the failure this whole
+	// feature exists to avoid. On a local dev route the bandwidth is not real and
+	// the missed injection would be.
 	pr.Out.Header.Del("Accept-Encoding")
 	pr.SetXForwarded()
 }
@@ -196,6 +194,23 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 	resp.ContentLength = int64(len(body))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	return nil
+}
+
+// gzipped returns b compressed, or nil when compression did not fully succeed.
+func gzipped(b []byte) []byte {
+	var buf bytes.Buffer
+	w, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return nil
+	}
+	if _, err := w.Write(b); err != nil {
+		w.Close()
+		return nil
+	}
+	if err := w.Close(); err != nil {
+		return nil
+	}
+	return buf.Bytes()
 }
 
 func agentTag(agentPath, id, nonce string) []byte {
@@ -279,8 +294,11 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "malformed envelope", http.StatusBadRequest)
 		return
 	}
-	if in.Found {
-		h.store.Attach(id, in)
+	if in.Found && !h.store.Attach(id, in) {
+		// The Exchange is gone — evicted under load, or the stack restarted since
+		// the page was served. Say so: a report that vanishes without a trace is
+		// what makes Inspection look broken when it is not.
+		log.Printf("proximo inspect: report for unknown exchange %s dropped (evicted, or served before a restart)", id)
 	}
 	// The agent must never be told anything useful about the store, and never
 	// has to retry: a dropped report is not worth a failed page.

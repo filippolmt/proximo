@@ -451,9 +451,9 @@ func TestReconcileCSPConnectSrc(t *testing.T) {
 	}
 }
 
-// TestAgentIsCacheableAndCompressed pins the two properties that keep the ~87 KB
-// bundle from being re-fetched on every page load: the URL carries a digest of
-// the content, so it can be immutable, and gzip is offered to anyone who asks.
+// TestAgentIsCacheableAndCompressed pins the two properties that keep the agent
+// from being re-fetched on every page load: its URL carries a digest of the
+// content, so it can be immutable, and gzip is offered to anyone who asks.
 func TestAgentIsCacheableAndCompressed(t *testing.T) {
 	h, _, _ := hop(t, func(w http.ResponseWriter, r *http.Request) {})
 
@@ -557,5 +557,61 @@ func TestListShowsProblemsFirst(t *testing.T) {
 	s.Add(warned)
 	if got = s.List(Query{Host: "csp.test", OnlyProblems: true}); len(got) != 1 {
 		t.Fatalf("a warning must show on its own: %+v", got)
+	}
+}
+
+// TestExchangeExistsBeforeTheResponse pins the ordering that made reports
+// vanish: the id is in the HTML the moment the body goes out, so a page that
+// fails while still loading can report before the handler returns. Registering
+// the Exchange afterwards left that report with nothing to attach to.
+func TestExchangeExistsBeforeTheResponse(t *testing.T) {
+	var known bool
+	store := NewStore(0)
+	h := NewHandler(store, []byte("// agent"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Stands in for the browser reporting the instant it has the page.
+		id := store.List(Query{})[0].ID
+		known = store.Attach(id, ingested{Report: Report{Message: "boom"}, Found: true})
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, "<html><head></head><body></body></html>")
+	}))
+	defer srv.Close()
+
+	r := httptest.NewRequest(http.MethodGet, "http://web.test/", nil)
+	r.Header.Set(BackendHeader, srv.URL)
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if !known {
+		t.Fatal("a report arriving while the response is still going out found no Exchange")
+	}
+	ex := store.List(Query{})
+	if len(ex) != 1 || len(ex[0].Reports) != 1 {
+		t.Fatalf("the report was lost: %+v", ex)
+	}
+	// The Access record is still completed afterwards.
+	if ex[0].Status != 200 || ex[0].Bytes == 0 || ex[0].Duration == 0 {
+		t.Errorf("Complete did not fill in the response half: %+v", ex[0])
+	}
+}
+
+// TestReportsAreCountedNotDiscarded: a page in a render loop must not be able to
+// push every other Exchange out of the buffer, but nothing may vanish silently
+// either — CONTEXT.md promises a report is never dropped for looking redundant.
+func TestReportsAreCountedNotDiscarded(t *testing.T) {
+	s := NewStore(0)
+	e := &Exchange{ID: "loop", At: time.Now(), Host: "web.test"}
+	s.Add(e)
+	for range maxReports + 25 {
+		if !s.Attach("loop", ingested{Report: Report{Message: "same"}, Found: true}) {
+			t.Fatal("Attach refused a known Exchange")
+		}
+	}
+	got := s.List(Query{})[0]
+	if len(got.Reports) != maxReports {
+		t.Errorf("kept %d reports, want the cap of %d", len(got.Reports), maxReports)
+	}
+	if got.Suppressed != 25 {
+		t.Errorf("Suppressed = %d, want 25 — the excess must be counted, not forgotten", got.Suppressed)
 	}
 }

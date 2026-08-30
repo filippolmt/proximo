@@ -168,5 +168,5 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher. |
 | `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
-| `internal/inspect/` | The Inspection hop: response injection, CSP reconciliation, Sentry-envelope ingest, the in-memory Exchange store. |
+| `internal/inspect/` | The Inspection hop: the injected agent (`assets/agent.js`), response injection, CSP reconciliation, report ingest, the in-memory Exchange store. |
 | `cmd/dnsserver/`, `cmd/watcher/`, `cmd/inspector/` | Entrypoints for the in-stack services. |
