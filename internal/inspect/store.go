@@ -188,14 +188,39 @@ func (s *Store) evict() {
 	}
 }
 
-// Query narrows what List returns. The zero value returns everything held.
+// Query narrows what List returns. The zero value holds nothing back.
 type Query struct {
 	Host  string        // exact host match; empty matches any
 	Since time.Duration // only Exchanges newer than this; zero means no bound
 	Limit int           // most recent N; zero or less means no bound
+
+	// OnlyProblems drops the Exchanges with nothing to say. It exists because
+	// the alternative buries the one page that broke under every clean request
+	// that did not, and the limit then cuts the interesting one first.
+	OnlyProblems bool
 }
 
-// List returns the Exchanges matching q, most recent first.
+// interesting reports whether an Exchange is worth a developer's attention: the
+// browser reported something, proximo had to warn about something, or the stack
+// itself answered with a failure.
+func (e *Exchange) interesting() bool {
+	return len(e.Reports) > 0 || len(e.Warnings) > 0 || e.Status >= 400
+}
+
+// activity is when something last happened on an Exchange. A page served ten
+// minutes ago that threw just now is fresher news than a request served since,
+// so ordering by the Exchange alone would sink it.
+func (e *Exchange) activity() time.Time {
+	at := e.At
+	for _, r := range e.Reports {
+		if r.At.After(at) {
+			at = r.At
+		}
+	}
+	return at
+}
+
+// List returns the Exchanges matching q, most recently active first.
 func (s *Store) List(q Query) []Exchange {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,7 +235,10 @@ func (s *Store) List(q Query) []Exchange {
 		if q.Host != "" && e.Host != q.Host {
 			continue
 		}
-		if !cutoff.IsZero() && e.At.Before(cutoff) {
+		if !cutoff.IsZero() && e.activity().Before(cutoff) {
+			continue
+		}
+		if q.OnlyProblems && !e.interesting() {
 			continue
 		}
 		item := *e
@@ -218,7 +246,7 @@ func (s *Store) List(q Query) []Exchange {
 		item.Snapshot = nil
 		out = append(out, item)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	sort.Slice(out, func(i, j int) bool { return out[i].activity().After(out[j].activity()) })
 	if q.Limit > 0 && len(out) > q.Limit {
 		out = out[:q.Limit]
 	}

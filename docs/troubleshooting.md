@@ -179,6 +179,11 @@ without guessing.
    cannot rewrite (a `<meta http-equiv>` tag in your own markup).
 5. **The Exchange is still held.** The buffer is bounded and in memory: a restart
    of the stack clears it, and heavy traffic evicts the oldest first.
+6. **You are looking in the right window.** `--since` defaults to 15 minutes and
+   follows the report, not the page load, so a page opened an hour ago that threw
+   a moment ago still appears. `--all` adds the Exchanges with nothing wrong, which
+   is worth a look when you want to confirm the route is being served through the
+   hop at all.
 
 ## An inspected route 404s on part of my app
 

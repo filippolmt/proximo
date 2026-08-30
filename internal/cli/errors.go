@@ -36,6 +36,9 @@ func newErrorsCmd() *cobra.Command {
 		Short: "Show what went wrong on inspected routes",
 		Long: "Lists recent Exchanges from routes labelled proximo.inspect: what the " +
 			"stack served, and what the browser reported while that page was live.\n\n" +
+			"By default it shows only what went wrong — a client report, a warning, or a " +
+			"failing status — because the alternative buries the one broken page under every " +
+			"request that worked. --all shows the rest.\n\n" +
 			"The output is meant to be read by a person or an agent without further " +
 			"processing. Use `proximo errors dom <id>` for the page's DOM at the time.",
 		Args: cobra.NoArgs,
@@ -44,6 +47,9 @@ func newErrorsCmd() *cobra.Command {
 				"host":  {host},
 				"since": {since.String()},
 				"limit": {strconv.Itoa(limit)},
+			}
+			if all {
+				q.Set("all", "1")
 			}
 			exchanges, err := fetchExchanges(inspectAPI("/exchanges?" + q.Encode()))
 			if err != nil {
@@ -56,7 +62,11 @@ func newErrorsCmd() *cobra.Command {
 				return enc.Encode(exchanges)
 			}
 			if len(exchanges) == 0 {
-				fmt.Fprintln(out, "No Exchanges recorded. Label a container with proximo.inspect=true and load a page.")
+				if all {
+					fmt.Fprintln(out, "No Exchanges recorded. Label a container with proximo.inspect=true and load a page.")
+				} else {
+					fmt.Fprintln(out, "Nothing went wrong in this window. Widen it with --since, or use --all to see the clean Exchanges too.")
+				}
 				return nil
 			}
 			show := warnAndAbove
@@ -74,7 +84,7 @@ func newErrorsCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&since, "since", 15*time.Minute, "only Exchanges newer than this")
 	cmd.Flags().IntVar(&limit, "limit", 20, "most recent N Exchanges")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the raw Exchanges as JSON")
-	cmd.Flags().BoolVar(&all, "all", false, "include breadcrumbs below warning level")
+	cmd.Flags().BoolVar(&all, "all", false, "hold nothing back: Exchanges with nothing wrong, and breadcrumbs below warning level")
 
 	cmd.AddCommand(newErrorsDOMCmd())
 	return cmd

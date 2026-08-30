@@ -298,7 +298,10 @@ func (a AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/exchanges":
 		since, _ := time.ParseDuration(q.Get("since"))
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		writeJSON(w, a.Store.List(Query{Host: q.Get("host"), Since: since, Limit: limit}))
+		writeJSON(w, a.Store.List(Query{
+			Host: q.Get("host"), Since: since, Limit: limit,
+			OnlyProblems: q.Get("all") != "1",
+		}))
 	case "/warnings":
 		writeJSON(w, a.Store.RouteWarnings())
 	case "/dom":

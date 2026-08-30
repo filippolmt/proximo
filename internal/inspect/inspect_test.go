@@ -388,7 +388,7 @@ func TestAdminHandlerIsSeparate(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	AdminHandler{Store: store}.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/exchanges", nil))
+	AdminHandler{Store: store}.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/exchanges?all=1", nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"abc"`) {
 		t.Fatalf("admin API: %d %s", w.Code, w.Body.String())
 	}
@@ -512,5 +512,50 @@ func TestRouteWarningsOutliveEviction(t *testing.T) {
 	do("/")
 	if n := len(store.RouteWarnings()["web.test"]); n != 1 {
 		t.Errorf("warning recorded %d times, want 1", n)
+	}
+}
+
+// TestListShowsProblemsFirst covers the failure that made Inspection look broken
+// when it was not: a page that threw was served before a run of clean requests,
+// so ordering and limiting by the Exchange alone pushed the only interesting one
+// out of the list entirely.
+func TestListShowsProblemsFirst(t *testing.T) {
+	s := NewStore(0)
+	base := time.Now().Add(-10 * time.Minute)
+
+	broken := &Exchange{ID: "broken", At: base, Host: "web.test", Status: 200}
+	s.Add(broken)
+	s.Attach("broken", ingested{Report: Report{Message: "boom", At: time.Now()}})
+	for i := range 30 {
+		s.Add(&Exchange{ID: "ok" + strconv.Itoa(i), At: base.Add(time.Duration(i+1) * time.Second), Host: "web.test", Status: 200})
+	}
+
+	got := s.List(Query{Host: "web.test", Limit: 20, OnlyProblems: true})
+	if len(got) != 1 || got[0].ID != "broken" {
+		t.Fatalf("the only Exchange worth showing must survive the limit, got %d: %+v", len(got), got)
+	}
+
+	// A report that arrived just now keeps its Exchange in a narrow window, even
+	// though the page itself was served well outside it.
+	if got = s.List(Query{Since: time.Minute, OnlyProblems: true}); len(got) != 1 {
+		t.Fatalf("--since must follow the report, not only the page load: %+v", got)
+	}
+
+	// --all still shows everything, newest first.
+	if got = s.List(Query{Host: "web.test"}); len(got) != 31 {
+		t.Fatalf("without OnlyProblems every Exchange is listed, got %d", len(got))
+	}
+
+	// A failing status is interesting on its own, with no client report.
+	s.Add(&Exchange{ID: "500", At: time.Now(), Host: "api.test", Status: 500})
+	if got = s.List(Query{Host: "api.test", OnlyProblems: true}); len(got) != 1 {
+		t.Fatalf("a failing status must show without a client report: %+v", got)
+	}
+
+	// So is a warning proximo raised about the route.
+	warned := &Exchange{ID: "warned", At: time.Now(), Host: "csp.test", Status: 200, Warnings: []string{"relaxed something"}}
+	s.Add(warned)
+	if got = s.List(Query{Host: "csp.test", OnlyProblems: true}); len(got) != 1 {
+		t.Fatalf("a warning must show on its own: %+v", got)
 	}
 }
