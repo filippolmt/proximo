@@ -150,6 +150,23 @@ jobs:
           docker logs "$(docker ps -q --filter label=proximo.role=watcher)" 2>&1 | grep -q "proximo watcher: started" \
             || { echo "FAIL: the watcher never started"; exit 1; }
 
+      # The only place a Report is produced against a real host: the stack is
+      # up but nothing was ever installed, so `doctor` must fail on the install
+      # gate, carry its Remedy, and exit non-zero.
+      - name: doctor reports the host it is on
+        run: |
+          set +e
+          out=$(./proximo doctor 2>&1); code=$?
+          set -e
+          echo "$out"
+          [ "$code" -ne 0 ] || { echo "FAIL: doctor exited 0 on a host that was never installed"; exit 1; }
+          echo "$out" | grep -q "The proximo stack is running" \
+            || { echo "FAIL: doctor did not see the running stack"; exit 1; }
+          echo "$out" | grep -q "Remedy: proximo install" \
+            || { echo "FAIL: the install gate failed without its Remedy"; exit 1; }
+          echo "$out" | grep -q "waiting on: proximo is installed on this host" \
+            || { echo "FAIL: nothing was skipped behind the install gate"; exit 1; }
+
       # A plain `up` clears the sticky override and resolves the ref the CLI
       # computes for itself. Pinning the expected tag here means a broken
       # version -> tag mapping fails CI instead of shipping.

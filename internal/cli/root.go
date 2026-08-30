@@ -28,6 +28,7 @@ func newRootCmd() *cobra.Command {
 		newUpdateCmd(),
 		newTrustCmd(),
 		newStatusCmd(),
+		newDoctorCmd(),
 		newErrorsCmd(),
 		newConfigCmd(),
 		newUninstallCmd(),

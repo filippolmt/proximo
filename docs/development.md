@@ -53,6 +53,7 @@ automatically so the in-stack images build from
 make install    # host setup (CA, resolver, trust) + start stack — asks for sudo
 make up         # start the stack (no host changes)
 make status     # list routed containers
+make doctor     # every check on this host, with a remedy per failure
 make errors     # Exchanges from inspected routes (ARGS="--host web.test")
 make down       # stop the stack
 make uninstall  # reverse host changes + tear down

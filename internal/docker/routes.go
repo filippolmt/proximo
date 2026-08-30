@@ -36,6 +36,11 @@ type Route struct {
 	Backends    int      // number of backend containers serving this route; >1 means round-robin balanced
 	Inspect     bool     // proximo.inspect asked for, and honoured: the route is served through the hop
 	InspectNote string   // set when proximo.inspect was asked for but could not be honoured
+	// Collision marks the row as a host another container claimed. It is said
+	// structurally rather than read back out of Note, so a Check can route a
+	// collision to its own explanation without pattern-matching prose that is
+	// written for a human.
+	Collision bool
 }
 
 // Display renders the route's target for `proximo status`: the HTTPS URL for an
@@ -146,7 +151,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 func servedRoutes(resolved routeResolution, refused map[string]string) []Route {
 	var routes []Route
 	for _, c := range resolved.collisions {
-		routes = append(routes, Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note})
+		routes = append(routes, Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true})
 	}
 	for _, rc := range resolved.kept {
 		backends := len(rc.backends())
@@ -205,6 +210,30 @@ type StackInfo struct {
 	Running bool
 	Version string
 	Image   string
+	// Roles are the proximo.role values of the running stack containers, so a
+	// degraded stack (traefik up, watcher gone) is distinguishable from a
+	// healthy one — which "is anything running?" alone cannot tell.
+	Roles []string
+}
+
+// coreRoles are the stack services routing depends on — the three that
+// docs/troubleshooting.md#degraded-stack names, since a stack missing one of
+// them stops updating routes while still looking like it is running. The
+// inspector is deliberately not one: it is idle unless a route carries
+// proximo.inspect, and an older stack that predates it is a version skew, not a
+// degraded stack.
+var coreRoles = []string{"traefik", "dns", "watcher"}
+
+// MissingRoles returns the core stack services that are not running, in the
+// order they are named above. Empty means the stack is whole.
+func (s StackInfo) MissingRoles() []string {
+	var missing []string
+	for _, role := range coreRoles {
+		if !slices.Contains(s.Roles, role) {
+			missing = append(missing, role)
+		}
+	}
+	return missing
 }
 
 // StackStatus reads the proximo.version and proximo.image labels off the
@@ -229,6 +258,9 @@ func StackStatus(ctx context.Context) (StackInfo, error) {
 		if !info.Running {
 			info.Running, info.Version = true, c.Labels[versionLabel]
 		}
+		if role := c.Labels[roleLabel]; role != "" && !slices.Contains(info.Roles, role) {
+			info.Roles = append(info.Roles, role)
+		}
 		// Only the image-backed services carry the ref; traefik may well be the
 		// first stack container listed, so keep looking until one has it.
 		if info.Image == "" {
@@ -246,15 +278,4 @@ func DisplayVersion(ver string) string {
 		return "pre-0.4.0"
 	}
 	return ver
-}
-
-// VersionSkew returns a human-readable warning when the running stack version
-// differs from the installed CLI version, or "" when they match or the stack is
-// not running. An unlabeled (pre-0.4.0) stack never matches, so it always
-// warns — it must not be mistaken for a stack that is down.
-func VersionSkew(stackVer string, running bool, cliVer string) string {
-	if !running || stackVer == cliVer {
-		return ""
-	}
-	return fmt.Sprintf("stack is running %s but the CLI is %s; run `proximo update` to converge", DisplayVersion(stackVer), cliVer)
 }

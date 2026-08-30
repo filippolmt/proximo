@@ -30,7 +30,7 @@ INSPECT_URL  := https://inspected.test
 OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
 .PHONY: build build-all test vet tidy check-links \
-	install up down status errors uninstall \
+	install up down status doctor errors uninstall \
 	demo demo-down e2e e2e-inspect e2e-down clean
 
 # ---- Build (Go runs in Docker) ------------------------------------------------
@@ -83,6 +83,10 @@ down: build
 ## status: list routed containers
 status: build
 	$(BIN) status
+
+## doctor: report every check on this host, with a remedy per failure
+doctor: build
+	$(BIN) doctor
 
 ## errors: show Exchanges from inspected routes (ARGS="--host web.test --json")
 errors: build

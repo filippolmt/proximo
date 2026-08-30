@@ -1,20 +1,20 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/docker"
-	"github.com/filippolmt/proximo/internal/version"
 	"github.com/spf13/cobra"
 )
 
-// warnPrefix marks a warning line in `proximo status` output (skew notice and
-// per-route notes both use it).
+// warnPrefix marks a warning line in `proximo status` output — the per-route
+// and inspection notes. Nothing else: a failure carrying a Remedy belongs to
+// `proximo doctor`.
 const warnPrefix = "⚠ "
 
 // writeInspectionNotes reports, under the route table, which routes are under
@@ -61,27 +61,16 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := checkDocker(); err != nil {
+			ctx := cmd.Context()
+			if err := checks.DockerReachable(ctx); err != nil {
 				return err
 			}
-			ctx := context.Background()
 			out := cmd.OutOrStdout()
 
-			// Read-only skew check: warn (never mutate) when the running stack
-			// version differs from the installed CLI, pointing to `proximo update`.
-			// The image line is the same contract one level down — a stack running
-			// a --image override must say so, or it runs one thing and declares
-			// another.
-			if stack, err := docker.StackStatus(ctx); err == nil {
-				if w := docker.VersionSkew(stack.Version, stack.Running, version.Version); w != "" {
-					fmt.Fprintln(out, warnPrefix+w)
-				}
-				if canonical := docker.CanonicalImage(); stack.Image != "" && stack.Image != canonical {
-					fmt.Fprintf(out, "%sstack image overridden: %s (an `up` or `update` without --image restores %s)\n",
-						warnPrefix, stack.Image, canonical)
-				}
-			}
-
+			// Version skew and an --image override are things to do
+			// something about, not inventory: they belong to `proximo doctor`,
+			// the only command that prints a Remedy. status keeps its per-route
+			// notes, which are facts about what is reachable right now.
 			routes, err := docker.Routes(ctx, cfg.TLD)
 			if err != nil {
 				return err

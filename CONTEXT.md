@@ -87,20 +87,31 @@ _Avoid_: collision, duplicate, instance
 
 **Check**:
 One independently verifiable statement about the environment — the resolver is
-installed, `:443` is free, the CA is trusted, this container's labels are
-well-formed. A check reports; it never repairs.
+installed, nothing else holds `:443`, the CA is trusted, this container's labels
+are well-formed. A check reports; it never repairs. It also never elevates:
+anything that needs a privilege the developer must grant is a Remedy, not a
+check, because a diagnosis that asks for a password is one nobody runs at the
+moment they need it most.
 _Avoid_: test, validation, probe
-_Debt_: exists only as scattered preflight functions, not as a first-class
-concept with a uniform report.
 
 **Remedy**:
-The exact command a developer runs to clear a failed check. proximo prints
-remedies; the developer runs them, so every mutation of the host stays a verb
-the developer typed.
+The exact command a developer runs after a failed Check, and every failed check
+carries one. Where a cure exists the remedy is the cure; where the cause is
+unknown it is the command whose own output names it — a port held by an unnamed
+process has no fix, but it has a question. proximo prints remedies; the
+developer runs them, so every mutation of the host stays a verb the developer
+typed.
 _Avoid_: fix, autofix, repair
-_Debt_: one implementation only — a converge that leaves the stack image absent
-prints the `docker pull` that diagnoses it. Every other failed check still
-reports an error, not a remedy.
+
+**Report**:
+The outcome of one complete pass of Checks. Each check passed, failed, or was
+skipped — skipped when the environment could not answer it, never when the
+answer was inconvenient, and a skip names what it waited on. A report is one
+whole thing rather than a stream of errors, which is why it shows the checks
+that passed too: those say where *not* to look, and narrow the search as much as
+a failure does. Only a report carries Remedies. An inventory of what is running
+is not a report, and `proximo status` is an inventory.
+_Avoid_: diagnosis, output, summary, health check
 
 **Access record**:
 The metadata of one request that passed through the stack — host, method,

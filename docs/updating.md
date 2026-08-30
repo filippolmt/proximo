@@ -78,7 +78,8 @@ contract with each other and a mixed pair is a footgun no CI has ever built.
 It is **sticky**: the ref is written into the materialized `.env`, so containers
 restarting at boot keep it. While it is in effect:
 
-- `proximo status` prints the overridden ref,
+- `proximo doctor` reports the overridden ref as a failure, with `proximo up`
+  as the remedy,
 - `proximo update` never reports "up to date" — the stack is not running the
   CLI's image,
 - the next `up` or `update` **without** `--image` clears it and prints the
@@ -97,12 +98,12 @@ thing.
 | --- | --- |
 | `proximo update` | Converge now (the manual path). |
 | `proximo up` | Applies any pending convergence on start — same code path as `update`. So a stack that was stopped at upgrade time is brought to the installed CLI version when next started. |
-| `proximo status` | **Read-only.** Warns when the running stack version differs from the CLI, and when an `--image` override is in effect. It never converges. |
+| [`proximo doctor`](cli.md#proximo-doctor) | **Read-only.** Reports a stack version differing from the CLI, and an `--image` override in effect, each with its remedy. It never converges. |
 | Homebrew upgrade | The cask's post-install hook runs `proximo update`, so the stack converges with the CLI. It cannot fail the upgrade: if Docker was down, the caveat says it applies on the next `proximo up`. |
 
 Outside Homebrew this is deliberately **not** push auto-update: after a CLI
 upgrade the stack stays on the old version until you run `proximo update` or
-restart with `proximo up`. The `status` skew warning makes the pending update
+restart with `proximo up`. The `doctor` skew check makes the pending update
 visible. proximo installs no scheduled unit and runs no in-stack updater — the
 stack is pinned to the version of the binary that started it, so an in-stack
 updater would have to overtake its own CLI.
@@ -110,7 +111,7 @@ updater would have to overtake its own CLI.
 ## Linux
 
 Linux has no Homebrew cask, so the manual model applies: this guide's nudge, the
-`proximo status` skew warning, and `proximo update` (or the next `proximo up`)
+`proximo doctor` skew check, and `proximo update` (or the next `proximo up`)
 converge the stack.
 
 See the [CLI reference](cli.md#proximo-update) for the command summary,

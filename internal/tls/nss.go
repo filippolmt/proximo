@@ -20,7 +20,7 @@ func InstallNSSTrust(r platform.Runner) error {
 	if err != nil {
 		return err
 	}
-	dbs := nssDatabases()
+	dbs := nssDatabases(true)
 	if len(dbs) == 0 {
 		fmt.Fprintln(os.Stderr, "proximo: no NSS databases found (Firefox/Chrome); skipping NSS trust")
 		return nil
@@ -41,7 +41,7 @@ func RemoveNSSTrust(r platform.Runner) error {
 	if !platform.Has("certutil") {
 		return nil
 	}
-	for _, db := range nssDatabases() {
+	for _, db := range nssDatabases(false) {
 		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
 	}
 	return nil
@@ -71,8 +71,10 @@ func ensureCertutil() error {
 	return nil
 }
 
-// nssDatabases discovers NSS databases for the current user's browsers.
-func nssDatabases() []string {
+// nssDatabases discovers the NSS databases for the current user's browsers.
+// create bootstraps the Chromium database when absent, which installing trust
+// wants and a Check must never do: a check reads the host, it never writes it.
+func nssDatabases(create bool) []string {
 	var dbs []string
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -87,7 +89,7 @@ func nssDatabases() []string {
 	// be installed before the browser first runs.
 	if osType == platform.Linux {
 		pki := filepath.Join(home, ".pki", "nssdb")
-		if !hasNSSDB(pki) && platform.Has("certutil") {
+		if create && !hasNSSDB(pki) && platform.Has("certutil") {
 			if err := os.MkdirAll(pki, 0o755); err == nil {
 				_ = platform.Run("certutil", "-N", "-d", "sql:"+pki, "--empty-password")
 			}

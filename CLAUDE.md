@@ -30,6 +30,7 @@ Architecture lives in `docs/`, never here. Whole picture:
 | Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
 | The bare + qualified host every route answers on | [docs/routing.md — The two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets) |
 | A host collision: what is reported and what to do | [docs/troubleshooting.md — A host collision is reported](docs/troubleshooting.md#a-host-collision-is-reported) |
+| What a Check reports, and why `status` never prints a Remedy | [docs/cli.md — proximo doctor](docs/cli.md#proximo-doctor) |
 | HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
 | Health-gated routing & the `proximo.health=false` opt-out | [docs/routing.md — proximo.health](docs/routing.md#proximohealth--wait-for-the-container-to-be-healthy) |
 | Curated middleware labels (auth/CORS/custom headers) & escape hatch | [docs/routing.md — proximo middlewares](docs/routing.md#proximo-middlewares--auth-cors-custom-headers) |
@@ -49,6 +50,9 @@ Architecture lives in `docs/`, never here. Whole picture:
 Read the matching section **before** touching that code — each one is a contract the
 compiler will not enforce:
 
+- Adding a Check (the registry, its prerequisites, and the troubleshooting
+  anchor a test asserts): [docs/adr/0004](docs/adr/0004-checks-report-remedies.md),
+  `internal/checks/registry.go`
 - Version → image ref (`imageRef()` re-adds the `v` GoReleaser strips, and pins
   the stack image to the CLI version):
   [Version and image ref](docs/development.md#version-and-image-ref)

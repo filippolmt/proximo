@@ -141,3 +141,65 @@ func TestServedRoutesDropsWithdrawnQualified(t *testing.T) {
 		t.Fatalf("routes = %+v, want no qualified host advertised", routes)
 	}
 }
+
+// A stack is whole only when the services routing depends on it are running:
+// traefik alone is a degraded stack, which is exactly the state that stops
+// routes from updating.
+func TestMissingRolesNamesTheServicesThatAreDown(t *testing.T) {
+	cases := []struct {
+		name  string
+		roles []string
+		want  string
+	}{
+		{"whole", []string{"traefik", "dns", "watcher", "inspector"}, ""},
+		{"no watcher", []string{"traefik", "dns"}, "watcher"},
+		{"nothing", nil, "traefik,dns,watcher"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(StackInfo{Running: true, Roles: tc.roles}.MissingRoles(), ",")
+			if got != tc.want {
+				t.Errorf("MissingRoles = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Who publishes a host port is the question the port checks ask, and the
+// stack's own claim must be told apart from a stranger's: only the second is a
+// failure, and only the second has a container to point the developer at.
+func TestPortOwnersNamesTheContainerAndWhetherItIsTheStack(t *testing.T) {
+	cs := []container.Summary{
+		{
+			Names:  []string{"/proximo-traefik-1"},
+			Labels: map[string]string{roleLabel: "traefik"},
+			Ports: []container.PortSummary{
+				{PublicPort: 80, PrivatePort: 80, Type: "tcp"},
+				{PublicPort: 443, PrivatePort: 443, Type: "tcp"},
+			},
+		},
+		{
+			Names: []string{"/some-nginx"},
+			Ports: []container.PortSummary{{PublicPort: 8080, PrivatePort: 80, Type: "tcp"}},
+		},
+		{
+			// A container port nobody published: not a claim on the host.
+			Names: []string{"/internal-only"},
+			Ports: []container.PortSummary{{PrivatePort: 5432, Type: "tcp"}},
+		},
+	}
+
+	owners := portOwners(cs)
+	if got := owners[PortKey(443, "tcp")]; got.Container != "proximo-traefik-1" || !got.Stack {
+		t.Errorf(":443 owner = %+v, want the stack's traefik", got)
+	}
+	if got := owners[PortKey(8080, "tcp")]; got.Container != "some-nginx" || got.Stack {
+		t.Errorf(":8080 owner = %+v, want a non-stack container", got)
+	}
+	if _, ok := owners[PortKey(5432, "tcp")]; ok {
+		t.Error("an unpublished container port was reported as holding a host port")
+	}
+	if _, ok := owners[PortKey(443, "udp")]; ok {
+		t.Error(":443/tcp answered for :443/udp")
+	}
+}

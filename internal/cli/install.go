@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
+	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
-	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/platform"
 	"github.com/filippolmt/proximo/internal/tls"
@@ -30,10 +30,7 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	fmt.Fprintln(out, "==> Preflight checks")
-	if err := preflight(); err != nil {
-		return err
-	}
-	if err := dns.CheckPortFree(); err != nil {
+	if err := runPreflight(cmd.Context(), out, cfg.TLD, checks.PreInstall); err != nil {
 		return err
 	}
 

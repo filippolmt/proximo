@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/observability"
@@ -52,7 +53,7 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := checkDocker(); err != nil {
+			if err := runPreflight(cmd.Context(), cmd.OutOrStdout(), cfg.TLD, checks.Preflight); err != nil {
 				return err
 			}
 			certDir, err := tls.Dir()
