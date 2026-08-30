@@ -65,11 +65,12 @@ This runs, in order:
 
 1. **Preflight** — the subset of [`proximo doctor`](cli.md#proximo-doctor)'s
    checks that is meaningful before the host has been changed: the Docker daemon
-   is reachable, and nothing but proximo holds `:80`, `:443` or
-   `127.0.0.1:5354/udp`. A port held by proximo's own stack is not a failure, so
-   `install` can be re-run while the stack is up; a port held by anything else
-   stops the command before it touches your host, and says which command names
-   the holder.
+   is reachable, nothing but proximo holds `:80`, `:443` or
+   `127.0.0.1:5354/udp`, and the browser (NSS) trust store this install is about
+   to write can be written at all. A port held by proximo's own stack is not a
+   failure, so `install` can be re-run while the stack is up; a port held by
+   anything else stops the command before it touches your host, and says which
+   command names the holder.
 2. **Prime sudo** — prompts once so the following privileged steps don't each
    ask for a password.
 3. **Generate the local CA** — a P-256 ECDSA CA created on first run and reused
@@ -78,10 +79,9 @@ This runs, in order:
    server (see [what it changes](#what-install-changes-on-your-host)).
 5. **Install CA trust** — adds the CA to the OS system trust store and, when
    present, the NSS store (Firefox / Chromium on Linux) via `certutil`,
-   installing the NSS tooling if it is missing. NSS trust is best-effort: a host
-   where the tooling cannot be installed still finishes the install, and
-   [`proximo doctor`](cli.md#proximo-doctor) reports the browser trust that is
-   missing, with the command that installs it.
+   installing the NSS tooling if it is missing. Preflight has already confirmed
+   that it can be, which is why this step does not fail after the host has been
+   changed.
 6. **Start the stack** — materializes and `docker compose up -d --build`s the
    embedded Traefik + DNS + watcher stack.
 7. **Save config** — persists the chosen TLD.

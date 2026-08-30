@@ -13,7 +13,7 @@ import (
 )
 
 // warnPrefix marks a warning line in `proximo status` output — the per-route
-// and inspection notes. Nothing else: a diagnosis with a Remedy belongs to
+// and inspection notes. Nothing else: a failure carrying a Remedy belongs to
 // `proximo doctor`.
 const warnPrefix = "⚠ "
 
@@ -67,10 +67,10 @@ func newStatusCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 
-			// Version skew and an --image override are diagnoses, not
-			// inventory: they belong to `proximo doctor`, which is the only
-			// command that prints a Remedy. status keeps its per-route notes,
-			// which are facts about what is reachable right now.
+			// Version skew and an --image override are things to do
+			// something about, not inventory: they belong to `proximo doctor`,
+			// the only command that prints a Remedy. status keeps its per-route
+			// notes, which are facts about what is reachable right now.
 			routes, err := docker.Routes(ctx, cfg.TLD)
 			if err != nil {
 				return err

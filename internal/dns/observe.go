@@ -12,7 +12,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-// sentinelLabel is the name a diagnosis resolves to prove the wildcard is
+// sentinelLabel is the name a Check resolves to prove the wildcard is
 // answering. The server answers every name under the TLD, so the sentinel needs
 // no container running — which is what makes it usable on a machine where
 // nothing is up yet.
@@ -22,22 +22,22 @@ const sentinelLabel = "proximo-doctor"
 // proximo-doctor.test.
 func Sentinel(tld string) string { return sentinelLabel + "." + tld }
 
-// probeTimeout bounds every probe. A check that runs out of time fails rather
-// than hangs: a broken VPN is exactly the machine a diagnosis exists for, and a
-// diagnostic tool that hangs is worse than one that is wrong.
-const probeTimeout = 5 * time.Second
+// queryTimeout bounds both lookups. A check that runs out of time fails rather
+// than hangs: a broken VPN is exactly the machine `proximo doctor` exists for,
+// and a tool that hangs is worse than one that is wrong.
+const queryTimeout = 5 * time.Second
 
 // QueryLocal asks the proximo DNS server directly, bypassing the host resolver,
 // and returns the address it answered with (empty when it answered nothing).
-// This is the half of the DNS diagnosis that says whether the server itself is
+// This is the half of the DNS answer that says whether the server itself is
 // alive; SystemResolves is the half that says whether the host uses it.
 func QueryLocal(ctx context.Context, name string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), dns.TypeA)
-	c := &dns.Client{Timeout: probeTimeout}
+	c := &dns.Client{Timeout: queryTimeout}
 	resp, _, err := c.ExchangeContext(ctx, m, fmt.Sprintf("127.0.0.1:%d", config.DNSPort))
 	if err != nil {
 		return "", err
@@ -58,7 +58,7 @@ func QueryLocal(ctx context.Context, name string) (string, error) {
 // Domains=~<tld> drop-in on Linux, so it would report a failure on a perfectly
 // healthy machine.
 func SystemResolves(ctx context.Context, name string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	var out string
@@ -98,16 +98,7 @@ func firstIPv4(out string) string {
 // the file ConfigureResolver writes. A Check reads it to tell a machine that
 // was never installed from one whose resolver was removed.
 func ResolverPath(tld string) (string, error) {
-	osType, err := platform.Current()
-	if err != nil {
-		return "", err
-	}
-	switch osType {
-	case platform.MacOS:
-		return resolverFileDarwin(tld), nil
-	default:
-		return resolvedDropInPath(tld), nil
-	}
+	return platform.Pick(resolverFileDarwin(tld), resolvedDropInPath(tld))
 }
 
 // ResolverRemedy is the command whose own output names why the host resolver is
@@ -115,8 +106,8 @@ func ResolverPath(tld string) (string, error) {
 // resolver outranking the proximo one is not something proximo may undo — so
 // the remedy is the question.
 func ResolverRemedy() string {
-	if osType, err := platform.Current(); err == nil && osType == platform.MacOS {
-		return "scutil --dns"
-	}
-	return "resolvectl status"
+	// The Linux answer is the fallback: an unsupported platform never gets this
+	// far, since resolving where the resolver file lives fails first.
+	remedy, _ := platform.Pick("scutil --dns", "resolvectl status")
+	return remedy
 }

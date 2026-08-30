@@ -28,11 +28,12 @@ func healthyEnv() Env {
 		PortHeldBy: func(context.Context, int, string) (PortHolder, string) {
 			return PortStack, "proximo-traefik-1"
 		},
-		QueryLocal:    func(context.Context, string) (string, error) { return "127.0.0.1", nil },
-		SystemResolve: func(context.Context, string) (string, error) { return "127.0.0.1", nil },
-		SystemTrusted: func(context.Context) (bool, error) { return true, nil },
-		NSSTrusted:    func(context.Context) (int, int, error) { return 2, 2, nil },
-		Docker:        func(context.Context) error { return nil },
+		QueryLocal:          func(context.Context, string) (string, error) { return "127.0.0.1", nil },
+		SystemResolve:       func(context.Context, string) (string, error) { return "127.0.0.1", nil },
+		SystemTrusted:       func(context.Context) (bool, error) { return true, nil },
+		CertutilInstallable: func() bool { return true },
+		NSSTrusted:          func(context.Context) (int, int, error) { return 2, 2, nil },
+		Docker:              func(context.Context) error { return nil },
 		Stack: func(context.Context) (docker.StackInfo, error) {
 			return docker.StackInfo{
 				Running: true,
@@ -47,7 +48,7 @@ func healthyEnv() Env {
 	}
 }
 
-// brokenEnv is the opposite machine: every probe reports the worst answer it
+// brokenEnv is the opposite machine: every reading gives the worst answer it
 // has, so each check can be driven to its failure independently.
 func brokenEnv() Env {
 	env := healthyEnv()
@@ -56,6 +57,7 @@ func brokenEnv() Env {
 	env.QueryLocal = func(context.Context, string) (string, error) { return "", errors.New("no answer") }
 	env.SystemResolve = func(context.Context, string) (string, error) { return "", nil }
 	env.SystemTrusted = func(context.Context) (bool, error) { return false, nil }
+	env.CertutilInstallable = func() bool { return false }
 	env.NSSTrusted = func(context.Context) (int, int, error) { return 0, 3, nil }
 	env.Docker = func(context.Context) error { return errors.New("daemon down") }
 	env.Stack = func(context.Context) (docker.StackInfo, error) { return docker.StackInfo{}, nil }
@@ -125,7 +127,7 @@ func TestEveryCheckHasAnIDNameAndDoc(t *testing.T) {
 // waited on: an unreachable Docker daemon is one cause, not a dozen red lines.
 func TestFailedPrerequisiteSkipsDependents(t *testing.T) {
 	rep := Run(context.Background(), []Check{
-		{ID: "a", Name: "A holds", Run: func(context.Context) Result { return Failed("fix a", "broken") }},
+		{ID: "a", Name: "A holds", Run: func(context.Context) Result { return Failed("remedy a", "broken") }},
 		{ID: "b", Name: "B holds", Needs: []string{"a"}, Run: func(context.Context) Result {
 			t.Error("b ran although its prerequisite failed")
 			return Passed("")
@@ -152,7 +154,7 @@ func TestSkipIsNotAFailure(t *testing.T) {
 	}
 }
 
-// The two DNS checks are one diagnosis: a corporate VPN produces exactly this
+// The two DNS checks are one answer: a corporate VPN produces exactly this
 // pair, and neither check alone gives it.
 func TestVPNPairServerAnswersHostDoesNotUseIt(t *testing.T) {
 	env := healthyEnv()
@@ -253,7 +255,7 @@ func TestDegradedStackFails(t *testing.T) {
 
 // A container still coming up, and a route whose inspection was refused, are
 // both being served — or about to be. Neither may turn `doctor` red: a
-// diagnosis that goes red during every restart is one nobody trusts.
+// report that goes red during every restart is one nobody trusts.
 func TestTransientAndInspectNotesAreNotRouteFailures(t *testing.T) {
 	env := healthyEnv()
 	env.Routes = func(context.Context) ([]docker.Route, error) {
@@ -273,7 +275,7 @@ func TestUnhealthyRouteIsARouteFailure(t *testing.T) {
 	env := healthyEnv()
 	env.Routes = func(context.Context) ([]docker.Route, error) {
 		return []docker.Route{
-			{Container: "web", Host: "web.test", Note: "unhealthy (route withdrawn until healthy)"},
+			{Container: "web", Host: "web.test", Note: docker.NoteUnhealthy},
 		}, nil
 	}
 	res := checkByID(t, All(env), IDRoutes).Run(context.Background())
@@ -299,6 +301,26 @@ func TestUnservedRouteFailsAndNamesTheContainerToInspect(t *testing.T) {
 	}
 	if !strings.Contains(res.Remedy, "work-api-1") || strings.Contains(res.Remedy, "web") {
 		t.Errorf("remedy %q should inspect only the unserved container", res.Remedy)
+	}
+}
+
+// A contested host and a mislabelled container are two different failures, so
+// the report must not send a developer to the wrong section — nor offer a
+// remedy that cannot cure the one they have.
+func TestCollisionIsExplainedApartFromAMislabelledContainer(t *testing.T) {
+	env := healthyEnv()
+	env.Routes = func(context.Context) ([]docker.Route, error) {
+		return []docker.Route{
+			{Container: "work-api-1", Host: "api.test", Collision: true,
+				Note: "api.test is served by shop-api-1; this container answers at api.work.test"},
+		}, nil
+	}
+	res := checkByID(t, All(env), IDRoutes).Run(context.Background())
+	if res.Doc != "a-host-collision-is-reported" {
+		t.Errorf("doc = %q, want the collision section", res.Doc)
+	}
+	if strings.Contains(res.Remedy, "docker inspect") {
+		t.Errorf("remedy = %q: inspecting labels does not cure a contested host", res.Remedy)
 	}
 }
 
@@ -350,13 +372,48 @@ func TestPreflightIsTheSubsetThatNeedsNoInstall(t *testing.T) {
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
 		t.Errorf("preflight = %v, want %v", ids, want)
 	}
-	// The registry is one list: the pre-install subset is a prefix of it, so
-	// the two cannot drift apart.
-	all := All(healthyEnv())
-	for i, c := range Preflight(healthyEnv()) {
-		if all[i].ID != c.ID {
-			t.Errorf("All()[%d] = %s, want the preflight check %s", i, all[i].ID, c.ID)
+	// `up` changes no host configuration, so it must not be gated on whether
+	// browser trust could be installed.
+	for _, c := range Preflight(healthyEnv()) {
+		if c.ID == IDCertutil {
+			t.Error("up is gated on a check about a store it never writes")
 		}
+	}
+}
+
+// The registry is one list, and the two subsets are prefixes of it: Preflight ⊂
+// PreInstall ⊂ All, so no subset can drift away from the whole.
+func TestSubsetsArePrefixesOfTheRegistry(t *testing.T) {
+	prefixOf := func(t *testing.T, name string, subset, whole []Check) {
+		t.Helper()
+		if len(subset) > len(whole) {
+			t.Fatalf("%s is longer than what contains it", name)
+		}
+		for i, c := range subset {
+			if whole[i].ID != c.ID {
+				t.Errorf("%s[%d] = %s, but the containing list has %s", name, i, c.ID, whole[i].ID)
+			}
+		}
+	}
+	env := healthyEnv()
+	prefixOf(t, "Preflight", Preflight(env), PreInstall(env))
+	prefixOf(t, "PreInstall", PreInstall(env), All(env))
+}
+
+// install writes the NSS store, so it learns before it touches anything that
+// the store can be written at all — the guarantee that would otherwise be paid
+// for with a sudo prompt and a rollback.
+func TestInstallIsGatedOnBrowserTrustBeingInstallable(t *testing.T) {
+	env := healthyEnv()
+	env.CertutilInstallable = func() bool { return false }
+
+	rep := Run(context.Background(), PreInstall(env))
+	failures := rep.Failures()
+	if len(failures) != 1 || failures[0].Check.ID != IDCertutil {
+		t.Fatalf("failures = %v, want just the certutil check", failures)
+	}
+	if failures[0].Result.Remedy != env.CertutilRemedy {
+		t.Errorf("remedy = %q, want %q", failures[0].Result.Remedy, env.CertutilRemedy)
 	}
 }
 
@@ -390,7 +447,7 @@ func TestDefaultEnvWritesNothing(t *testing.T) {
 	}
 }
 
-// The TCP probe connects rather than binds. Binding :80 or :443 as the
+// The TCP question connects rather than binds. Binding :80 or :443 as the
 // unprivileged user proximo runs as fails with EACCES on a free port, which
 // would report a stranger holding it and refuse to install on a healthy
 // machine.

@@ -256,6 +256,7 @@ proximo doctor
 ✔ Nothing but proximo holds :80/tcp — held by the proximo stack (proximo-traefik-1)
 ✔ Nothing but proximo holds :443/tcp — held by the proximo stack (proximo-traefik-1)
 ✔ Nothing but proximo holds :5354/udp — held by the proximo stack (proximo-dns-1)
+✔ Browser trust can be installed
 ✔ proximo is installed on this host — CA and host resolver are in place
 ✔ The local CA is in the system trust store
 ✔ The local CA is in the browser (NSS) trust stores — 2 NSS database(s) hold the CA
@@ -275,10 +276,10 @@ needs, because it is the one being read:
 ✘ The host resolver uses the proximo DNS server
     proximo-doctor.test resolves to "", not 127.0.0.1
     Remedy: resolvectl status
-    See:    docs/troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver
+    See:    https://github.com/filippolmt/proximo/blob/main/docs/troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver
 ```
 
-The two DNS checks are one diagnosis. *The proximo DNS server answers* queries
+The two DNS checks are one answer. *The proximo DNS server answers* queries
 `127.0.0.1:5354` directly; *the host resolver uses it* asks the OS resolver for
 the same name. A VPN produces exactly the pair above — the first passes, the
 second fails — and that pair **is** the answer: proximo is healthy, the host is
@@ -291,22 +292,33 @@ waited on, so one cause never produces a dozen red lines:
 ✘ proximo is installed on this host
     missing the local CA (~/.proximo/tls/ca.pem) and the host resolver file (/etc/resolver/test)
     Remedy: proximo install
-    See:    docs/troubleshooting.md#proximo-is-not-installed-on-this-host
+    See:    https://github.com/filippolmt/proximo/blob/main/docs/troubleshooting.md#proximo-is-not-installed-on-this-host
 – The local CA is in the system trust store — waiting on: proximo is installed on this host
 ```
 
 Two properties are worth relying on:
 
 - **It never elevates.** Everything proximo must read is readable unprivileged,
-  and it never asks for a password: a diagnosis that does is one nobody runs at
+  and it never asks for a password: a check that does is one nobody runs at
   the moment they need it most. Remedies may need `sudo` — you type those.
 - **It never repairs.** `doctor` reads the host and reports; every mutation
   stays a verb you typed.
 
+Each failure names the section that explains it, and a check that can fail for
+causes documented apart points at the right one: a contested host is sent to
+[a host collision is reported](troubleshooting.md#a-host-collision-is-reported),
+not to the mislabelled-container checklist, and is offered the command that
+lists every claimant rather than a cure proximo may not pick.
+
 Any failure exits **non-zero**, including a failed route (your container rather
 than proximo): an exit code that needs a rule to interpret is worse than one
-that does not. `install` and `up` run the subset that is meaningful before the
-host is touched — Docker and the three ports — and print only what failed.
+that does not. Each check is bounded: one that runs out of time fails, because a
+tool that hangs is worse than one that is wrong.
+
+`up` runs the subset that is meaningful before the host is touched — Docker and
+the three ports. `install` runs that same subset plus one more, that browser
+trust can be installed at all, since it is about to write a store `up` never
+touches. Both print only what failed.
 
 ## proximo errors
 

@@ -61,9 +61,12 @@ type Env struct {
 	SystemResolve func(ctx context.Context, name string) (string, error)
 	SystemTrusted func(ctx context.Context) (bool, error)
 	NSSTrusted    func(ctx context.Context) (found, total int, err error)
-	Docker        func(ctx context.Context) error
-	Stack         func(ctx context.Context) (docker.StackInfo, error)
-	Routes        func(ctx context.Context) ([]docker.Route, error)
+	// CertutilInstallable reports whether browser trust can be installed at
+	// all — before `install` writes anything that would have to be undone.
+	CertutilInstallable func() bool
+	Docker              func(ctx context.Context) error
+	Stack               func(ctx context.Context) (docker.StackInfo, error)
+	Routes              func(ctx context.Context) ([]docker.Route, error)
 }
 
 // DefaultEnv wires the checks to the real host. It fails only where proximo
@@ -83,21 +86,22 @@ func DefaultEnv(tld string) (Env, error) {
 	}
 
 	return Env{
-		TLD:            tld,
-		CLIVersion:     version.Version,
-		CanonicalImage: docker.CanonicalImage(),
-		CAPath:         caPath,
-		ResolverPath:   resolverPath,
-		ResolverRemedy: dns.ResolverRemedy(),
-		CertutilRemedy: tls.CertutilRemedy(),
-		FileExists:     fileExists,
-		QueryLocal:     dns.QueryLocal,
-		SystemResolve:  dns.SystemResolves,
-		SystemTrusted:  tls.SystemTrusted,
-		NSSTrusted:     tls.NSSTrusted,
-		PortHeldBy:     portHeldBy(once(docker.PublishedPorts)),
-		Docker:         DockerReachable,
-		Stack:          docker.StackStatus,
+		TLD:                 tld,
+		CLIVersion:          version.Version,
+		CanonicalImage:      docker.CanonicalImage(),
+		CAPath:              caPath,
+		ResolverPath:        resolverPath,
+		ResolverRemedy:      dns.ResolverRemedy(),
+		CertutilRemedy:      tls.CertutilRemedy(),
+		FileExists:          fileExists,
+		QueryLocal:          dns.QueryLocal,
+		SystemResolve:       dns.SystemResolves,
+		SystemTrusted:       tls.SystemTrusted,
+		NSSTrusted:          tls.NSSTrusted,
+		CertutilInstallable: tls.CertutilInstallable,
+		PortHeldBy:          portHeldBy(once(docker.PublishedPorts)),
+		Docker:              DockerReachable,
+		Stack:               docker.StackStatus,
 		Routes: func(ctx context.Context) ([]docker.Route, error) {
 			return docker.Routes(ctx, tld)
 		},
@@ -109,8 +113,8 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// DockerReachable pings the Docker daemon. It is the one probe the rest of the
-// CLI shares: every command that talks to Docker needs the same answer, and
+// DockerReachable pings the Docker daemon. It is the one reading the rest of
+// the CLI shares: every command that talks to Docker needs the same answer, and
 // this way it is worded once.
 func DockerReachable(ctx context.Context) error {
 	if !platform.Has("docker") {
@@ -155,13 +159,13 @@ func portHeldBy(ports func(context.Context) (map[string]docker.PortOwner, error)
 
 // held reports whether something outside Docker is on the port.
 //
-// A TCP port is probed by connecting, not by binding: :80 and :443 cannot be
+// A TCP port is asked by connecting, not by binding: :80 and :443 cannot be
 // bound by the unprivileged user proximo runs as, so a bind would answer EACCES
 // on a perfectly free port and report a stranger holding it — a false failure
 // that would refuse to install on a healthy machine. A connection that is
 // accepted proves a listener; one that is refused proves none.
 //
-// UDP has no handshake to lean on, so the DNS port is probed by binding it and
+// UDP has no handshake to lean on, so the DNS port is asked by binding it and
 // closing it again. That port is unprivileged by design, so the bind is
 // permitted, and the check never keeps a port it was asked about.
 func held(port int, proto string) bool {
@@ -180,7 +184,7 @@ func held(port int, proto string) bool {
 	return c.Close() == nil
 }
 
-// dialTimeout bounds the TCP probe. It only ever dials loopback, where a
+// dialTimeout bounds the TCP question. It only ever dials loopback, where a
 // listener answers or the kernel refuses immediately; the timeout is for the
 // pathological case, not the normal one.
 const dialTimeout = time.Second

@@ -1326,6 +1326,11 @@ func isHealthRoutable(c container.Summary) bool {
 // exported so the two cannot drift apart as two copies of one string.
 const NoteStarting = "starting (waiting for healthy)"
 
+// NoteUnhealthy is the note carried by a container whose healthcheck failed, so
+// its route was withdrawn. Unlike NoteStarting it is a fault: the container is
+// up and cannot serve.
+const NoteUnhealthy = "unhealthy (route withdrawn until healthy)"
+
 // healthGateNote returns the `proximo status` note for a health-gated container
 // that is not yet routable, or "" when the container is routable (no note). It
 // distinguishes a not-yet-ready container (starting) from one whose route was
@@ -1338,7 +1343,7 @@ func healthGateNote(c container.Summary) string {
 	// Not routable here implies gating is on and c.Health is non-nil with a
 	// starting/unhealthy status (a nil or healthy/none status is routable above).
 	if c.Health.Status == container.Unhealthy {
-		return "unhealthy (route withdrawn until healthy)"
+		return NoteUnhealthy
 	}
 	return NoteStarting
 }

@@ -46,11 +46,26 @@ func TestFailureCarriesRemedyAndDocLink(t *testing.T) {
 		"✘ The host resolver uses the proximo DNS server\n",
 		"    proximo-doctor.test resolves to \"\", not 127.0.0.1\n",
 		"    Remedy: resolvectl status\n",
-		"    See:    docs/troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver\n",
+		"    See:    https://github.com/filippolmt/proximo/blob/main/docs/troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output %q is missing %q", got, want)
 		}
+	}
+}
+
+// A failure that names its own section overrides the check's: one check can
+// fail for causes documented apart.
+func TestFailureCanNameItsOwnSection(t *testing.T) {
+	got := render(checks.Outcome{
+		Check:  checks.Check{Name: "Every routed container is served", Doc: "container-not-routed"},
+		Result: checks.Failed("docker ps", "api.test is served by shop-api-1").Explains("a-host-collision-is-reported"),
+	})
+	if !strings.Contains(got, "#a-host-collision-is-reported\n") {
+		t.Errorf("output %q did not follow the failure's own section", got)
+	}
+	if strings.Contains(got, "container-not-routed") {
+		t.Errorf("output %q fell back to the check's section", got)
 	}
 }
 

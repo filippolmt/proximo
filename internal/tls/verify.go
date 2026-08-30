@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/filippolmt/proximo/internal/platform"
@@ -78,7 +77,7 @@ func NSSTrusted(ctx context.Context) (found, total int, err error) {
 	// Enumerate first: a host with no browser profile has nothing to answer
 	// with whether or not the NSS tooling is installed, and the two must give
 	// the same answer.
-	dbs := findNSSDatabases(false)
+	dbs := nssDatabases(false)
 	if len(dbs) == 0 {
 		return 0, 0, nil
 	}
@@ -108,16 +107,23 @@ func NSSTrusted(ctx context.Context) (found, total int, err error) {
 
 // CertutilRemedy is the command that installs the NSS tooling, so a host that
 // cannot even be asked about browser trust has a first step.
+//
+// It answers per OS rather than per detected package manager: the host that
+// needs this remedy is precisely the one where no package manager was found,
+// and that host must not be told to run Homebrew because it is not a Mac.
 func CertutilRemedy() string {
-	pm, err := platform.DetectPackageManager()
-	if err != nil {
-		return "brew install nss"
+	remedy, _ := platform.Pick("brew install nss", "sudo apt-get install -y libnss3-tools")
+	return remedy
+}
+
+// CertutilInstallable reports whether browser trust can be installed at all:
+// the tooling is already here, or a package manager proximo supports can fetch
+// it. Reading it before `install` mutates anything is what keeps a host that
+// can never finish the trust step from being changed at all.
+func CertutilInstallable() bool {
+	if platform.Has("certutil") {
+		return true
 	}
-	switch pm {
-	case platform.Brew:
-		return "brew install nss"
-	case platform.Apt:
-		return "sudo apt-get install -y libnss3-tools"
-	}
-	return fmt.Sprintf("install nss-tools for %s", pm)
+	_, err := platform.DetectPackageManager()
+	return err == nil
 }

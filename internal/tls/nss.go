@@ -14,19 +14,13 @@ import (
 // bootstrap stay on the package helpers.
 func InstallNSSTrust(r platform.Runner) error {
 	if err := ensureCertutil(); err != nil {
-		// Best-effort, like a host with no NSS database at all: NSS trust is
-		// Firefox and Chromium-on-Linux, and failing here would abort an
-		// install that has already trusted the CA system-wide and wired the
-		// resolver. `proximo doctor` reports the missing browser trust
-		// afterwards, with the command that installs the tooling.
-		fmt.Fprintf(os.Stderr, "proximo: %v; skipping NSS trust (run `proximo doctor` for the remedy)\n", err)
-		return nil
+		return err
 	}
 	caPath, err := CACertPath()
 	if err != nil {
 		return err
 	}
-	dbs := nssDatabases()
+	dbs := nssDatabases(true)
 	if len(dbs) == 0 {
 		fmt.Fprintln(os.Stderr, "proximo: no NSS databases found (Firefox/Chrome); skipping NSS trust")
 		return nil
@@ -47,7 +41,7 @@ func RemoveNSSTrust(r platform.Runner) error {
 	if !platform.Has("certutil") {
 		return nil
 	}
-	for _, db := range nssDatabases() {
+	for _, db := range nssDatabases(false) {
 		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
 	}
 	return nil
@@ -77,14 +71,10 @@ func ensureCertutil() error {
 	return nil
 }
 
-// nssDatabases discovers NSS databases for the current user's browsers,
-// bootstrapping the Chromium one when it is missing.
-func nssDatabases() []string { return findNSSDatabases(true) }
-
-// findNSSDatabases discovers the NSS databases for the current user's browsers.
+// nssDatabases discovers the NSS databases for the current user's browsers.
 // create bootstraps the Chromium database when absent, which installing trust
 // wants and a Check must never do: a check reads the host, it never writes it.
-func findNSSDatabases(create bool) []string {
+func nssDatabases(create bool) []string {
 	var dbs []string
 	home, err := os.UserHomeDir()
 	if err != nil {

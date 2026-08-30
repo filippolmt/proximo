@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/platform"
@@ -29,7 +30,7 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	fmt.Fprintln(out, "==> Preflight checks")
-	if err := gate(cmd.Context(), out, cfg.TLD); err != nil {
+	if err := runPreflight(cmd.Context(), out, cfg.TLD, checks.PreInstall); err != nil {
 		return err
 	}
 

@@ -49,6 +49,22 @@ func Dispatch(mac, linux func() error) error {
 	return nil
 }
 
+// Pick returns the value matching the current OS, erroring on unsupported
+// platforms. It is Dispatch for the answers that are a value rather than an
+// error, so per-OS knowledge keeps to the one branch point instead of growing a
+// switch at every call site.
+func Pick[T any](mac, linux T) (T, error) {
+	osType, err := Current()
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if osType == MacOS {
+		return mac, nil
+	}
+	return linux, nil
+}
+
 // Current returns the running OS, erroring on unsupported platforms.
 func Current() (OS, error) {
 	switch runtime.GOOS {
@@ -121,8 +137,8 @@ func Output(name string, args ...string) (string, error) {
 }
 
 // OutputContext runs a command under a context and returns its standard output.
-// Every probe that shells out goes through here: a check that runs out of time
-// must fail rather than hang.
+// Every host reading that shells out goes through here: a check that runs out of
+// time must fail rather than hang.
 func OutputContext(ctx context.Context, name string, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, name, args...).Output()
 	return string(out), err

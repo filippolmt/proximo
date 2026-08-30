@@ -10,6 +10,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Status is the outcome of one Check. There are exactly three. A fourth
@@ -36,6 +37,12 @@ type Result struct {
 	// Remedy is the exact command the developer runs next. Required on Fail,
 	// and meaningless otherwise.
 	Remedy string
+	// Doc names a troubleshooting section for this failure when it is not the
+	// one the Check usually points at. One check can fail for causes that are
+	// documented apart — a contested host is not a mislabelled container — and
+	// sending a developer to the wrong section is worse than sending them to
+	// none. Empty means the Check's own section.
+	Doc string
 }
 
 // Passed records a statement that held, with what was observed.
@@ -47,6 +54,13 @@ func Passed(format string, a ...any) Result {
 // it (or, where nothing cures it, the command whose output names the cause).
 func Failed(remedy, format string, a ...any) Result {
 	return Result{Status: Fail, Detail: fmt.Sprintf(format, a...), Remedy: remedy}
+}
+
+// Explains points a failure at a troubleshooting section other than its
+// Check's own.
+func (r Result) Explains(doc string) Result {
+	r.Doc = doc
+	return r
 }
 
 // Skipped records a statement the environment could not answer, naming what it
@@ -99,12 +113,26 @@ func Run(ctx context.Context, list []Check) Report {
 	for _, c := range list {
 		res, blocked := blockedBy(c, names, status)
 		if !blocked {
-			res = c.Run(ctx)
+			res = runBounded(ctx, c)
 		}
 		status[c.ID] = res.Status
 		rep.Outcomes = append(rep.Outcomes, Outcome{Check: c, Result: res})
 	}
 	return rep
+}
+
+// checkTimeout bounds one check. A diagnostic tool that hangs is worse than one
+// that is wrong, and the machine `proximo doctor` exists for is precisely the
+// one where a keychain, a resolver or a Docker socket never answers.
+const checkTimeout = 15 * time.Second
+
+// runBounded runs one check under the deadline. The check sees the deadline on
+// its own context, so it fails with its own words and its own Remedy rather
+// than with a generic timeout: everything that can block takes a context.
+func runBounded(ctx context.Context, c Check) Result {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+	return c.Run(ctx)
 }
 
 // blockedBy returns the skip a check inherits from the first prerequisite that

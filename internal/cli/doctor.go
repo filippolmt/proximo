@@ -20,10 +20,10 @@ const (
 	markSkip = "–"
 )
 
-// docBase is where a failure's explanation lives. A repo-relative path rather
-// than a URL: it is the file in the tree the anchor test verifies, so it can
-// never point at a section that does not exist.
-const docBase = "docs/troubleshooting.md"
+// docBase is where a failure's explanation lives. A URL rather than the
+// repo-relative path the anchor test verifies: the developer reading this line
+// has a binary, not a checkout, and a path they cannot open explains nothing.
+const docBase = "https://github.com/filippolmt/proximo/blob/main/docs/troubleshooting.md"
 
 func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
@@ -77,19 +77,30 @@ func writeOutcome(out io.Writer, o checks.Outcome) {
 			fmt.Fprintf(out, "    %s\n", line)
 		}
 		fmt.Fprintf(out, "    Remedy: %s\n", o.Result.Remedy)
-		fmt.Fprintf(out, "    See:    %s#%s\n", docBase, o.Check.Doc)
+		fmt.Fprintf(out, "    See:    %s#%s\n", docBase, explains(o))
 	}
 }
 
-// gate runs the checks that are meaningful before the host has been changed and
-// stops the command when one fails, printing only the failures: a healthy `up`
-// stays quiet, and a broken one says what to do before it touches anything.
-func gate(ctx context.Context, out io.Writer, tld string) error {
+// explains is the troubleshooting section for one outcome: the failure's own
+// when it named one, otherwise the check's.
+func explains(o checks.Outcome) string {
+	if o.Result.Doc != "" {
+		return o.Result.Doc
+	}
+	return o.Check.Doc
+}
+
+// runPreflight runs the checks that are meaningful before the host has been
+// changed and stops the command when one fails, printing only the failures: a
+// healthy `up` stays quiet, and a broken one says what to do before it touches
+// anything. subset is Preflight or PreInstall — `install` asks the wider one,
+// because it is about to write a store `up` never touches.
+func runPreflight(ctx context.Context, out io.Writer, tld string, subset func(checks.Env) []checks.Check) error {
 	env, err := checks.DefaultEnv(tld)
 	if err != nil {
 		return err
 	}
-	rep := checks.Run(ctx, checks.Preflight(env))
+	rep := checks.Run(ctx, subset(env))
 	failures := rep.Failures()
 	if len(failures) == 0 {
 		return nil

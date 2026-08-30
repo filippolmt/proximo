@@ -19,7 +19,7 @@ docker version
 
 Its own output names the cause — Docker Desktop not started, a `DOCKER_HOST`
 pointing at a context that is gone, or a user not in the `docker` group. Start
-Docker (or fix the context) and re-run.
+Docker (or point `DOCKER_HOST` at a context that exists) and re-run.
 
 ## proximo is not installed on this host
 
@@ -109,6 +109,17 @@ warning persists, re-trust the CA:
 ```sh
 proximo trust
 ```
+
+proximo checks both stores separately, so
+[`proximo doctor`](cli.md#proximo-doctor) says which one is missing the CA —
+and it compares the certificate, not its name, so a CA that was regenerated
+while an older namesake is still in the store is reported as untrusted rather
+than as fine.
+
+The NSS store needs `certutil`. Where it is absent, proximo installs it through
+Homebrew or apt; on a host with neither, `install` says so **before** changing
+anything, and the remedy is to install the NSS tooling with your own package
+manager (`libnss3-tools` on Debian-family distributions, `nss-tools` elsewhere).
 
 [`proximo trust`](cli.md#proximo-trust) re-adds the CA to the system and NSS
 stores via `certutil` (installing `nss-tools` if needed). It touches neither DNS
