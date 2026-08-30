@@ -112,6 +112,19 @@ through.
   that off the developer's disk removes any need for retention, rotation or
   cleanup on `uninstall`. Moving to disk later is possible; un-writing data from
   users' disks is not.
+- A dashboard over these Exchanges is a plausible next step, and two consequences
+  above decide its shape before it is designed. The read API is loopback-only so
+  that an inspected page cannot read the Exchanges recorded for its own host, so a
+  dashboard must be served on its own listener and its own host rather than by
+  widening that one — routing the existing API through Traefik would hand every
+  inspected page the log of every other. And Exchanges do not survive a restart,
+  which is fine for "what just broke" and useless for a page left open across one:
+  a dashboard with history reopens the storage decision, and with it the reason
+  Exchanges are kept off disk in the first place. The open question there is not
+  which agent collects the data — that is settled and irrelevant to a UI reading
+  the store — but whether a Snapshot of a developer's own pages may be written to
+  their disk.
+
 - Interactive inspection — a DOM tree to click through, an element picker, step
   debugging, screenshots — is out of scope: it is out of reach of an injected
   script, and proximo does not pretend otherwise. That is not a gap proximo means
