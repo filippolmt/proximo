@@ -260,9 +260,10 @@ services:
   the backend (off by default, since many backends expect the full path).
 - A bare container with no `proximo.path` (the `frontend` above) keeps matching
   **all** paths for its hosts, so it naturally serves as the fallback.
-- Two containers claiming the same host **and** the same prefix conflict; the
-  lexicographically-first container name wins and the other is logged — same
-  deterministic resolution as other host conflicts.
+- Two containers claiming the same host **and** the same prefix collide; the
+  lexicographically-first container name serves it and the other is reported by
+  `proximo status` — the same host-by-host resolution as any other
+  [collision](troubleshooting.md#a-host-collision-is-reported).
 
 `proximo status` lists each container with its prefix in the URL
 (`https://app.test/api`), so you can see the split at a glance.
@@ -396,7 +397,7 @@ HTTP (`proximo.port`) or TCP (`proximo.tcp.port`) — are treated as replicas of
 service: proximo emits a single router whose load balancer carries one server per
 container and distributes traffic round-robin. A lone container is unchanged (one
 server). Containers on the same host and the same path that differ in middleware or
-redirect are **not** merged — they still resolve deterministically as a conflict (see
+redirect are **not** merged — they still resolve deterministically as a collision (see
 [proximo.path](#proximopath--split-one-host-across-containers)). `proximo status`
 marks a balanced route with `(balanced ×N)`.
 

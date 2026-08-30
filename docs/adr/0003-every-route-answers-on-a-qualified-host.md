@@ -55,7 +55,7 @@ real cost recorded below.
   from the declared host also means containers of different Projects can no longer
   merge as replicas — a merge across projects is always an accident, so making it
   impossible by construction is the point, not a side effect.
-- **Conflict resolution moves from the container to the host.** A container losing
+- **Collision resolution moves from the container to the host.** A container losing
   one host keeps the others, which it does not today.
 - **proximo stands down before an explicit declaration.** Where a generated
   qualified host would collide with a host a developer wrote by hand, or where a
