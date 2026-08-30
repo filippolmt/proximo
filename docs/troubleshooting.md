@@ -118,11 +118,56 @@ A container with proximo labels is not reachable. Check in order:
 3. **Port ambiguity** — if the image `EXPOSE`s zero or several ports and no
    `proximo.port` is set, the container is skipped; `proximo status` shows it
    flagged (`⚠ set proximo.port`). Add an explicit `proximo.port`.
-4. **Watcher warnings** — anything else (duplicate host across label schemes,
-   network attach failures) is explained in the watcher log: see
+4. **Host taken by another container** — `proximo status` lists it with the
+   reason and the winner: see
+   [A host collision is reported](#a-host-collision-is-reported).
+5. **Watcher warnings** — anything else (network attach failures, invalid
+   middleware values) is explained in the watcher log: see
    [Where to read watcher warnings](#where-to-read-watcher-warnings).
 
 The full label contract is in [Routing](routing.md#the-proximo-labels).
+
+## A host collision is reported
+
+Two containers claim one host — two worktrees of a repository, or a stale
+container nobody stopped. proximo does not pick a winner quietly: the container
+that did not get the host is listed by `proximo status` with the reason and the
+name of the container serving it.
+
+```
+CONTAINER      URL
+shop-api-1     https://api.test  + api.shop.test
+work-api-1     ⚠ api.test is served by shop-api-1; this container answers at api.work.test
+work-api-1     https://admin.test  + admin.work.test
+```
+
+Read it as three facts:
+
+- **Nothing is unreachable** — as long as the two are in different projects. The
+  losing container keeps every other host it declared (`admin.test` above) and
+  still answers at its own qualified host: a collision costs a bare host, never a
+  service. Two containers of **one** project share the qualified host too, so
+  there the loser is left with nothing and the note says so instead — give one of
+  them a different `proximo.hosts`.
+- **The bare host went to one claimant.** Which one is decided by name order,
+  which is why it is reported rather than relied on.
+- **The remedy is yours to pick.** Stop the container you forgot about, give one
+  of the two a different `proximo.hosts`, or simply use the qualified host and
+  leave both running.
+
+Two variants of the same line say proximo stood down rather than arbitrated —
+one of the two claims was its own:
+
+- `qualified host api.shop.test withdrawn: <name> serves it` — someone declared
+  by hand the name proximo would have generated. The hand-written declaration wins.
+- `api.test is matched by a traefik.* rule on <name>; proximo withdrew its
+  router` — a native Traefik label already routes that host, whether on that
+  container or on another. Use one scheme per host
+  ([native Traefik labels](routing.md#native-traefik-labels-backward-compatible)).
+
+A container **outside a Compose project** has no Namespace, so it has no
+qualified host to fall back on and the note says so. Put it in a Compose project
+and it gets one.
 
 ## 502/503 right after a container restarts
 

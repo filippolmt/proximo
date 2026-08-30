@@ -37,6 +37,8 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0002 — The stack's Go services ship as one published image, pinned to the CLI version](adr/0002-stack-services-ship-as-one-published-image.md)
 
+[0003 — Every route answers on a qualified host](adr/0003-every-route-answers-on-a-qualified-host.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·
@@ -82,6 +84,7 @@ Why a design is the way it is, and what was rejected on the way.
 ### [Routing](routing.md)
 
 [The proximo labels](routing.md#the-proximo-labels) ·
+[The two hosts every route gets](routing.md#the-two-hosts-every-route-gets) ·
 [`proximo.hosts` — opt in and pick the host(s)](routing.md#proximohosts--opt-in-and-pick-the-hosts) ·
 [`proximo.port` — usually you can omit it](routing.md#proximoport--usually-you-can-omit-it) ·
 [`proximo.enable` — temporary opt-out](routing.md#proximoenable--temporary-opt-out) ·
@@ -113,6 +116,7 @@ Why a design is the way it is, and what was rejected on the way.
 [macOS Gatekeeper blocks the binary](troubleshooting.md#macos-gatekeeper-blocks-the-binary) ·
 [Where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings) ·
 [Container not routed](troubleshooting.md#container-not-routed) ·
+[A host collision is reported](troubleshooting.md#a-host-collision-is-reported) ·
 [An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
 [proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·

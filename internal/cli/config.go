@@ -59,6 +59,11 @@ func runConfigTLD(cmd *cobra.Command, raw string) error {
 	if err != nil {
 		return err
 	}
+	// A TLD nobody reserved is served all the same — the choice is the user's —
+	// but it is never served silently.
+	if w := config.TLDWarning(newTLD); w != "" {
+		fmt.Fprintf(out, "%s%s\n", warnPrefix, w)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
