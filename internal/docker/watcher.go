@@ -1320,6 +1320,12 @@ func isHealthRoutable(c container.Summary) bool {
 	return false
 }
 
+// NoteStarting is the note carried by a health-gated container whose
+// healthcheck has not passed yet. It is a moment in a container's life, not a
+// broken environment, which is why a Check must not read it as a failure —
+// exported so the two cannot drift apart as two copies of one string.
+const NoteStarting = "starting (waiting for healthy)"
+
 // healthGateNote returns the `proximo status` note for a health-gated container
 // that is not yet routable, or "" when the container is routable (no note). It
 // distinguishes a not-yet-ready container (starting) from one whose route was
@@ -1334,7 +1340,7 @@ func healthGateNote(c container.Summary) string {
 	if c.Health.Status == container.Unhealthy {
 		return "unhealthy (route withdrawn until healthy)"
 	}
-	return "starting (waiting for healthy)"
+	return NoteStarting
 }
 
 // isTruthyLabel reports whether labels[key] holds an explicit truthy value

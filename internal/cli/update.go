@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/tls"
@@ -75,7 +76,7 @@ func runUpdate(cmd *cobra.Command, force bool, image string) error {
 	ctx := context.Background()
 	cliVer := version.Version
 
-	dockerUp := checkDocker() == nil
+	dockerUp := checks.DockerReachable(ctx) == nil
 	var stack docker.StackInfo
 	if dockerUp {
 		var err error

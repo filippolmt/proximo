@@ -52,7 +52,7 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := checkDocker(); err != nil {
+			if err := gate(cmd.Context(), cmd.OutOrStdout(), cfg.TLD); err != nil {
 				return err
 			}
 			certDir, err := tls.Dir()

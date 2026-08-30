@@ -31,8 +31,10 @@ Full guides live in [`docs/`](docs/README.md):
   `proximo.inspect=true` and `proximo errors` shows what the browser reported
   alongside the response that caused it. **Chrome is the supported browser** —
   other engines are likely to work and are not tested.
-- [Troubleshooting](docs/troubleshooting.md) — common issues. Container
-  labeled but unreachable? Start with the
+- [Troubleshooting](docs/troubleshooting.md) — common issues. Something broken?
+  [`proximo doctor`](docs/cli.md#proximo-doctor) reports every check on the host
+  and hands back the exact command to run for each failure. Container labeled
+  but unreachable? Start with the
   [container not routed checklist](docs/troubleshooting.md#container-not-routed).
 - [Development](docs/development.md) — building, testing from source,
   versioning, releases.

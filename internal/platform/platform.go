@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -116,6 +117,14 @@ func Run(name string, args ...string) error {
 // Output runs a command and returns its standard output as a string.
 func Output(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).Output()
+	return string(out), err
+}
+
+// OutputContext runs a command under a context and returns its standard output.
+// Every probe that shells out goes through here: a check that runs out of time
+// must fail rather than hang.
+func OutputContext(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, name, args...).Output()
 	return string(out), err
 }
 

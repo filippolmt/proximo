@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
@@ -75,7 +76,7 @@ func runConfigTLD(cmd *cobra.Command, raw string) error {
 		return nil
 	}
 
-	if err := checkDocker(); err != nil {
+	if err := checks.DockerReachable(cmd.Context()); err != nil {
 		return err
 	}
 	if err := platform.SudoPrime("update the host resolver for the new TLD"); err != nil {

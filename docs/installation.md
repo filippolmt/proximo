@@ -63,20 +63,28 @@ proximo install
 
 This runs, in order:
 
-1. **Preflight** — confirms the OS is supported, a package manager is available
-   (Homebrew or apt), and the Docker daemon is reachable.
-2. **DNS port check** — confirms `127.0.0.1:5354/udp` is free.
-3. **Prime sudo** — prompts once so the following privileged steps don't each
+1. **Preflight** — the subset of [`proximo doctor`](cli.md#proximo-doctor)'s
+   checks that is meaningful before the host has been changed: the Docker daemon
+   is reachable, and nothing but proximo holds `:80`, `:443` or
+   `127.0.0.1:5354/udp`. A port held by proximo's own stack is not a failure, so
+   `install` can be re-run while the stack is up; a port held by anything else
+   stops the command before it touches your host, and says which command names
+   the holder.
+2. **Prime sudo** — prompts once so the following privileged steps don't each
    ask for a password.
-4. **Generate the local CA** — a P-256 ECDSA CA created on first run and reused
+3. **Generate the local CA** — a P-256 ECDSA CA created on first run and reused
    afterwards, stored under your [state home](#state-home-proximo).
-5. **Configure the host resolver** — routes `*.<tld>` lookups to the local DNS
+4. **Configure the host resolver** — routes `*.<tld>` lookups to the local DNS
    server (see [what it changes](#what-install-changes-on-your-host)).
-6. **Install CA trust** — adds the CA to the OS system trust store and, when
-   present, the NSS store (Firefox / Chromium on Linux) via `certutil`.
-7. **Start the stack** — materializes and `docker compose up -d --build`s the
+5. **Install CA trust** — adds the CA to the OS system trust store and, when
+   present, the NSS store (Firefox / Chromium on Linux) via `certutil`,
+   installing the NSS tooling if it is missing. NSS trust is best-effort: a host
+   where the tooling cannot be installed still finishes the install, and
+   [`proximo doctor`](cli.md#proximo-doctor) reports the browser trust that is
+   missing, with the command that installs it.
+6. **Start the stack** — materializes and `docker compose up -d --build`s the
    embedded Traefik + DNS + watcher stack.
-8. **Save config** — persists the chosen TLD.
+7. **Save config** — persists the chosen TLD.
 
 When it finishes, containers labeled with a host under the TLD are reachable at
 `https://<host>` with trusted HTTPS.

@@ -205,6 +205,27 @@ type StackInfo struct {
 	Running bool
 	Version string
 	Image   string
+	// Roles are the proximo.role values of the running stack containers, so a
+	// degraded stack (traefik up, watcher gone) is distinguishable from a
+	// healthy one — which "is anything running?" alone cannot tell.
+	Roles []string
+}
+
+// coreRoles are the stack services routing depends on. The inspector is
+// deliberately not one: it is idle unless a route carries proximo.inspect, and
+// an older stack that predates it is a version skew, not a degraded stack.
+var coreRoles = []string{"traefik", "dns", "watcher"}
+
+// MissingRoles returns the core stack services that are not running, in the
+// order they are named above. Empty means the stack is whole.
+func (s StackInfo) MissingRoles() []string {
+	var missing []string
+	for _, role := range coreRoles {
+		if !slices.Contains(s.Roles, role) {
+			missing = append(missing, role)
+		}
+	}
+	return missing
 }
 
 // StackStatus reads the proximo.version and proximo.image labels off the
@@ -229,6 +250,9 @@ func StackStatus(ctx context.Context) (StackInfo, error) {
 		if !info.Running {
 			info.Running, info.Version = true, c.Labels[versionLabel]
 		}
+		if role := c.Labels[roleLabel]; role != "" && !slices.Contains(info.Roles, role) {
+			info.Roles = append(info.Roles, role)
+		}
 		// Only the image-backed services carry the ref; traefik may well be the
 		// first stack container listed, so keep looking until one has it.
 		if info.Image == "" {
@@ -248,13 +272,53 @@ func DisplayVersion(ver string) string {
 	return ver
 }
 
-// VersionSkew returns a human-readable warning when the running stack version
-// differs from the installed CLI version, or "" when they match or the stack is
-// not running. An unlabeled (pre-0.4.0) stack never matches, so it always
-// warns — it must not be mistaken for a stack that is down.
-func VersionSkew(stackVer string, running bool, cliVer string) string {
-	if !running || stackVer == cliVer {
-		return ""
+// PortOwner is the container publishing a host port, and whether it is one of
+// proximo's own — which is the difference between a healthy machine and a
+// contested port.
+type PortOwner struct {
+	Container string
+	Stack     bool
+}
+
+// PublishedPorts maps each published host port, keyed by PortKey, to the
+// container publishing it. A Check asks who holds a port rather than whether it
+// is free: a healthy machine has :443 bound, by proximo.
+//
+// Docker is asked rather than inferred from a failed bind, because a bind is
+// not a reliable answer everywhere: on BSD (macOS) SO_REUSEADDR lets a
+// loopback-specific bind succeed while another process holds the wildcard
+// address, which is exactly how Docker publishes :80 and :443.
+func PublishedPorts(ctx context.Context) (map[string]PortOwner, error) {
+	cli, err := newClient()
+	if err != nil {
+		return nil, err
 	}
-	return fmt.Sprintf("stack is running %s but the CLI is %s; run `proximo update` to converge", DisplayVersion(stackVer), cliVer)
+	defer cli.Close()
+
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return portOwners(res.Items), nil
+}
+
+// PortKey is the map key PublishedPorts uses, e.g. "443/tcp".
+func PortKey(port int, proto string) string {
+	return strconv.Itoa(port) + "/" + proto
+}
+
+func portOwners(cs []container.Summary) map[string]PortOwner {
+	owners := make(map[string]PortOwner)
+	for _, c := range cs {
+		_, isStack := c.Labels[roleLabel]
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 {
+				continue
+			}
+			// Two containers cannot publish one host port at the same time —
+			// Docker refuses the second — so there is nothing to arbitrate here.
+			owners[PortKey(int(p.PublicPort), p.Type)] = PortOwner{Container: primaryName(c), Stack: isStack}
+		}
+	}
+	return owners
 }

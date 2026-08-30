@@ -54,7 +54,7 @@ func runTrust(cmd *cobra.Command) error {
 
 // applyTrust installs the CA into the system store then the NSS store, in that
 // order, under a single banner — matching the "system + NSS" grouping install
-// uses. Unlike install it skips the DNS port check, so it runs with the stack up.
+// uses. Unlike install it runs no checks, so it works with the stack up.
 func applyTrust(out io.Writer, r platform.Runner) error {
 	fmt.Fprintln(out, "==> Installing CA trust (system + NSS)")
 	if err := installSystemTrust(r); err != nil {

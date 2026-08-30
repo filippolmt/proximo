@@ -39,6 +39,8 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0003 — Every route answers on a qualified host](adr/0003-every-route-answers-on-a-qualified-host.md)
 
+[0004 — Checks are a first-class concept, with a report and a remedy](adr/0004-checks-report-remedies.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·
@@ -56,6 +58,7 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo down`](cli.md#proximo-down) ·
 [`proximo update`](cli.md#proximo-update) ·
 [`proximo status`](cli.md#proximo-status) ·
+[`proximo doctor`](cli.md#proximo-doctor) ·
 [`proximo errors`](cli.md#proximo-errors) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
@@ -108,6 +111,8 @@ Why a design is the way it is, and what was rejected on the way.
 
 ### [Troubleshooting](troubleshooting.md)
 
+[The Docker daemon is not reachable](troubleshooting.md#the-docker-daemon-is-not-reachable) ·
+[proximo is not installed on this host](troubleshooting.md#proximo-is-not-installed-on-this-host) ·
 [DNS name does not resolve](troubleshooting.md#dns-name-does-not-resolve) ·
 [DNS port already in use](troubleshooting.md#dns-port-already-in-use) ·
 [Port 443 or 80 already in use](troubleshooting.md#port-443-or-80-already-in-use) ·
@@ -122,6 +127,7 @@ Why a design is the way it is, and what was rejected on the way.
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·
 [Degraded stack](troubleshooting.md#degraded-stack) ·
+[The stack runs an overridden image](troubleshooting.md#the-stack-runs-an-overridden-image) ·
 [The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled)
 
 ### [Development](development.md)

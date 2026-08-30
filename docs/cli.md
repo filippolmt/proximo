@@ -18,6 +18,7 @@ proximo <command> [args]
 | [`update`](#proximo-update) | Converge the running stack to the installed CLI | no | yes |
 | [`trust`](#proximo-trust) | Re-trust the local CA (system + NSS), stack-safe | yes | no |
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
+| [`doctor`](#proximo-doctor) | Report every check, with a remedy per failure | no | no |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
 | [`uninstall`](#proximo-uninstall) | Reverse all host changes + stop the stack | yes | yes |
@@ -35,6 +36,11 @@ narrower changes).
 ```sh
 proximo install
 ```
+
+Preflight is the subset of [`proximo doctor`](#proximo-doctor)'s checks that is
+meaningful before the host has been changed — Docker, and who holds `:80`,
+`:443` and the DNS port — so a failure stops the command before it touches
+anything. `up` runs the same gate.
 
 Idempotent on the parts that allow it: the CA is generated once and reused; the
 resolver and trust steps re-apply cleanly. See
@@ -152,8 +158,8 @@ Use it when a browser stops trusting `https://<name>.<tld>` (an
 `ERR_CERT_AUTHORITY_INVALID` / "issuer not trusted" warning) — typically because
 the CA never made it into the browser's store or was regenerated.
 
-- **Stack-safe**: unlike `install` it skips the DNS port check and never touches
-  DNS or the Docker stack, so it runs while proximo is up — no `down`/`up` cycle.
+- **Stack-safe**: it runs no checks and never touches DNS or the Docker stack,
+  so it works while proximo is up — no `down`/`up` cycle.
 - **Idempotent**: the system-store add is a no-op when already trusted; the NSS
   add removes any stale entry first. Re-run it freely.
 - **Needs sudo, no Docker**: it only writes host trust stores.
@@ -228,20 +234,79 @@ multi      ⚠ set proximo.port (exposes 2 TCP ports)
 Prints `No routed containers.` when nothing is exposed — which implies the
 stack is down, since a running stack always serves the dashboard route.
 
-When the running stack version differs from the installed CLI, `status` prints a
-read-only **skew warning** recommending `proximo update` (it never rebuilds):
+`status` is an **inventory**: it answers *what is running*, and it never prints
+a Remedy. Version skew, an `--image` override and a broken resolver are
+diagnoses — [`proximo doctor`](#proximo-doctor) reports those. A collision shows
+up in both by design: `status` shows it because the route's reachable URL
+changed, `doctor` because there is something to do about it.
+
+## proximo doctor
+
+Report every [Check](../CONTEXT.md#diagnosis-and-observation) on this host in one
+pass, and hand back a [Remedy](../CONTEXT.md#diagnosis-and-observation) for each
+failure — the cure where one exists, and otherwise the command whose own output
+names the cause.
+
+```sh
+proximo doctor
+```
 
 ```
-⚠ stack is running 0.1.0 but the CLI is 0.2.0; run `proximo update` to converge
+✔ The Docker daemon is reachable
+✔ Nothing but proximo holds :80/tcp — held by the proximo stack (proximo-traefik-1)
+✔ Nothing but proximo holds :443/tcp — held by the proximo stack (proximo-traefik-1)
+✔ Nothing but proximo holds :5354/udp — held by the proximo stack (proximo-dns-1)
+✔ proximo is installed on this host — CA and host resolver are in place
+✔ The local CA is in the system trust store
+✔ The local CA is in the browser (NSS) trust stores — 2 NSS database(s) hold the CA
+✔ The proximo stack is running — traefik, dns, watcher, inspector
+✔ The stack matches the installed CLI version — 0.4.0
+✔ The stack runs the image this CLI pins — ghcr.io/filippolmt/proximo:v0.4.0
+✔ The proximo DNS server answers — proximo-doctor.test answers 127.0.0.1 on 127.0.0.1:5354
+✔ The host resolver uses the proximo DNS server — proximo-doctor.test resolves to 127.0.0.1
+✔ Every routed container is served — 3 route(s)
 ```
 
-And when the stack runs an [`--image` override](#--image), `status` names the
-ref it is actually running — a stack must never run one thing and declare
-another:
+It prints the checks that **passed** too: those say where *not* to look, and
+narrow the search as much as a failure does. A failure spends the lines it
+needs, because it is the one being read:
 
 ```
-⚠ stack image overridden: proximo:src (an `up` or `update` without --image restores ghcr.io/filippolmt/proximo:v0.2.0)
+✘ The host resolver uses the proximo DNS server
+    proximo-doctor.test resolves to "", not 127.0.0.1
+    Remedy: resolvectl status
+    See:    docs/troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver
 ```
+
+The two DNS checks are one diagnosis. *The proximo DNS server answers* queries
+`127.0.0.1:5354` directly; *the host resolver uses it* asks the OS resolver for
+the same name. A VPN produces exactly the pair above — the first passes, the
+second fails — and that pair **is** the answer: proximo is healthy, the host is
+not sending it the query.
+
+A check that the environment could not answer is **skipped**, naming what it
+waited on, so one cause never produces a dozen red lines:
+
+```
+✘ proximo is installed on this host
+    missing the local CA (~/.proximo/tls/ca.pem) and the host resolver file (/etc/resolver/test)
+    Remedy: proximo install
+    See:    docs/troubleshooting.md#proximo-is-not-installed-on-this-host
+– The local CA is in the system trust store — waiting on: proximo is installed on this host
+```
+
+Two properties are worth relying on:
+
+- **It never elevates.** Everything proximo must read is readable unprivileged,
+  and it never asks for a password: a diagnosis that does is one nobody runs at
+  the moment they need it most. Remedies may need `sudo` — you type those.
+- **It never repairs.** `doctor` reads the host and reports; every mutation
+  stays a verb you typed.
+
+Any failure exits **non-zero**, including a failed route (your container rather
+than proximo): an exit code that needs a rule to interpret is worse than one
+that does not. `install` and `up` run the subset that is meaningful before the
+host is touched — Docker and the three ports — and print only what failed.
 
 ## proximo errors
 
@@ -384,6 +449,7 @@ open https://whoami.test
 
 ```sh
 proximo status             # what's exposed right now
+proximo doctor             # when something is broken: every check + its remedy
 proximo down               # free ports 80/443 when you're done
 proximo up                 # bring the proxy back later
 ```

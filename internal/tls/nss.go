@@ -14,7 +14,13 @@ import (
 // bootstrap stay on the package helpers.
 func InstallNSSTrust(r platform.Runner) error {
 	if err := ensureCertutil(); err != nil {
-		return err
+		// Best-effort, like a host with no NSS database at all: NSS trust is
+		// Firefox and Chromium-on-Linux, and failing here would abort an
+		// install that has already trusted the CA system-wide and wired the
+		// resolver. `proximo doctor` reports the missing browser trust
+		// afterwards, with the command that installs the tooling.
+		fmt.Fprintf(os.Stderr, "proximo: %v; skipping NSS trust (run `proximo doctor` for the remedy)\n", err)
+		return nil
 	}
 	caPath, err := CACertPath()
 	if err != nil {
@@ -71,8 +77,14 @@ func ensureCertutil() error {
 	return nil
 }
 
-// nssDatabases discovers NSS databases for the current user's browsers.
-func nssDatabases() []string {
+// nssDatabases discovers NSS databases for the current user's browsers,
+// bootstrapping the Chromium one when it is missing.
+func nssDatabases() []string { return findNSSDatabases(true) }
+
+// findNSSDatabases discovers the NSS databases for the current user's browsers.
+// create bootstraps the Chromium database when absent, which installing trust
+// wants and a Check must never do: a check reads the host, it never writes it.
+func findNSSDatabases(create bool) []string {
 	var dbs []string
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -87,7 +99,7 @@ func nssDatabases() []string {
 	// be installed before the browser first runs.
 	if osType == platform.Linux {
 		pki := filepath.Join(home, ".pki", "nssdb")
-		if !hasNSSDB(pki) && platform.Has("certutil") {
+		if create && !hasNSSDB(pki) && platform.Has("certutil") {
 			if err := os.MkdirAll(pki, 0o755); err == nil {
 				_ = platform.Run("certutil", "-N", "-d", "sql:"+pki, "--empty-password")
 			}

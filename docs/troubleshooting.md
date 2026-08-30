@@ -3,7 +3,40 @@
 [← back to docs index](README.md)
 
 One section per failure mode. If your container is labeled but unreachable,
-start with [Container not routed](#container-not-routed).
+start with [Container not routed](#container-not-routed). To have proximo look
+for you, run [`proximo doctor`](cli.md#proximo-doctor): it reports every check
+on this host, and each failure carries the command that clears it.
+
+## The Docker daemon is not reachable
+
+Docker is the one mandatory prerequisite: without it there is no stack, no
+routes, and nothing for proximo to read. Every command that needs it stops with
+`cannot reach the Docker daemon (is Docker running?)`.
+
+```sh
+docker version
+```
+
+Its own output names the cause — Docker Desktop not started, a `DOCKER_HOST`
+pointing at a context that is gone, or a user not in the `docker` group. Start
+Docker (or fix the context) and re-run.
+
+## proximo is not installed on this host
+
+Trust and DNS are host changes, and they are made by one verb the developer
+types. Until then the local CA is not on disk and nothing points the TLD at
+proximo's DNS server, so names do not resolve and certificates are not trusted —
+however healthy the stack is.
+
+```sh
+proximo install
+```
+
+`proximo doctor` reports this as one failure and **skips** everything that
+depends on it, rather than repeating the same cause a dozen times. The
+pre-install checks still run, so a machine that is also missing Docker says so
+before the install that would fail on it. What `install` changes is listed in
+[What install changes on your host](installation.md#what-install-changes-on-your-host).
 
 ## DNS name does not resolve
 
@@ -25,10 +58,18 @@ the problem — see also
 
 ## DNS port already in use
 
-`proximo install` aborts before making changes if `127.0.0.1:5354/udp` is
-taken. (Port `5353` is deliberately not used: macOS `mDNSResponder`/Bonjour
-binds it.) Free the port and retry, or check it with
-`sudo lsof -nP -iUDP:5354`.
+`proximo install` and `proximo up` abort before changing anything if
+`127.0.0.1:5354/udp` is held by something other than proximo. (Port `5353` is
+deliberately not used: macOS `mDNSResponder`/Bonjour binds it.) The port held by
+proximo's own DNS service is the healthy case and stops nothing.
+
+The check names the holder it can name, and hands over the question for the one
+it cannot:
+
+```sh
+docker ps --filter publish=5354    # another container publishes it
+sudo lsof -nP -iUDP:5354           # a process on this host holds it
+```
 
 ## Port 443 or 80 already in use
 
@@ -37,13 +78,17 @@ listens there (another reverse proxy, a local web server, an old Traefik), the
 stack fails to start with a Docker error like
 `Bind for 0.0.0.0:443 failed: port is already allocated`.
 
-Find and stop the conflicting listener, then bring the stack back up:
+`proximo install` and `proximo up` check this before touching anything, and
+`proximo doctor` reports it any time. All three ask *who* holds the port rather
+than whether it is free — a healthy machine has `:443` bound, by proximo — so
+the answer also picks the command that names the holder:
 
 ```sh
-sudo lsof -nP -iTCP:443 -sTCP:LISTEN
-sudo lsof -nP -iTCP:80 -sTCP:LISTEN
-proximo up
+docker ps --filter publish=443       # another container publishes it
+sudo lsof -nP -iTCP:443 -sTCP:LISTEN # a process on this host holds it
 ```
+
+Stop the conflicting listener, then bring the stack back up with `proximo up`.
 
 ## macOS UDP forwarding
 
@@ -66,9 +111,10 @@ proximo trust
 ```
 
 [`proximo trust`](cli.md#proximo-trust) re-adds the CA to the system and NSS
-stores via `certutil` (installing `nss-tools` if needed). Unlike `install` it is
-stack-safe — it skips the DNS port check, so it works while proximo is up,
-without a `down`/`up` cycle. Restart the browser again afterwards.
+stores via `certutil` (installing `nss-tools` if needed). It touches neither DNS
+nor the stack, so it works while proximo is up, without a `down`/`up` cycle.
+Restart the browser again afterwards. To confirm the CA landed in both stores,
+run [`proximo doctor`](cli.md#proximo-doctor).
 
 ## Traefik logs failed to find any PEM data
 
@@ -263,14 +309,31 @@ still resolve) when the watcher is not running — it is the reconcile loop, so
 without it the routing files and certificates go stale.
 
 ```sh
+proximo doctor                            # names the service that is missing
 docker ps --filter "label=proximo.role"   # traefik, dns and watcher should be up
-proximo status                            # also reports CLI/stack version skew
 proximo up                                # converges the stack back to healthy
 ```
 
 Stale routes left behind by a crash are cleaned up on the next reconcile after
-the watcher restarts. If `proximo status` reports a version skew between the
+the watcher restarts. If `proximo doctor` reports a version skew between the
 CLI and the stack, run `proximo update` — see [Updating](updating.md#proximo-update).
+
+## The stack runs an overridden image
+
+[`--image`](cli.md#--image) is sticky: it is recorded in the stack's `.env` and
+survives until an `up` or `update` without it. A stack running an overridden ref
+is running one thing while the CLI pins another — fine while you are testing a
+build, and a surprise weeks later.
+
+```
+✘ The stack runs the image this CLI pins
+    the stack runs proximo:src, this CLI pins ghcr.io/filippolmt/proximo:v0.4.0
+    Remedy: proximo up
+```
+
+`proximo up` (without `--image`) restores the pinned image. To keep the
+override, keep passing the flag — see
+[Running a different image](updating.md#running-a-different-image).
 
 ## The stack image cannot be pulled
 

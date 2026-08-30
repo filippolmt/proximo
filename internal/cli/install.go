@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/filippolmt/proximo/internal/config"
-	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/platform"
 	"github.com/filippolmt/proximo/internal/tls"
@@ -30,10 +29,7 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	fmt.Fprintln(out, "==> Preflight checks")
-	if err := preflight(); err != nil {
-		return err
-	}
-	if err := dns.CheckPortFree(); err != nil {
+	if err := gate(cmd.Context(), out, cfg.TLD); err != nil {
 		return err
 	}
 
