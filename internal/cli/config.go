@@ -95,7 +95,12 @@ func runConfigTLD(cmd *cobra.Command, raw string) error {
 	if err != nil {
 		return err
 	}
-	if err := docker.Up(newTLD, certDir); err != nil {
+	// This converge is a side effect of changing the TLD, which makes it the
+	// easiest place for the stack's image to change unannounced — including a
+	// sticky --image override, which any converge without the flag clears.
+	opts := docker.ConvergeOpts{}
+	reportImage(out, opts)
+	if err := docker.Converge(newTLD, certDir, opts); err != nil {
 		return err
 	}
 

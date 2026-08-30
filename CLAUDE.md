@@ -34,7 +34,9 @@ Architecture lives in `docs/`, never here. Whole picture:
 | Browser stops trusting the cert; re-trust the CA stack-safe | [docs/cli.md — proximo trust](docs/cli.md#proximo-trust) / [troubleshooting.md — Certificate warnings](docs/troubleshooting.md#certificate-warnings-in-firefox-or-chrome) |
 | Where watcher warnings appear | [docs/troubleshooting.md — Where to read watcher warnings](docs/troubleshooting.md#where-to-read-watcher-warnings) |
 | 502/503 right after a container restarts (health gating fix) | [docs/troubleshooting.md — 502/503 right after a container restarts](docs/troubleshooting.md#502503-right-after-a-container-restarts) |
+| A stack image pull that failed (the Remedy) | [docs/troubleshooting.md — The stack image cannot be pulled](docs/troubleshooting.md#the-stack-image-cannot-be-pulled) |
 | Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |
+| Where the stack's Go binaries come from; running a different image | [docs/updating.md — Running a different image](docs/updating.md#running-a-different-image) |
 | What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
 | Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
 | The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
@@ -45,11 +47,12 @@ Architecture lives in `docs/`, never here. Whole picture:
 Read the matching section **before** touching that code — each one is a contract the
 compiler will not enforce:
 
-- Version → module ref (`moduleRef()` re-adds the `v` GoReleaser strips):
-  [Version and module ref](docs/development.md#version-and-module-ref)
+- Version → image ref (`imageRef()` re-adds the `v` GoReleaser strips, and pins
+  the stack image to the CLI version):
+  [Version and image ref](docs/development.md#version-and-image-ref)
 - Embedded stack assets & sentinels (edits need rebuild **and** re-materialize):
   [Embedded stack assets](docs/development.md#embedded-stack-assets)
-- `PROXIMO_SRC` local-source builds vs published module:
+- `PROXIMO_SRC` local-source builds vs the published image:
   [Local source builds](docs/development.md#local-source-builds)
 - The injected agent & its contract with the Go decoder (Chrome-only):
   [The injected agent](docs/development.md#the-injected-agent)

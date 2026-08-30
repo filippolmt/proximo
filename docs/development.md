@@ -29,7 +29,7 @@ Run a **single test** (no Make target — invoke `go test` directly in the build
 image):
 
 ```sh
-docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine go test ./internal/docker/ -run TestModuleRef -v
+docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine go test ./internal/docker/ -run TestImageRef -v
 ```
 
 If a local Go ≥1.26 toolchain is present you can run `go build/test/vet ./...`
@@ -56,32 +56,44 @@ make e2e-down   # stop demo + uninstall
 
 ## Local source builds
 
-The stack's `dns` and `watcher` images are normally built with
-`go install github.com/filippolmt/proximo/cmd/...@<ref>`, which needs the
-module to be published. Setting `PROXIMO_SRC` to the checkout path (the Make
-lifecycle targets do this) generates a `docker-compose.override.yml` that
-builds those images **from local source** via `Dockerfile.dev` — no push, no
-module fetch. Run the binary without `PROXIMO_SRC` to use the published module
-instead.
+The stack's `dns`, `watcher` and `inspector` services normally run the
+**published image** `ghcr.io/filippolmt/proximo:<version>` (one image, three
+binaries, selected per service with an `entrypoint`). Setting `PROXIMO_SRC` to
+the checkout path (the Make lifecycle targets do this) generates a
+`docker-compose.override.yml` that builds that image **from local source** —
+the same root `Dockerfile` the release pipeline uses, so the two paths cannot
+drift — tags it `proximo:src` and points all three services at it. No push, no
+pull. Run the binary without `PROXIMO_SRC` to use the published image instead.
 
-## Version and module ref
+To run a *published* image other than the pinned one — a `sha-…` build, a
+digest, an image you built by hand — use
+[`up --image` / `update --image`](updating.md#running-a-different-image) rather
+than `PROXIMO_SRC`.
+
+## Version and image ref
 
 Build metadata is injected via ldflags into `internal/version` (`Version`,
-`Commit`, `Date`). GoReleaser's `{{ .Version }}` strips the leading `v`, so
-`version.Version` is a **bare semver** (`0.1.0`). The in-stack images are built
-with `go install …@${PROXIMO_REF}`, which requires a **canonical module
-version** — so `internal/docker/stack.go:moduleRef()` re-adds the `v`
-(`0.1.0`→`v0.1.0`; `dev`/empty→`main`). Keep `version.Version` usable as a
-display string and normalize at the module-ref consumer, not at the goreleaser
+`Commit`, `Date`) — for the CLI *and*, through the root `Dockerfile`, for the
+three in-stack binaries. GoReleaser's `{{ .Version }}` strips the leading `v`,
+so `version.Version` is a **bare semver** (`0.1.0`) while the published image
+tag keeps it — so `internal/docker/stack.go:imageRef()` re-adds it
+(`0.1.0`→`:v0.1.0`; `dev`/empty→`:main`). Keep `version.Version` usable as a
+display string and normalize at the image-ref consumer, not at the goreleaser
 source.
+
+The in-stack binaries are `go build`-ed from the checkout, not `go install`-ed
+from the module, so `debug.ReadBuildInfo().Main.Version` is empty in them:
+their build-identity log line reads `internal/version` instead.
 
 ## Embedded stack assets
 
 The compose project lives in `internal/docker/assets/` and is compiled into
 the binary (`//go:embed`), then materialized to `~/.proximo/stack/` with the
 `__TLD__`, `__DNSPORT__`, `__DATADIR__`, `__OBS_HUBPORT__` and `__INSPECTPORT__`
-sentinels substituted. Two
-consequences:
+sentinels substituted. The image ref, the TLD and the CLI version are **not**
+sentinels: they go through the generated `.env` (`PROXIMO_IMAGE`, `PROXIMO_TLD`,
+`PROXIMO_VERSION`), which is what makes an `--image` override survive a
+boot-time container restart. Two consequences:
 
 - **Editing an asset has no effect until the binary is rebuilt AND the stack
   re-materialized** (re-`install`/`up`/`update`).
@@ -112,6 +124,35 @@ as the browser wrote it rather than dropped.
 ## Releases
 
 Push a `vX.Y.Z` tag → `.github/workflows/release.yml` runs GoReleaser
-(Homebrew cask `filippolmt/tap/proximo`, release archives). CI on PRs and
-`main`: `.github/workflows/ci.yml` (build, vet, gofmt, test) and
+(Homebrew cask `filippolmt/tap/proximo`, release archives), and
+`.github/workflows/image.yml` publishes the stack image. CI on PRs and `main`:
+`.github/workflows/ci.yml` (build, vet, gofmt, test) and
 `.github/workflows/docs.yml` (Markdown link + anchor check).
+
+### The stack image
+
+`image.yml` builds the root `Dockerfile` for `linux/amd64` and `linux/arm64`
+(cross-compiled from the build platform — Go needs no emulation) and publishes
+**two tag families from two triggers**:
+
+| Trigger | Tags |
+| --- | --- |
+| push to `main` | `main` (mobile), `sha-<short>` (immutable) |
+| push of `vX.Y.Z` | `vX.Y.Z`, `latest` |
+
+Mobile `vX.Y` / `vX` tags are deliberately **not** published: proximo pins the
+exact version programmatically, and a mobile major tag would reintroduce the
+skew the pinning exists to prevent. For the same reason **old version tags must
+never be deleted** from GHCR, and the package must stay **public** — an
+authenticated pull would put a `docker login` between a user and their first
+`proximo up`.
+
+The workflow's `paths:` filter cannot be narrow: the image is built from the
+whole Go module, so it triggers on `**.go`, `go.mod`, `go.sum`, the `Dockerfile`
+and the workflow itself.
+
+A `smoke` job then brings the stack up from the **just-published digest**,
+without `PROXIMO_SRC` and without logging in to GHCR. It is the only place the
+pull path is exercised (every Make lifecycle target sets `PROXIMO_SRC`) and the
+only place the watcher meets a real Docker socket — so a package that quietly
+went private fails there, not on a user's first install.

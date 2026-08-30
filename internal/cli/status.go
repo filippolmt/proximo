@@ -69,9 +69,16 @@ func newStatusCmd() *cobra.Command {
 
 			// Read-only skew check: warn (never mutate) when the running stack
 			// version differs from the installed CLI, pointing to `proximo update`.
-			if stackVer, running, err := docker.StackVersion(ctx); err == nil {
-				if w := docker.VersionSkew(stackVer, running, version.Version); w != "" {
+			// The image line is the same contract one level down — a stack running
+			// a --image override must say so, or it runs one thing and declares
+			// another.
+			if stack, err := docker.StackStatus(ctx); err == nil {
+				if w := docker.VersionSkew(stack.Version, stack.Running, version.Version); w != "" {
 					fmt.Fprintln(out, warnPrefix+w)
+				}
+				if canonical := docker.CanonicalImage(); stack.Image != "" && stack.Image != canonical {
+					fmt.Fprintf(out, "%sstack image overridden: %s (an `up` or `update` without --image restores %s)\n",
+						warnPrefix, stack.Image, canonical)
 				}
 			}
 

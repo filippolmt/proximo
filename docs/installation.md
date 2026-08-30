@@ -16,6 +16,10 @@ trust. Both are fully reversible.
 - **`sudo` once** — `proximo install` needs administrator rights to write the
   host resolver file and to trust the local CA. Everything it changes is undone
   by `proximo uninstall`.
+- **Network access to `ghcr.io`** — the stack's services are pulled as one
+  published image, `ghcr.io/filippolmt/proximo`, tagged with the CLI version.
+  It is a public package, so no `docker login` is needed. See
+  [Updating](updating.md#mental-model).
 - **Free ports** — Traefik publishes `80` and `443`; the DNS server publishes
   `127.0.0.1:5354/udp`. `proximo install` checks the DNS port is free before
   touching anything.

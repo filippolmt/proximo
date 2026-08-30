@@ -16,12 +16,12 @@ map** of it — every `##` section of every guide is linked below.
 | --- | --- | --- |
 | [Installation](installation.md) | how-to | Requirements, install on macOS/Linux, exactly what is changed on your host, and how to fully reverse it. |
 | [CLI reference](cli.md) | reference | Every `proximo` command, what it does, and example sessions. |
-| [Updating](updating.md) | how-to | Keeping the stack in lockstep with the CLI: `proximo update`, skew detection, and how updates apply. |
+| [Updating](updating.md) | how-to | Keeping the stack in lockstep with the CLI: the published stack image, `proximo update`, skew detection, and how updates apply. |
 | [Architecture](architecture.md) | explanation | How it works under the hood: the embedded stack, the DNS server, the local CA and trust, the watcher. |
 | [Routing](routing.md) | reference | How to expose a container: the `proximo.*` labels, port auto-detection, multiple hosts, and native Traefik compatibility. |
 | [Dev-time observability](observability.md) | how-to | The opt-in `up --observability` logs (Dozzle) + metrics (Beszel) dashboards — credential-less and no-secret. |
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
-| [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases. |
+| [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases and the stack image pipeline. |
 
 ### [The domain model](../CONTEXT.md)
 
@@ -34,6 +34,8 @@ not described as if it worked. Read it before naming anything new.
 Why a design is the way it is, and what was rejected on the way.
 
 [0001 — Client reports are captured by a proximo hop that rewrites the response](adr/0001-inspection-injects-into-the-response-path.md)
+
+[0002 — The stack's Go services ship as one published image, pinned to the CLI version](adr/0002-stack-services-ship-as-one-published-image.md)
 
 ### [Installation](installation.md)
 
@@ -63,6 +65,7 @@ Why a design is the way it is, and what was rejected on the way.
 
 [Mental model](updating.md#mental-model) ·
 [`proximo update`](updating.md#proximo-update) ·
+[Running a different image](updating.md#running-a-different-image) ·
 [When does an update apply?](updating.md#when-does-an-update-apply) ·
 [Linux](updating.md#linux)
 
@@ -114,14 +117,15 @@ Why a design is the way it is, and what was rejected on the way.
 [proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·
-[Degraded stack](troubleshooting.md#degraded-stack)
+[Degraded stack](troubleshooting.md#degraded-stack) ·
+[The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled)
 
 ### [Development](development.md)
 
 [Build and test](development.md#build-and-test) ·
 [Lifecycle targets](development.md#lifecycle-targets) ·
 [Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds) ·
-[Version and module ref](development.md#version-and-module-ref) ·
+[Version and image ref](development.md#version-and-image-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
 [The injected agent](development.md#the-injected-agent) ·
 [Releases](development.md#releases)

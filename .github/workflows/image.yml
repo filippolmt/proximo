@@ -1,0 +1,169 @@
+name: image
+
+# The stack image: one multi-arch image holding dnsserver, watcher and
+# inspector, tagged with the CLI version that will ask for it.
+# See docs/adr/0002-stack-services-ship-as-one-published-image.md.
+#
+# The paths filter cannot mirror a per-directory one: the image is built from
+# the whole Go module, so any Go file, the module files, the Dockerfile or this
+# workflow can change its contents.
+#
+# It is applied to pull requests only. A tag push carries no file diff when the
+# tag points at a commit already on main, so a paths filter there would silently
+# skip the release publish — the one run that must never be skipped. On main the
+# build cache makes a no-change rebuild cheap.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - ".github/workflows/image.yml"
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/proximo
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # The digest pins the exact manifest list this run produced, so the smoke
+      # job below tests these bytes and not whatever the tag points at by then.
+      digest: ${{ steps.build.outputs.digest }}
+      # The version stamped into the image, so the smoke job can build a CLI
+      # that resolves its own tag through imageRef() and land on this same run.
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Two tag families, two triggers: a push to main publishes the mobile
+      # `main` and the immutable `sha-<short>`; a v* tag publishes `vX.Y.Z` and
+      # `latest`. Mobile `vX.Y` / `vX` tags are deliberately NOT published —
+      # proximo pins the exact version, and a mobile major tag would let an old
+      # binary pull services speaking a contract it has never seen.
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,prefix=sha-,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      # The CLI's own version is a bare semver (GoReleaser strips the "v"), and
+      # internal/docker restores it when it computes the image tag. Stamp the
+      # in-stack binaries the same way so their build-identity log line matches
+      # what `proximo version` reports.
+      - name: Resolve build metadata
+        id: v
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          fi
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.v.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.v.outputs.date }}
+
+  # Nobody exercises the pull path by hand: `make up` and `make install` set
+  # PROXIMO_SRC, so a contributor always builds from local source. This job is
+  # the only place the published image is pulled and run — and the only place
+  # the watcher meets a real Docker socket. It deliberately does NOT log in to
+  # GHCR: an authenticated pull would hide the package going private, which
+  # would put a `docker login` between a user and their first `proximo up`.
+  smoke:
+    needs: publish
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Stamped with the version this run published, so the plain `up` below
+      # resolves the tag through imageRef()/imageTag() and lands on this run's
+      # own image — the mapping the two tag families exist to serve.
+      - name: Build the CLI
+        run: |
+          go build -ldflags "-X github.com/filippolmt/proximo/internal/version.Version=${{ needs.publish.outputs.version }}" \
+            -o proximo .
+
+      - name: Bring the stack up from the published digest
+        run: ./proximo up --image "${IMAGE}@${{ needs.publish.outputs.digest }}"
+
+      - name: Every stack service is running its published binary
+        run: |
+          for role in traefik dns watcher inspector; do
+            id=$(docker ps -q --filter "label=proximo.role=$role")
+            if [ -z "$id" ]; then echo "FAIL: no running container for role $role"; exit 1; fi
+          done
+          ./proximo status
+          docker logs "$(docker ps -q --filter label=proximo.role=watcher)" 2>&1 | grep -q "proximo watcher: started" \
+            || { echo "FAIL: the watcher never started"; exit 1; }
+
+      # A plain `up` clears the sticky override and resolves the ref the CLI
+      # computes for itself. Pinning the expected tag here means a broken
+      # version -> tag mapping fails CI instead of shipping.
+      - name: The CLI resolves its own tag, and clears the override
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then want="${IMAGE}:${GITHUB_REF_NAME}"; else want="${IMAGE}:main"; fi
+          ./proximo up
+          got=$(docker inspect "$(docker ps -q --filter label=proximo.role=watcher)" \
+            --format '{{ index .Config.Labels "proximo.image" }}')
+          if [ "$got" != "$want" ]; then
+            echo "FAIL: stack runs $got, but the CLI should have resolved $want"; exit 1
+          fi
+          echo "OK: resolved $got"
+
+      - name: Tear down
+        if: always()
+        run: ./proximo down

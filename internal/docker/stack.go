@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,7 @@ const (
 	obsEmailSentinel    = "__OBS_USER_EMAIL__"
 	obsHubPortSentinel  = "__OBS_HUBPORT__"
 	inspectPortSentinel = "__INSPECTPORT__"
+	imageSentinel       = "__IMAGE__"
 )
 
 // Observability profile + service names, used to bring the opt-in services up
@@ -49,8 +51,8 @@ func StackDir() (string, error) {
 // Materialize writes the embedded stack assets to disk, substituting the TLD
 // and the host data-dir path, creates the bind-mounted data subdirectories,
 // copies the TLS material from certDir into the stack, writes the compose
-// environment file, and returns the stack directory.
-func Materialize(tld, certDir string) (string, error) {
+// environment file pinning the stack image, and returns the stack directory.
+func Materialize(tld, certDir, image string) (string, error) {
 	dir, err := StackDir()
 	if err != nil {
 		return "", err
@@ -101,10 +103,10 @@ func Materialize(tld, certDir string) (string, error) {
 	if err := copyCA(dir, certDir); err != nil {
 		return "", err
 	}
-	if err := writeEnv(dir, tld); err != nil {
+	if err := writeEnv(dir, tld, image); err != nil {
 		return "", err
 	}
-	if err := writeDevOverride(dir); err != nil {
+	if err := writeDevOverride(dir, image); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -112,13 +114,15 @@ func Materialize(tld, certDir string) (string, error) {
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
 // __DNSPORT__, __DATADIR__ — the absolute host data-dir path, the observability
-// user email, the observability hub port, and the Inspection read-API port) in an
-// embedded asset. It is pure
+// user email, the observability hub port, the Inspection read-API port, and the
+// canonical stack image) in an embedded asset. It is deterministic
 // so the substitution can be unit tested directly; the Materialize WalkDir
 // closure calls it per file. Data with no sentinel is returned unchanged. The
 // observability email is deterministic from the TLD (its canonical form is
 // observability.Email); only the generated password is injected at runtime via
-// the 0600 beszel-hub.env file.
+// the 0600 beszel-hub.env file. __IMAGE__ is only the compose-level fallback
+// for a missing .env — the ref the services actually run comes from
+// PROXIMO_IMAGE, which is what makes an override survive a boot-time restart.
 func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []byte {
 	for _, s := range []struct{ sentinel, value string }{
 		{tldSentinel, tld},
@@ -127,6 +131,7 @@ func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []by
 		{obsEmailSentinel, observability.Email(tld)},
 		{obsHubPortSentinel, strconv.Itoa(config.ObsHubPort)},
 		{inspectPortSentinel, strconv.Itoa(config.InspectAPIPort)},
+		{imageSentinel, CanonicalImage()},
 	} {
 		// Guard the substitution so an absent sentinel skips ReplaceAll's copy.
 		if needle := []byte(s.sentinel); bytes.Contains(data, needle) {
@@ -136,19 +141,28 @@ func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []by
 	return data
 }
 
-// devDockerfile is the local-source build file at the PROXIMO_SRC repo root.
-const devDockerfile = "Dockerfile.dev"
+// dockerfile is the stack-image build file at the repo root. The published
+// image and a PROXIMO_SRC local build come from the same file, so the two paths
+// cannot drift.
+const dockerfile = "Dockerfile"
 
-// writeDevOverride wires a docker-compose.override.yml that builds the dns and
-// watcher and inspector images from a local checkout when PROXIMO_SRC points at the source
-// tree. When PROXIMO_SRC is unset it removes any stale override so the published
-// images (go install <module>@<ref>) are used instead. The override is loaded
-// automatically by `docker compose` alongside the base file.
-func writeDevOverride(stackDir string) error {
+// devImage is the tag a local-source build is written to. It is deliberately
+// not a ghcr.io ref: nothing must ever push or pull it by accident.
+const devImage = "proximo:src"
+
+// writeDevOverride wires a docker-compose.override.yml that builds the stack
+// image from the PROXIMO_SRC checkout instead of pulling it. It is written only
+// when the resolved image IS the local one: an explicit --image wins over
+// PROXIMO_SRC, and nothing may then rebuild over the ref the developer named.
+// Otherwise any stale override is removed, so the published image is used
+// again. The override is loaded automatically by `docker compose` alongside the
+// base file; the services already point at ${PROXIMO_IMAGE}, which the .env has
+// set to devImage, so it only has to add the build.
+func writeDevOverride(stackDir, image string) error {
 	overridePath := filepath.Join(stackDir, "docker-compose.override.yml")
 
 	src := os.Getenv("PROXIMO_SRC")
-	if src == "" {
+	if src == "" || image != devImage {
 		if err := os.Remove(overridePath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -159,18 +173,28 @@ func writeDevOverride(stackDir string) error {
 	if err != nil {
 		return err
 	}
+	// The three services share one build definition, so compose builds it once
+	// and the other two reuse the tag.
+	// The same build identity the CLI carries, so a locally built stack logs the
+	// commit it was built from rather than "none". The values are quoted because
+	// YAML would otherwise read the RFC 3339 date as a timestamp and hand
+	// compose back a re-serialized one with spaces in it, which splits the -X
+	// linker flag it ends up in.
 	const svc = `  %s:
     build:
       context: %s
       dockerfile: %s
       args:
-        CMD: %s
+        VERSION: "%s"
+        COMMIT: "%s"
+        DATE: "%s"
 `
-	content := "services:\n" +
-		fmt.Sprintf(svc, "dns", abs, devDockerfile, "dnsserver") +
-		fmt.Sprintf(svc, "watcher", abs, devDockerfile, "watcher") +
-		fmt.Sprintf(svc, "inspector", abs, devDockerfile, "inspector")
-	return os.WriteFile(overridePath, []byte(content), 0o644)
+	var b strings.Builder
+	b.WriteString("services:\n")
+	for _, name := range []string{"dns", "watcher", "inspector"} {
+		fmt.Fprintf(&b, svc, name, abs, dockerfile, version.Version, version.Commit, version.Date)
+	}
+	return os.WriteFile(overridePath, []byte(b.String()), 0o644)
 }
 
 // copyCA places the CA certificate and key into the stack so the watcher can
@@ -199,22 +223,56 @@ func copyCA(stackDir, certDir string) error {
 	return nil
 }
 
-func writeEnv(stackDir, tld string) error {
+// imageEnvKey is the compose variable the stack image ref is passed through. It
+// lives in the materialized .env, which is what makes an --image override
+// sticky across container restarts at boot.
+const imageEnvKey = "PROXIMO_IMAGE"
+
+func writeEnv(stackDir, tld, image string) error {
 	// PROXIMO_VERSION stamps the materialized services with the CLI version (a
 	// proximo.version label) so the running stack's version can be read back for
-	// skew detection; PROXIMO_REF is the canonical module ref the images build at.
-	content := fmt.Sprintf("PROXIMO_TLD=%s\nPROXIMO_REF=%s\nPROXIMO_VERSION=%s\n",
-		tld, moduleRef(version.Version), version.Version)
+	// skew detection; PROXIMO_IMAGE is the image the three Go services run, and
+	// is stamped back as proximo.image so a stack can never run one thing and
+	// declare another.
+	content := fmt.Sprintf("PROXIMO_TLD=%s\n%s=%s\nPROXIMO_VERSION=%s\n",
+		tld, imageEnvKey, image, version.Version)
 	return os.WriteFile(filepath.Join(stackDir, ".env"), []byte(content), 0o644)
 }
 
-// moduleRef turns the build version into a ref that `go install ...@<ref>` can
-// resolve. Released binaries carry a bare semver because GoReleaser's
-// {{ .Version }} strips the leading "v"; restore it so the value is a canonical
-// module version (vX.Y.Z) the module proxy serves directly — a bare "0.1.0" is
-// treated as a VCS query and fails when git is unavailable. Local/dev builds
-// ("dev" or empty) fall back to the default branch, which resolves without a tag.
-func moduleRef(v string) string {
+// EnvImage returns the stack image ref recorded in the materialized .env, or ""
+// when nothing has been materialized yet. It is how `up` and `update` see the
+// sticky --image override they are about to keep or clear.
+func EnvImage() (string, error) {
+	dir, err := StackDir()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if ref, ok := strings.CutPrefix(line, imageEnvKey+"="); ok {
+			return strings.TrimSpace(ref), nil
+		}
+	}
+	return "", nil
+}
+
+// imageRepo is the published multi-architecture image holding all three
+// in-stack binaries. Old version tags are load-bearing: a binary installed at
+// vX.Y.Z asks for that tag for as long as it stays installed.
+const imageRepo = "ghcr.io/filippolmt/proximo"
+
+// imageTag turns the build version into the published image tag. Released
+// binaries carry a bare semver because GoReleaser's {{ .Version }} strips the
+// leading "v"; restore it so the value is the tag the release pipeline pushed
+// (vX.Y.Z). Local/dev builds ("dev" or empty) fall back to the branch tag the
+// main pipeline pushes.
+func imageTag(v string) string {
 	switch {
 	case v == "" || v == "dev":
 		return "main"
@@ -223,6 +281,21 @@ func moduleRef(v string) string {
 	default:
 		return "v" + v
 	}
+}
+
+// imageRef is the canonical stack image for a CLI version. proximo pins the
+// exact version and never reads :latest — a floating tag would let a binary
+// installed weeks ago pull services speaking a label contract it has never
+// seen, in the one place skew detection cannot look.
+func imageRef(v string) string {
+	return imageRepo + ":" + imageTag(v)
+}
+
+// CanonicalImage is the stack image this CLI pins itself to. An --image
+// override replaces it wholesale; `status` compares against this to tell the
+// developer an override is in effect.
+func CanonicalImage() string {
+	return imageRef(version.Version)
 }
 
 func compose(stackDir string, args ...string) error {
@@ -255,44 +328,96 @@ func (execComposer) Compose(stackDir string, args ...string) error {
 // entrypoints. Tests drive the unexported variants with a fake instead.
 var defaultComposer Composer = execComposer{}
 
-// ConvergeOpts tunes how Converge rebuilds the stack.
+// ConvergeOpts tunes how Converge brings the stack up.
 type ConvergeOpts struct {
-	// Force rebuilds the in-stack images without the build cache, regardless of
-	// whether the ref is mobile.
+	// Force re-pulls the stack image even when its tag is already cached. A
+	// benign no-op on an immutable vX.Y.Z, and the only way to advance a mobile
+	// ref that has not changed name.
 	Force bool
+	// Image overrides the stack image ref verbatim — a tag, a digest, or a
+	// locally built image. Empty means CanonicalImage(). It replaces the whole
+	// stack, never one component, and is written into the materialized .env so
+	// containers restarting at boot keep it.
+	Image string
+}
+
+// EffectiveImage resolves the ref a converge with these options runs. An
+// explicit --image wins; then a PROXIMO_SRC checkout, which is built rather
+// than pulled; otherwise the version-pinned published ref. Whatever it returns
+// is what the .env records and the services stamp as proximo.image, so the
+// stack can never run one image and declare another — and the CLI must resolve
+// what it reports through here, not re-derive it, for the same reason.
+func (o ConvergeOpts) EffectiveImage() string {
+	switch {
+	case o.Image != "":
+		return o.Image
+	case os.Getenv("PROXIMO_SRC") != "":
+		return devImage
+	default:
+		return CanonicalImage()
+	}
 }
 
 // Converge materializes the embedded stack to disk and brings it up with
-// ref-aware build freshness. It is the single bring-up path shared by `proximo
+// ref-aware pull freshness. It is the single bring-up path shared by `proximo
 // up`, `install`, and `proximo update`, so "update now" and "update on next
-// start" cannot drift. The bring-up always re-pulls (so the pinned Traefik tag
-// picks up security patches); a mobile ref or Force prepends a --no-cache
-// rebuild of the buildable services to defeat a stale `go install @<ref>` layer.
+// start" cannot drift.
 func Converge(tld, certDir string, opts ConvergeOpts) error {
-	return convergeWith(defaultComposer, moduleRef(version.Version), tld, certDir, opts)
+	return convergeWith(defaultComposer, tld, certDir, opts)
 }
 
-// convergeWith is Converge with the Composer and module ref injected, so a fake
-// composer can assert the issued command sequence for mobile/immutable refs and
-// Force without Docker. Converge wires the production composer and the build
-// version's ref.
-func convergeWith(c Composer, ref, tld, certDir string, opts ConvergeOpts) error {
-	dir, err := Materialize(tld, certDir)
+// convergeWith is Converge with the Composer injected, so a fake composer can
+// assert the issued command sequence for mobile/immutable refs and Force
+// without Docker.
+func convergeWith(c Composer, tld, certDir string, opts ConvergeOpts) error {
+	_, err := convergeCore(c, tld, certDir, opts)
+	return err
+}
+
+// convergeCore materializes the stack and runs the core converge, returning the
+// stack directory so a caller can stage further compose commands into the same
+// project. It is the one place the effective image is resolved and the one
+// place a failure becomes a Remedy — which is why the observability bring-up
+// runs outside it: those services run their own upstream images, and the stack
+// image has nothing to do with them failing.
+func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, error) {
+	image := opts.EffectiveImage()
+	dir, err := Materialize(tld, certDir, image)
 	if err != nil {
-		return err
+		return "", err
 	}
-	for _, args := range composeConvergeCmds(ref, opts.Force) {
+	for _, args := range composeConvergeCmds(image, opts.Force) {
 		if err := c.Compose(dir, args...); err != nil {
-			return err
+			return "", remedyFor(image, err)
 		}
 	}
-	return nil
+	return dir, nil
 }
 
-// Up materializes the stack and brings it up (building images as needed),
-// applying any pending convergence to the installed CLI version.
-func Up(tld, certDir string) error {
-	return Converge(tld, certDir, ConvergeOpts{})
+// imagePresent reports whether the image is already on the host. A var so the
+// remedy path is testable without Docker.
+var imagePresent = func(ref string) bool {
+	return exec.Command("docker", "image", "inspect", ref).Run() == nil
+}
+
+// remedyFor adds an actionable next step to a failed converge when the stack
+// image is not on the host — the state a failed pull leaves behind. It states
+// only what it can check (the image is absent) and hands over a command whose
+// own output names the cause: a tag that was never published, a package that is
+// no longer public, or no route to the registry at all. Other services can fail
+// the same converge, so it does not claim the pull is what broke.
+//
+// proximo prints the remedy and stops; it deliberately does NOT fall back to
+// building the image on the host. That fallback fails on one network path and
+// retries on a path that needs the same network, so it usually fails twice and
+// ten times slower — and in the rare case it succeeds it leaves the developer
+// running an image nobody else has, without knowing.
+func remedyFor(image string, err error) error {
+	if image == devImage || imagePresent(image) {
+		return err
+	}
+	return fmt.Errorf("%w\n\nthe stack image %s is not on this host.\nRemedy: docker pull %s",
+		err, image, image)
 }
 
 // ConvergeObservability brings the stack up with the opt-in observability
@@ -302,20 +427,19 @@ func Up(tld, certDir string) error {
 // agent after the bootstrap guarantees it never starts without its hub
 // credentials (design D4). bootstrap may be nil (e.g. in tests).
 func ConvergeObservability(tld, certDir string, opts ConvergeOpts, bootstrap func(stackDir string) error) error {
-	return convergeObservabilityWith(defaultComposer, moduleRef(version.Version), tld, certDir, opts, bootstrap)
+	return convergeObservabilityWith(defaultComposer, tld, certDir, opts, bootstrap)
 }
 
-// convergeObservabilityWith is ConvergeObservability with the Composer and module
-// ref injected so a fake composer can assert the staged command sequence without
-// Docker. The default `up` carries no --profile flag (core only); only the hub
-// and agent bring-ups activate the observability profile.
-func convergeObservabilityWith(c Composer, ref, tld, certDir string, opts ConvergeOpts, bootstrap func(stackDir string) error) error {
-	dir, err := Materialize(tld, certDir)
+// convergeObservabilityWith is ConvergeObservability with the Composer injected
+// so a fake composer can assert the staged command sequence without Docker. The
+// default `up` carries no --profile flag (core only); only the hub and agent
+// bring-ups activate the observability profile.
+func convergeObservabilityWith(c Composer, tld, certDir string, opts ConvergeOpts, bootstrap func(stackDir string) error) error {
+	dir, err := convergeCore(c, tld, certDir, opts)
 	if err != nil {
 		return err
 	}
-	hubCmds := append(composeConvergeCmds(ref, opts.Force), composeObservabilityHubCmds()...)
-	for _, args := range hubCmds {
+	for _, args := range composeObservabilityHubCmds() {
 		if err := c.Compose(dir, args...); err != nil {
 			return err
 		}
@@ -351,32 +475,46 @@ func composeObservabilityAgentCmds() [][]string {
 	}
 }
 
-// isMobileRef reports whether ref is a mutable ref whose build cache must be
-// busted on converge. main, dev, and empty resolve to a moving target; a
-// canonical release tag (vX.Y.Z) is immutable and safe to cache.
+// semverTag matches a canonical release tag (vX.Y.Z, optionally pre-released):
+// the only tag family the release pipeline publishes and never moves.
+var semverTag = regexp.MustCompile(`^v\d+\.\d+\.\d+`)
+
+// isMobileRef reports whether an image ref can change under a fixed name, and
+// so must be re-pulled on every converge. A digest pins bytes; a canonical
+// release tag (vX.Y.Z) is published once and never moved. Everything else —
+// main, sha-<short>, latest, an untagged ref, a locally built tag — is treated
+// as mobile, because pulling too often only costs a manifest check while
+// pulling too rarely runs stale code.
 func isMobileRef(ref string) bool {
-	switch ref {
-	case "", "main", "dev":
-		return true
-	default:
+	if strings.Contains(ref, "@") {
 		return false
 	}
+	i := strings.LastIndex(ref, ":")
+	if i < 0 || strings.Contains(ref[i+1:], "/") {
+		return true // untagged: docker resolves it to the mobile :latest
+	}
+	return !semverTag.MatchString(ref[i+1:])
 }
 
 // composeConvergeCmds returns the docker compose command(s) Converge runs, in
-// order, for a given module ref and force flag. The bring-up always re-pulls
-// (--pull always) so the pinned Traefik tag picks up security patches. A mobile
-// ref (main/dev/empty) or force prepends a --no-cache rebuild of the buildable
-// services (`docker compose up` has no --no-cache), defeating a stale
-// `go install @<ref>` layer. An immutable tag reuses the cache — a new tag
-// changes the build arg and cache-misses naturally.
-func composeConvergeCmds(ref string, force bool) [][]string {
-	var cmds [][]string
-	if force || isMobileRef(ref) {
-		cmds = append(cmds, []string{"build", "--no-cache", "--pull", "dns", "watcher"})
+// order, for a given stack image ref and force flag.
+//
+// Traefik (and the observability images) are pinned to tags their upstreams
+// move for patches, so they are refreshed on every converge however the stack
+// image is pinned; failures are ignored so an offline host still converges from
+// what it already has. The stack image itself follows the mobile/immutable
+// asymmetry: a mobile ref (or --force) pulls always, a release tag pulls only
+// when missing, since it can never have changed. --build is a no-op unless a
+// PROXIMO_SRC override added a build section.
+func composeConvergeCmds(image string, force bool) [][]string {
+	pull := "missing"
+	if force || isMobileRef(image) {
+		pull = "always"
 	}
-	cmds = append(cmds, []string{"up", "-d", "--build", "--pull", "always"})
-	return cmds
+	return [][]string{
+		{"pull", "--ignore-pull-failures", "traefik"},
+		{"up", "-d", "--build", "--pull", pull},
+	}
 }
 
 // Down stops and removes the whole stack — core services plus the opt-in
@@ -386,6 +524,51 @@ func composeConvergeCmds(ref string, force bool) [][]string {
 // dashboards to be torn down together with the core stack.
 func Down() error {
 	return downWith(defaultComposer)
+}
+
+// Purge is Down plus proximo's own stack images — the pinned version in use and
+// every superseded one `update` deliberately left cached. `uninstall` reverses
+// everything proximo put on the host, and those images are one of those things;
+// a plain `down` keeps them, because stopping the stack must not make the next
+// `up` re-download it.
+//
+// Third-party images (Traefik, the observability dashboards) are left alone:
+// proximo did not author them, and a developer may well be sharing them with
+// another project. That is why this is not `compose down --rmi all`.
+func Purge() error {
+	return purgeWith(defaultComposer)
+}
+
+// purgeWith is Purge with the Composer injected for testing.
+func purgeWith(c Composer) error {
+	if err := downWith(c); err != nil {
+		return err
+	}
+	purgeImages()
+	return nil
+}
+
+// purgeImages best-effort removes every proximo stack image on the host. A var
+// so uninstall's wiring stays testable, and errors are ignored throughout: an
+// image still referenced by something else is a reason to leave it, not to fail
+// an uninstall that has already reversed the host.
+var purgeImages = func() {
+	// By ref, never by image ID: one build publishes several tags, so an ID can
+	// be referenced more than once and `docker image rm <id>` refuses it.
+	out, err := exec.Command("docker", "image", "ls",
+		"--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference="+imageRepo).Output()
+	if err != nil {
+		return
+	}
+	refs := []string{devImage}
+	for _, ref := range strings.Fields(string(out)) {
+		if !strings.Contains(ref, "<none>") {
+			refs = append(refs, ref)
+		}
+	}
+	for _, ref := range refs {
+		_ = exec.Command("docker", "image", "rm", ref).Run()
+	}
 }
 
 // downWith is Down with the Composer injected so a fake can assert the issued

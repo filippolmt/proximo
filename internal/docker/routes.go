@@ -14,7 +14,7 @@ import (
 
 // newClient builds a Docker API client from the environment (moby/client
 // negotiates the daemon API version automatically) — the single construction
-// used by every host-side Docker query (Routes, StackVersion) and the in-stack
+// used by every host-side Docker query (Routes, StackStatus) and the in-stack
 // watcher, so they cannot drift.
 func newClient() (*client.Client, error) {
 	return client.New(client.FromEnv)
@@ -162,33 +162,57 @@ func primaryName(c container.Summary) string {
 	return short(c.ID)
 }
 
-// versionLabel is set on every stack service to the CLI version that
-// materialized it, so the running stack's version can be read back.
-const versionLabel = "proximo.version"
+const (
+	// versionLabel is set on every stack service to the CLI version that
+	// materialized it, so the running stack's version can be read back.
+	versionLabel = "proximo.version"
+	// imageLabel is set on the three services that run the published stack
+	// image, to the ref they were actually started from. Traefik and the
+	// observability services carry none — they run their own upstream images.
+	imageLabel = "proximo.image"
+)
 
-// StackVersion reads the proximo.version label from a running stack container
-// (any service carries the role label). running reports whether a stack
-// container was found at all, so callers can tell "no stack" (running false)
-// from "stack predating version stamping" (running true, empty version — a
-// pre-0.4.0 stack carries no version label). Docker errors are returned so
-// callers can tell "stack down" from "Docker broken".
-func StackVersion(ctx context.Context) (ver string, running bool, err error) {
+// StackInfo is what the host can read back off a running stack: whether one is
+// running at all, the CLI version that materialized it, and the image ref its
+// Go services were started from.
+//
+// Running distinguishes "no stack" from "stack predating version stamping"
+// (running, empty Version — a pre-0.4.0 stack carries no version label).
+type StackInfo struct {
+	Running bool
+	Version string
+	Image   string
+}
+
+// StackStatus reads the proximo.version and proximo.image labels off the
+// running stack. Docker errors are returned so callers can tell "stack down"
+// from "Docker broken".
+func StackStatus(ctx context.Context) (StackInfo, error) {
 	cli, err := newClient()
 	if err != nil {
-		return "", false, err
+		return StackInfo{}, err
 	}
 	defer cli.Close()
 
 	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
-		return "", false, err
+		return StackInfo{}, err
 	}
+	var info StackInfo
 	for _, c := range res.Items {
-		if _, isStack := c.Labels[roleLabel]; isStack {
-			return c.Labels[versionLabel], true, nil
+		if _, isStack := c.Labels[roleLabel]; !isStack {
+			continue
+		}
+		if !info.Running {
+			info.Running, info.Version = true, c.Labels[versionLabel]
+		}
+		// Only the image-backed services carry the ref; traefik may well be the
+		// first stack container listed, so keep looking until one has it.
+		if info.Image == "" {
+			info.Image = c.Labels[imageLabel]
 		}
 	}
-	return "", false, nil
+	return info, nil
 }
 
 // DisplayVersion names a stack version for human output. A running stack
