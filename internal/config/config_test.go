@@ -140,3 +140,21 @@ func TestRemoveHome(t *testing.T) {
 		t.Errorf("home still present after RemoveHome: %v", err)
 	}
 }
+
+// TestTLDWarning: a TLD with no reservation behind it warns (it is still
+// accepted — NormalizeTLD covers rejection); a reserved one stays quiet.
+func TestTLDWarning(t *testing.T) {
+	for _, tld := range []string{"test", "internal", "example", "invalid", "localhost"} {
+		if w := TLDWarning(tld); w != "" {
+			t.Errorf("TLDWarning(%q) = %q, want no warning", tld, w)
+		}
+	}
+	for _, tld := range []string{"dev", "app", "zip", "loc", "lan"} {
+		if TLDWarning(tld) == "" {
+			t.Errorf("TLDWarning(%q) = \"\", want a warning", tld)
+		}
+		if _, err := NormalizeTLD(tld); err != nil {
+			t.Errorf("NormalizeTLD(%q) must warn, never reject: %v", tld, err)
+		}
+	}
+}

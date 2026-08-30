@@ -175,10 +175,28 @@ proximo status
 
 ```
 CONTAINER          URL
-api                https://api.test
+shop-api-1         https://api.test  + api.shop.test
 proximo-traefik-1  https://traefik.test
-whoami             https://whoami.test
+whoami             https://whoami.test  + whoami.proximo-demo.test
 ```
+
+Each route lists its **bare host** as the URL and, after `+`, the **qualified
+host** it also answers on — one row per declared host, never two. See
+[the two hosts every route gets](routing.md#the-two-hosts-every-route-gets); a
+container outside a Compose project has no qualified host and shows none, and
+neither do the stack's own routes.
+
+A host a container did **not** get, because another container claims it, is a row
+of its own carrying the reason and naming the winner:
+
+```
+CONTAINER   URL
+shop-api-1  https://api.test  + api.shop.test
+work-api-1  ⚠ api.test is served by shop-api-1; this container answers at api.work.test
+```
+
+A collision costs a bare host, not a service — see
+[a host collision is reported](troubleshooting.md#a-host-collision-is-reported).
 
 The `traefik.<tld>` route is the stack's own
 [dashboard](#proximo-up) — listed whenever the stack is running, since the
@@ -190,8 +208,8 @@ served by several replica containers is marked `(balanced ×N)`:
 
 ```
 CONTAINER  URL
-db         tcp://db.test:5432 (terminate)
-web        https://app.test (balanced ×2)
+db         tcp://db.test:5432 (terminate)  + db.shop.test
+web        https://app.test (balanced ×2)  + app.shop.test
 ```
 
 The port in a `tcp://` line is the **backend** port; clients still connect on
@@ -282,7 +300,7 @@ Change the top-level domain routed to the local proxy. Updates the host resolver
 for the new TLD, persists it, and restarts the stack so routing follows.
 
 ```sh
-proximo config tld dev    # containers become reachable at <name>.dev
+proximo config tld internal    # containers become reachable at <name>.internal
 ```
 
 - The TLD must be a single DNS label of `[a-z0-9-]` (a leading dot is stripped,
@@ -292,6 +310,14 @@ proximo config tld dev    # containers become reachable at <name>.dev
 - No-op (with a message) when the TLD is already set.
 
 Default TLD is `.test` (reserved by RFC 6761, never collides with mDNS).
+
+**Pick a TLD nobody else owns.** `.test` is the only value with a guarantee: RFC
+6761 reserves it, so it can never be delegated and no public resolver will ever
+answer for it. `.internal` is reserved for private use as well. Every other label
+is accepted but unguaranteed, and some are actively harmful: `.dev`, `.app` and
+`.zip` are real gTLDs in the browsers' HSTS preload list, so claiming one shadows
+names that exist on the public internet. A label that is merely undelegated today
+(`.loc`, `.lan`) works, but nothing stops it from being delegated tomorrow.
 
 ## proximo config ca-path
 
@@ -365,7 +391,7 @@ proximo up                 # bring the proxy back later
 **Switch domain / clean up**
 
 ```sh
-proximo config tld dev     # move everything under .dev
+proximo config tld internal   # move everything under .internal
 proximo uninstall          # remove all host changes
 ```
 

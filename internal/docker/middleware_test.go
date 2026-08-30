@@ -206,7 +206,7 @@ func TestClassifyMiddlewares(t *testing.T) {
 		proximoCorsLabel:              "true",   // valid
 		proximoHeaderPrefix + "X-Env": "dev",    // valid
 	})
-	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	rc, ok, info := classify(context.Background(), failInspect(t), c, "test")
 	if !ok {
 		t.Fatal("container with one invalid middleware should still route")
 	}
@@ -229,7 +229,7 @@ func TestNativeRouteHasNoProximoMiddlewares(t *testing.T) {
 		"traefik.http.routers.w.rule": "Host(`x.test`)",
 		proximoAuthLabel:              "alice:secret",
 	})
-	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || rc.proximo || !rc.mw.empty() {
 		t.Errorf("native route should carry no proximo middlewares: proximo=%v mw=%+v", rc.proximo, rc.mw)
 	}

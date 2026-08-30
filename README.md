@@ -22,7 +22,9 @@ Full guides live in [`docs/`](docs/README.md):
   updates apply to the stack.
 - [Architecture](docs/architecture.md) — the stack, DNS, the local CA, the
   watcher.
-- [Routing](docs/routing.md) — the `proximo.*` labels and Traefik compatibility.
+- [Routing](docs/routing.md) — the `proximo.*` labels, the
+  [two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets),
+  and Traefik compatibility.
 - [Dev-time observability](docs/observability.md) — opt-in `up --observability`
   logs (Dozzle) + metrics (Beszel) dashboards: credential-less and over trusted
   HTTPS (`http://` auto-redirects). Also **Inspection**: label a container
@@ -68,6 +70,13 @@ open https://whoami.test   # macOS — trusted HTTPS, no warning
 proximo status             # see what's routed
 open https://traefik.test  # Traefik's own dashboard, always on (traefik.<tld> is reserved)
 ```
+
+Every route also answers on a **qualified host** — the Compose project name
+inserted before the TLD, so `whoami.test` in project `shop` is served at
+`whoami.shop.test` too. It is never taken by another container, which makes it
+the name to put in a README or an `.env`; `proximo status` prints it beside the
+short one. See
+[the two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets).
 
 A ready-to-run sample is in [`examples/whoami/`](examples/whoami/). For the label
 contract (multiple hosts, explicit port, opt-out, native Traefik labels) see

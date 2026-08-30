@@ -93,6 +93,8 @@ func TestRouteDisplay(t *testing.T) {
 		{"tcp terminate", Route{Host: "db.test", TCPPorts: []int{5432}, TLSMode: "terminate", Backends: 1}, "tcp://db.test:5432 (terminate)"},
 		{"tcp passthrough multi-port", Route{Host: "mqtt.test", TCPPorts: []int{8883, 1883}, TLSMode: "passthrough", Backends: 1}, "tcp://mqtt.test:8883,1883 (passthrough)"},
 		{"tcp balanced", Route{Host: "db.test", TCPPorts: []int{5432}, TLSMode: "terminate", Backends: 3}, "tcp://db.test:5432 (terminate) (balanced ×3)"},
+		{"qualified rides the bare host's row", Route{Host: "api.test", Qualified: "api.shop.test", URL: "https://api.test", Backends: 1}, "https://api.test  + api.shop.test"},
+		{"qualified on a tcp route", Route{Host: "db.test", Qualified: "db.shop.test", TCPPorts: []int{5432}, TLSMode: "terminate", Backends: 1}, "tcp://db.test:5432 (terminate)  + db.shop.test"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,5 +102,42 @@ func TestRouteDisplay(t *testing.T) {
 				t.Errorf("Display() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestServedRoutes: a resolution becomes status rows — one row per declared
+// host carrying its qualified host, and one row per host a route did not get,
+// so a Collision is visible rather than an absence.
+func TestServedRoutes(t *testing.T) {
+	resolved := routeResolution{
+		kept: []routedContainer{{
+			name: "shop-api-1", hosts: []string{"api.test", "api.shop.test"}, port: 80, proximo: true,
+			ns: "shop", qual: map[string]string{"api.test": "api.shop.test"},
+		}},
+		collisions: []hostCollision{{name: "work-api-1", host: "api.test", note: "api.test is served by shop-api-1"}},
+	}
+	routes := servedRoutes(resolved, nil)
+	if len(routes) != 2 {
+		t.Fatalf("routes = %+v, want one served row and one collision row", routes)
+	}
+	if routes[0].Container != "work-api-1" || routes[0].Note == "" || routes[0].URL != "" {
+		t.Errorf("collision row = %+v, want the loser with a note and no URL", routes[0])
+	}
+	served := routes[1]
+	if served.Host != "api.test" || served.Qualified != "api.shop.test" || served.URL != "https://api.test" {
+		t.Errorf("served row = %+v, want api.test carrying api.shop.test", served)
+	}
+}
+
+// TestServedRoutesDropsWithdrawnQualified: a qualified host that went to another
+// claimant must not be advertised on the bare host's row.
+func TestServedRoutesDropsWithdrawnQualified(t *testing.T) {
+	resolved := routeResolution{kept: []routedContainer{{
+		name: "shop-api-1", hosts: []string{"api.test"}, port: 80, proximo: true,
+		ns: "shop", qual: map[string]string{"api.test": "api.shop.test"},
+	}}}
+	routes := servedRoutes(resolved, nil)
+	if len(routes) != 1 || routes[0].Qualified != "" {
+		t.Fatalf("routes = %+v, want no qualified host advertised", routes)
 	}
 }

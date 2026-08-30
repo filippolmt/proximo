@@ -26,6 +26,7 @@ func newClient() (*client.Client, error) {
 type Route struct {
 	Container   string
 	Host        string
+	Qualified   string // the qualified host the route also answers on ("" when it has none)
 	Path        string // proximo.path prefix scoping the route ("" = all paths)
 	URL         string
 	Note        string
@@ -51,6 +52,12 @@ func (r Route) Display() string {
 	}
 	if r.Backends > 1 {
 		s += fmt.Sprintf(" (balanced ×%d)", r.Backends)
+	}
+	// The qualified host rides the bare host's row rather than getting one of its
+	// own: it is always present, and doubling every listing to say so would make
+	// the common case unreadable.
+	if r.Qualified != "" {
+		s += "  + " + r.Qualified
 	}
 	return s
 }
@@ -87,7 +94,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 		if !isRouted(c) {
 			continue
 		}
-		rc, ok, info := classify(ctx, cli.ContainerInspect, c)
+		rc, ok, info := classify(ctx, cli.ContainerInspect, c, tld)
 		if !ok && !info.portFailed {
 			continue // not a host route (e.g. a native container with no Host rule)
 		}
@@ -95,7 +102,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 			// Health-gated and not yet healthy: the watcher withholds the route,
 			// so surface it as starting/unhealthy (recognized, opted in, not
 			// serving) instead of as a working URL or an absent container.
-			for _, host := range rc.hosts {
+			for _, host := range rc.bareHosts() {
 				routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, Note: note})
 			}
 			continue
@@ -104,7 +111,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 			// A proximo route the watcher skips for an unresolved port is
 			// surfaced with the same reason the watcher logs, so status explains
 			// why it is missing instead of hiding it.
-			for _, host := range rc.hosts {
+			for _, host := range rc.bareHosts() {
 				routes = append(routes, Route{Container: rc.name, Host: host, Note: info.port.hint()})
 			}
 			continue
@@ -114,24 +121,13 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 		}
 		served = append(served, rc)
 	}
-	// Apply the same (host, prefix) conflict resolution the watcher uses so
-	// status lists only the routes actually served (status stays quiet about
-	// the dropped losers — the watcher logs them).
-	resolved := resolveRouteConflicts(served)
+	// Apply the same host-by-host resolution the watcher uses, so status lists
+	// exactly what is served — and, unlike before, what is not.
+	resolved := resolveRoutes(served)
 	for _, name := range resolved.inspectDropped {
 		refused[name] = "inspection off: route balances across replicas"
 	}
-	kept := resolved.kept
-	for _, rc := range kept {
-		backends := len(rc.backends())
-		for _, host := range rc.hosts {
-			if rc.isTCP() {
-				routes = append(routes, Route{Container: rc.name, Host: host, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends, InspectNote: refused[rc.name]})
-				continue
-			}
-			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends, Inspect: rc.inspect, InspectNote: refused[rc.name]})
-		}
-	}
+	routes = append(routes, servedRoutes(resolved, refused)...)
 	sort.Slice(routes, func(i, j int) bool {
 		if routes[i].Host != routes[j].Host {
 			return routes[i].Host < routes[j].Host
@@ -139,6 +135,33 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 		return routes[i].Path < routes[j].Path
 	})
 	return routes, nil
+}
+
+// servedRoutes renders a resolution as status rows: one row per declared host of
+// a served route, carrying the qualified host it also answers on, plus one row
+// per host a route did not get. A Collision is reported, never silently
+// resolved — a loser absent from the listing is exactly how the condition used
+// to hide. refused maps a container to the reason its proximo.inspect could not
+// be honoured.
+func servedRoutes(resolved routeResolution, refused map[string]string) []Route {
+	var routes []Route
+	for _, c := range resolved.collisions {
+		routes = append(routes, Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note})
+	}
+	for _, rc := range resolved.kept {
+		backends := len(rc.backends())
+		for _, host := range rc.bareHosts() {
+			// The qualified host is served by the same router and covered by the
+			// same certificate, so it rides this row rather than getting another.
+			qualified := rc.servedQualified(host)
+			if rc.isTCP() {
+				routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends, InspectNote: refused[rc.name]})
+				continue
+			}
+			routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends, Inspect: rc.inspect, InspectNote: refused[rc.name]})
+		}
+	}
+	return routes
 }
 
 // dashboardRoutes returns the Traefik dashboard self-route when the stack's

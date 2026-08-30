@@ -28,6 +28,8 @@ Architecture lives in `docs/`, never here. Whole picture:
 | Why a design is the way it is, and what was rejected | [docs/adr/](docs/adr/) |
 | Routing label contract & port resolution | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels) |
 | Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
+| The bare + qualified host every route answers on | [docs/routing.md — The two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets) |
+| A host collision: what is reported and what to do | [docs/troubleshooting.md — A host collision is reported](docs/troubleshooting.md#a-host-collision-is-reported) |
 | HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
 | Health-gated routing & the `proximo.health=false` opt-out | [docs/routing.md — proximo.health](docs/routing.md#proximohealth--wait-for-the-container-to-be-healthy) |
 | Curated middleware labels (auth/CORS/custom headers) & escape hatch | [docs/routing.md — proximo middlewares](docs/routing.md#proximo-middlewares--auth-cors-custom-headers) |

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,18 @@ const (
 	// networkLabel disambiguates which network to use for a multi-network
 	// container.
 	networkLabel = "traefik.docker.network"
+
+	// composeProjectLabel and composeServiceLabel carry the Project a container
+	// belongs to. The project name is the route's Namespace (the label inserted
+	// into the qualified host); the service name, with it, names the route's
+	// files. Compose sets both, and a container started outside a project
+	// carries neither — it gets no qualified host.
+	composeProjectLabel = "com.docker.compose.project"
+	composeServiceLabel = "com.docker.compose.service"
+	// stackProject is the Compose project name of proximo's own stack. It is a
+	// Stack, not a Project, so its services (the observability ones carry plain
+	// routing labels and no proximo.role) get no Namespace and no qualified host.
+	stackProject = "proximo"
 
 	// proximoHostsLabel is the proximo-native opt-in label: a comma-separated
 	// list of hostnames. Its presence (non-empty) opts a container in.
@@ -111,6 +124,41 @@ var hostRuleRe = regexp.MustCompile("Host\\(`([^`]+)`\\)")
 // hostnameRe validates a single hostname (RFC 1123 label charset, dot-joined).
 var hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
 
+// dnsLabelRe validates a single DNS label — the shape a Namespace must have to
+// be insertable into a host name.
+var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// namespaceOf returns a container's Namespace: its Compose project name,
+// lowercased and sanitized to a DNS label (Compose allows "_", host names do
+// not). A container outside a Compose project — or one whose project name does
+// not survive sanitization — has no Namespace, and therefore no qualified host.
+func namespaceOf(labels map[string]string) string {
+	ns := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(labels[composeProjectLabel])), "_", "-")
+	if !dnsLabelRe.MatchString(ns) || ns == stackProject {
+		return ""
+	}
+	return ns
+}
+
+// qualifiedHost inserts ns before the TLD in a declared host: api.test becomes
+// api.shop.test. It returns "" when there is nothing to qualify — no Namespace,
+// a host outside the configured TLD (the resolver answers for <tld> only, so
+// the name would never resolve), or a host already carrying the Namespace.
+func qualifiedHost(host, ns, tld string) string {
+	if ns == "" {
+		return ""
+	}
+	base, ok := strings.CutSuffix(host, "."+tld)
+	// A host already ending in the Namespace (api.shop.test in project shop) is
+	// its own qualified form and needs nothing added. Every other host under the
+	// TLD gets one, so "always present" keeps exactly one exception: a container
+	// with no Compose project.
+	if !ok || base == "" || strings.HasSuffix(base, "."+ns) {
+		return ""
+	}
+	return base + "." + ns + "." + tld
+}
+
 // pathPrefixRe validates a proximo.path prefix: a leading slash followed by the
 // URL pchar set. It deliberately excludes backticks, quotes and whitespace so
 // the prefix is safe to template into the PathPrefix(`…`) router rule.
@@ -122,21 +170,82 @@ var unsafeNameRe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
 // routedContainer is the per-container routing model built during reconcile.
 type routedContainer struct {
-	name     string        // primary container name (used as the backend DNS name)
-	id       string        // container ID (for collision disambiguation)
-	safe     string        // sanitized name used for filenames / router ids
-	hosts    []string      // routed hostnames
-	port     int           // resolved backend port (proximo path only)
-	proximo  bool          // true when routed via proximo.hosts (generate dynamic config)
-	redirect bool          // true when proximo.redirect opts in to an HTTP->HTTPS redirect
-	path     string        // proximo.path prefix scoping the routes ("" = match all paths)
-	strip    bool          // true when proximo.path.strip removes the prefix before the backend
-	internal bool          // routed to a Traefik internal service (api@internal): no backend port is resolved
-	inspect  bool          // true when proximo.inspect routes this container through the Inspection hop
-	mw       middlewareSet // curated proximo middlewares (auth/cors/headers) attached to the router
-	tcpPorts []int         // TCP backend ports (proximo.tcp.port/.ports); non-empty makes the container TCP-routed instead of HTTP
-	tcpTLS   string        // TCP TLS mode: tcpTLSTerminate (default) or tcpTLSPassthrough (only meaningful when tcpPorts is set)
-	servers  []string      // backend container names for the load balancer; read via backends(), never directly (nil means the single backend rc.name; >1 => round-robin replicas)
+	name     string            // primary container name (used as the backend DNS name)
+	id       string            // container ID (for collision disambiguation)
+	safe     string            // sanitized name used for filenames / router ids
+	hosts    []string          // routed hostnames
+	port     int               // resolved backend port (proximo path only)
+	proximo  bool              // true when routed via proximo.hosts (generate dynamic config)
+	redirect bool              // true when proximo.redirect opts in to an HTTP->HTTPS redirect
+	path     string            // proximo.path prefix scoping the routes ("" = match all paths)
+	strip    bool              // true when proximo.path.strip removes the prefix before the backend
+	internal bool              // routed to a Traefik internal service (api@internal): no backend port is resolved
+	inspect  bool              // true when proximo.inspect routes this container through the Inspection hop
+	mw       middlewareSet     // curated proximo middlewares (auth/cors/headers) attached to the router
+	tcpPorts []int             // TCP backend ports (proximo.tcp.port/.ports); non-empty makes the container TCP-routed instead of HTTP
+	tcpTLS   string            // TCP TLS mode: tcpTLSTerminate (default) or tcpTLSPassthrough (only meaningful when tcpPorts is set)
+	servers  []string          // backend container names for the load balancer; read via backends(), never directly (nil means the single backend rc.name; >1 => round-robin replicas)
+	ns       string            // Namespace: the Compose project name (see namespaceOf); "" outside a project
+	service  string            // Compose service name; with ns it names the route's files (see safeBase)
+	qual     map[string]string // declared host -> the qualified host derived from it; nil when there is no Namespace. Written once by qualifyHosts and never mutated after.
+	natives  []string          // hosts a native traefik.* router rule on this container claims; Traefik's Docker provider routes them, so proximo never stands a second router on one
+}
+
+// qualifyHosts gives every declared host under tld the qualified counterpart
+// derived from rc's Namespace and appends it to rc.hosts, so one router rule and
+// one certificate cover both. It is applied to proximo routes only: Traefik's
+// Docker provider owns a native route's rule, so a host added here would resolve
+// and then route nowhere.
+func (rc *routedContainer) qualifyHosts(tld string) {
+	var added []string
+	for _, h := range rc.hosts {
+		q := qualifiedHost(h, rc.ns, tld)
+		if q == "" || slices.Contains(rc.hosts, q) || slices.Contains(added, q) {
+			continue
+		}
+		if rc.qual == nil {
+			rc.qual = map[string]string{}
+		}
+		rc.qual[h] = q
+		added = append(added, q)
+	}
+	rc.hosts = append(rc.hosts, added...)
+}
+
+// generated reports whether h is a qualified host proximo derived, rather than
+// one a developer declared. proximo yields a generated host to any other
+// claimant (see resolveRoutes): one of the two claims is its own.
+func (rc routedContainer) generated(h string) bool {
+	for _, q := range rc.qual {
+		if q == h {
+			return true
+		}
+	}
+	return false
+}
+
+// bareHosts returns the hosts a developer declared, in order, dropping the
+// qualified hosts derived from them. Reporting walks it so a route stays one row
+// per declared host, with its qualified host rendered alongside.
+func (rc routedContainer) bareHosts() []string {
+	var out []string
+	for _, h := range rc.hosts {
+		if !rc.generated(h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// servedQualified returns the qualified host still answering for bare host h, or
+// "" when h has none or it went to another claimant. Callers must hold a route
+// that has been through resolveRoutes: before that, rc.hosts is what was asked
+// for rather than what is served.
+func (rc routedContainer) servedQualified(h string) string {
+	if q := rc.qual[h]; q != "" && slices.Contains(rc.hosts, q) {
+		return q
+	}
+	return ""
 }
 
 // Invariant (enforced at the sole constructor, classify): a routedContainer is
@@ -151,7 +260,7 @@ type routedContainer struct {
 func (rc routedContainer) isTCP() bool { return len(rc.tcpPorts) > 0 }
 
 // backends returns the backend container names for rc's load balancer: the
-// merged replica set when resolveRouteConflicts grouped several containers under
+// merged replica set when resolveRoutes grouped several containers under
 // this route, or just rc.name for a lone container. A single backend renders
 // identically to the pre-replica model.
 func (rc routedContainer) backends() []string {
@@ -315,19 +424,20 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 			routed = append(routed, rc)
 		}
 	}
-	assignSafeNames(routed)
 	// The dashboard self-route is rebuilt every pass, independently of the
 	// container list: the Traefik container itself stays excluded by
 	// isRouted/classifyHosts (proximo.role), so it can never reach this path
-	// through classification. Appending after assignSafeNames keeps its
-	// reserved safe id fixed; appending before warnDuplicateHosts flags a user
-	// container that claims the reserved traefik.<tld> host.
+	// through classification. It carries its own reserved safe id, which
+	// assignSafeNames leaves alone.
 	routed = append(routed, w.dashboardRoute())
-	warnDuplicateHosts(containers, routed)
-	res := resolveRouteConflicts(routed)
+	res := resolveRoutes(routed)
 	routed = res.kept
-	for _, c := range res.conflicts {
-		log.Printf("proximo watcher: container %s conflicts on host %q path %q with an already-routed container; the lexicographically-first name wins, %s is not routed", c.name, c.host, c.path, c.name)
+	// Safe names are assigned on the resolved set: replicas of one service share
+	// a base, so naming them before the merge would suffix the survivor away from
+	// the stable name it is entitled to.
+	assignSafeNames(routed)
+	for _, c := range res.collisions {
+		log.Printf("proximo watcher: container %s: %s (path %q)", c.name, c.note, c.path)
 	}
 	for _, m := range res.merges {
 		log.Printf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host)
@@ -397,13 +507,36 @@ type portResult struct {
 // the two cannot diverge about what is actually served. It returns the routing
 // model, whether the container is effectively routed, and diagnostics for the
 // caller to log. The returned routedContainer keeps its hosts even when ok is
-// false (unresolved port) so callers can flag it. classify never logs.
-func classify(ctx context.Context, inspect inspector, c container.Summary) (routedContainer, bool, classifyInfo) {
+// false (unresolved port) so callers can flag it. tld is the configured proximo
+// TLD, needed to derive the qualified host every proximo route answers on.
+// classify never logs.
+func classify(ctx context.Context, inspect inspector, c container.Summary, tld string) (routedContainer, bool, classifyInfo) {
 	hosts, proximo, invalid := classifyHosts(c.Labels)
 	info := classifyInfo{invalidHosts: invalid}
-	rc := routedContainer{name: primaryName(c), id: c.ID, hosts: hosts, proximo: proximo, redirect: isProximoRedirect(c.Labels)}
+	rc := routedContainer{
+		name:     primaryName(c),
+		id:       c.ID,
+		hosts:    hosts,
+		proximo:  proximo,
+		redirect: isProximoRedirect(c.Labels),
+		ns:       namespaceOf(c.Labels),
+		service:  c.Labels[composeServiceLabel],
+	}
 	if len(hosts) == 0 {
 		return rc, false, info
+	}
+	// A native traefik.* rule is routed by Traefik's own Docker provider whether
+	// or not proximo also routes this container, so the hosts it claims are
+	// recorded even on the proximo branch: a container carrying both schemes
+	// would otherwise stand two routers on one host.
+	if strings.EqualFold(c.Labels[enableLabel], "true") {
+		rc.natives = hostsFromLabels(c.Labels)
+	}
+	// Every proximo route answers on its qualified host as well as its bare one,
+	// before anything else looks at rc.hosts: the router rule, the certificate
+	// SANs and replica identity must all see the same host set.
+	if proximo {
+		rc.qualifyHosts(tld)
 	}
 
 	// Curated middlewares apply only to proximo-translated routers; native
@@ -473,7 +606,7 @@ func classify(ctx context.Context, inspect inspector, c container.Summary) (rout
 // ok=false means the container gets no route/cert (e.g. ambiguous port, or a
 // native container with no Host rule).
 func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedContainer, bool) {
-	rc, ok, info := classify(ctx, w.cli.ContainerInspect, c)
+	rc, ok, info := classify(ctx, w.cli.ContainerInspect, c, w.tld)
 	for _, h := range info.invalidHosts {
 		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
 	}
@@ -1320,18 +1453,40 @@ func hostsFromLabels(labels map[string]string) []string {
 	return hosts
 }
 
+// safeBase names a route for its files and router id. Inside a Compose project
+// that is the Namespace and the service (shop-api), so a file in the certificate
+// directory traces back to a container by being read, and the name survives a
+// service being scaled or recreated. A container outside a project falls back to
+// its own name, the only thing it has.
+func safeBase(rc routedContainer) string {
+	if rc.ns != "" && rc.service != "" {
+		return sanitizeName(rc.ns + "-" + rc.service)
+	}
+	return sanitizeName(rc.name)
+}
+
 // assignSafeNames sets each container's safe name (sanitized filename / router
-// id), disambiguating collisions with a short container-ID suffix.
+// id), falling back to a short container-ID suffix for a residual clash. It runs
+// after collision resolution, on the routes actually served: replicas of one
+// service share a base and would otherwise all be suffixed away from it. A route
+// arriving with a safe name already set keeps it — that is the dashboard
+// self-route's reserved id.
 func assignSafeNames(rcs []routedContainer) {
 	bases := make([]string, len(rcs))
 	// Seed the reserved dashboard id so a user container named "dashboard" is
 	// always suffixed away from the self-route's cert files.
 	counts := map[string]int{dashboardSafe: 1}
 	for i, rc := range rcs {
-		bases[i] = sanitizeName(rc.name)
+		if rc.safe != "" {
+			continue
+		}
+		bases[i] = safeBase(rc)
 		counts[bases[i]]++
 	}
 	for i := range rcs {
+		if rcs[i].safe != "" {
+			continue
+		}
 		if counts[bases[i]] > 1 {
 			rcs[i].safe = bases[i] + "-" + short(rcs[i].id)
 		} else {
@@ -1351,41 +1506,16 @@ func sanitizeName(name string) string {
 	return s
 }
 
-// warnDuplicateHosts logs when a host appears both in a proximo.hosts route and
-// in a native traefik.* router rule, which would create duplicate routers
-// across providers.
-func warnDuplicateHosts(containers []container.Summary, routed []routedContainer) {
-	proximoSet := map[string]bool{}
-	for _, rc := range routed {
-		if rc.proximo {
-			for _, h := range rc.hosts {
-				proximoSet[h] = true
-			}
-		}
-	}
-	if len(proximoSet) == 0 {
-		return
-	}
-	seen := map[string]bool{}
-	for _, c := range containers {
-		if !isRouted(c) {
-			continue
-		}
-		for _, h := range hostsFromLabels(c.Labels) {
-			if proximoSet[h] && !seen[h] {
-				seen[h] = true
-				log.Printf("proximo watcher: host %q is declared in both proximo.hosts and a traefik.* router rule; use one scheme per host to avoid duplicate routers", h)
-			}
-		}
-	}
-}
-
-// routeConflict names a proximo route dropped because another container already
-// claimed the same (host, path prefix) pair.
-type routeConflict struct {
-	name string // dropped container's name
-	host string // the host it collided on
+// hostCollision names one host a proximo route did not get, because another
+// claimant already held it. It is scoped to the host, not the container: a
+// container losing one host keeps every other host it declared. note explains
+// the outcome and names the claimant — the watcher logs it and `proximo status`
+// shows it, so the two never tell different stories.
+type hostCollision struct {
+	name string // the container that did not get the host
+	host string // the host it did not get
 	path string // the path prefix both claimed ("" = bare host)
+	note string // why, naming the claimant
 }
 
 // replicaKey identifies containers that back the same logical service — same
@@ -1408,7 +1538,11 @@ func replicaKey(rc routedContainer) string {
 	// representative keeps its own host order for the rendered rule).
 	norm.hosts = append([]string(nil), rc.hosts...)
 	sort.Strings(norm.hosts)
-	return string(renderRouter(norm))
+	// Replicas live inside one Project. Qualified hosts already separate two
+	// projects claiming the same bare host, but a declared host outside the TLD
+	// is never qualified, so the Namespace joins the key explicitly rather than
+	// leaving that one case able to merge across projects by accident.
+	return string(renderRouter(norm)) + "\x00" + rc.ns
 }
 
 // routeMerge names a proximo container merged into an existing route as a
@@ -1422,34 +1556,37 @@ type routeMerge struct {
 	host   string // a host they share
 }
 
-// resolveRouteConflicts merges replica containers and drops genuine conflicts.
-// Containers with identical routing config (see replicaKey) but different
-// backends are merged into one route whose load balancer carries every backend
-// (round-robin), the lexicographically-first name representing the group — plain
-// host routes only, since path-scoped routes are never replica-merged. Distinct
-// routes that still collide on a (host, path prefix) pair are resolved as before:
-// the lexicographically-first group wins, the rest are returned as conflicts for
-// the caller to log. Two routes on the same host with different prefixes do not
-// collide. Native (non-proximo) routes are never merged or conflicted — Traefik's
-// Docker provider owns them. It is the shared resolver behind both the watcher
-// (which logs the losers and the merges) and `proximo status` (which stays quiet),
-// so the two agree on which routes are served and which are balanced.
-// routeResolution is what conflict resolution produced: the routes to serve, and
+// claim keys a route's exclusive hold on a host. The path prefix is part of the
+// key: two routes on one host with different prefixes are not claiming the same
+// thing (see proximo.path).
+type claim struct{ host, path string }
+
+// routeResolution is what resolveRoutes produced: the routes to serve, and
 // everything the watcher owes the developer an explanation for. It is one value
 // rather than four returns because the next thing worth reporting would make it
 // five, and every call site would have to grow another blank.
 type routeResolution struct {
 	kept           []routedContainer
 	merges         []routeMerge
-	conflicts      []routeConflict
+	collisions     []hostCollision
 	inspectDropped []string // routes whose proximo.inspect could not be honoured
 }
 
-func resolveRouteConflicts(routed []routedContainer) routeResolution {
+// resolveRoutes merges replica containers and settles host collisions.
+// Containers with identical routing config (see replicaKey) but different
+// backends are merged into one route whose load balancer carries every backend
+// (round-robin), the lexicographically-first name representing the group — plain
+// host routes only, since path-scoped routes are never replica-merged. Distinct
+// routes then claim hosts one at a time, so a container losing one host keeps
+// the rest. Native (non-proximo) routes are never merged and never lose a host:
+// Traefik's Docker provider owns them. It is the shared resolver behind both the
+// watcher (which logs the collisions and the merges) and `proximo status` (which
+// renders them as rows), so the two agree on what is served.
+func resolveRoutes(routed []routedContainer) routeResolution {
 	var (
 		kept           []routedContainer
 		merges         []routeMerge
-		conflicts      []routeConflict
+		collisions     []hostCollision
 		inspectDropped []string
 	)
 	sorted := append([]routedContainer(nil), routed...)
@@ -1458,8 +1595,8 @@ func resolveRouteConflicts(routed []routedContainer) routeResolution {
 	// First pass: merge exact replicas. Iterating in name order makes the first
 	// occurrence the representative and appends the rest as extra backends. Only
 	// plain host routes (no path prefix) are replica-eligible; a path-scoped route
-	// always gets its own group and goes through conflict resolution, so two
-	// identical (host, path) containers conflict rather than being balanced —
+	// always gets its own group and goes through collision resolution, so two
+	// identical (host, path) containers collide rather than being balanced —
 	// replica detection is for same-host/same-port services, not path splits.
 	var groups []*routedContainer
 	byKey := map[string]*routedContainer{}
@@ -1494,30 +1631,103 @@ func resolveRouteConflicts(routed []routedContainer) routeResolution {
 		}
 	}
 
-	// Second pass: resolve (host, path prefix) collisions between distinct groups.
-	claimed := map[[2]string]string{} // {host, prefix} -> winning representative name
+	// A host a native traefik.* rule matches belongs to Traefik's own Docker
+	// provider, whichever container carries the rule — including the very
+	// container proximo is about to route. proximo does not arbitrate with its own
+	// provider: it withdraws. Native rules are keyed by host alone because proximo
+	// does not parse their path matchers.
+	nativeRule := map[string]string{}
 	for _, g := range groups {
+		for _, h := range g.natives {
+			nativeRule[h] = g.name
+		}
+	}
+
+	// Second pass: claim hosts one at a time. Declared hosts are claimed before
+	// generated ones, so a contest between a qualified host proximo generated and
+	// a host someone wrote by hand is always settled by proximo standing down —
+	// one of the two claims is its own, which makes that a withdrawal rather than
+	// arbitration. Within each round, groups are already in name order.
+	type loss struct {
+		group  int
+		host   string
+		owner  string
+		native bool
+	}
+	claimed := map[claim]string{}
+	survivors := make([][]string, len(groups))
+	var losses []loss
+	for _, wantGenerated := range []bool{false, true} {
+		for i, g := range groups {
+			if !g.proximo {
+				continue
+			}
+			for _, h := range g.hosts {
+				if g.generated(h) != wantGenerated {
+					continue
+				}
+				if owner, ok := nativeRule[h]; ok {
+					losses = append(losses, loss{group: i, host: h, owner: owner, native: true})
+					continue
+				}
+				key := claim{h, g.path}
+				if owner, ok := claimed[key]; ok {
+					if owner != g.name {
+						losses = append(losses, loss{group: i, host: h, owner: owner})
+					}
+					continue // already claimed, by another group or by this one
+				}
+				claimed[key] = g.name
+				survivors[i] = append(survivors[i], h)
+			}
+		}
+	}
+	// Notes are written only now: what to tell a developer depends on what the
+	// container has left, and a container that lost every host must never be told
+	// to reach itself at one of them.
+	for _, l := range losses {
+		g := groups[l.group]
+		collisions = append(collisions, hostCollision{
+			name: g.name, host: l.host, path: g.path,
+			note: g.collisionNote(l.host, l.owner, l.native, survivors[l.group]),
+		})
+	}
+
+	for i, g := range groups {
 		if !g.proximo {
 			kept = append(kept, *g)
 			continue
 		}
-		clash := ""
-		for _, h := range g.hosts {
-			if owner, ok := claimed[[2]string{h, g.path}]; ok && owner != g.name {
-				clash = h
-				break
-			}
+		if len(survivors[i]) == 0 {
+			continue // every host it asked for went to another claimant
 		}
-		if clash != "" {
-			conflicts = append(conflicts, routeConflict{name: g.name, host: clash, path: g.path})
-			continue
-		}
-		for _, h := range g.hosts {
-			claimed[[2]string{h, g.path}] = g.name
-		}
+		g.hosts = survivors[i]
 		kept = append(kept, *g)
 	}
-	return routeResolution{kept: kept, merges: merges, conflicts: conflicts, inspectDropped: inspectDropped}
+	return routeResolution{kept: kept, merges: merges, collisions: collisions, inspectDropped: inspectDropped}
+}
+
+// collisionNote explains, in one line a developer can act on, why rc did not get
+// host h and who has it. left is what rc kept, so the advice never points at a
+// host rc also lost. The wording separates three outcomes: proximo withdrawing
+// before its own provider, proximo withdrawing a name it generated itself, and a
+// genuine collision between two hand-declared hosts.
+func (rc routedContainer) collisionNote(h, owner string, nativeRule bool, left []string) string {
+	switch {
+	case nativeRule && owner == rc.name:
+		return fmt.Sprintf("%s is also matched by a traefik.* rule on this container; proximo withdrew its own router — use one scheme per host", h)
+	case nativeRule:
+		return fmt.Sprintf("%s is matched by a traefik.* rule on %s; proximo withdrew its router", h, owner)
+	case rc.generated(h):
+		return fmt.Sprintf("qualified host %s withdrawn: %s serves it", h, owner)
+	}
+	if q := rc.qual[h]; q != "" && slices.Contains(left, q) {
+		return fmt.Sprintf("%s is served by %s; this container answers at %s", h, owner, q)
+	}
+	if len(left) > 0 {
+		return fmt.Sprintf("%s is served by %s; this container keeps its other hosts", h, owner)
+	}
+	return fmt.Sprintf("%s is served by %s and this container has no host left — both are in one project, so give one of them a different %s", h, owner, proximoHostsLabel)
 }
 
 // targetNetworks returns the network IDs Traefik must join to reach a backend,

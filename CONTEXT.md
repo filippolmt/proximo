@@ -26,36 +26,62 @@ of the stack. Identified by its Docker Compose project name.
 _Avoid_: stack, app, deployment
 
 **Route**:
-The binding of one host name to one backend, live only while its container is
-running. Routes are derived from container labels, never declared by hand.
+The binding of one host name to the backends serving it, live only while their
+containers are running. Routes are derived from container labels, never declared
+by hand.
 _Avoid_: mapping, rule, proxy entry
 
 **Host**:
 A single name proximo answers for, e.g. `api.test`. Always the full name
-including the TLD.
+including the TLD. Every route has both a Bare host and a Qualified host.
 _Avoid_: domain, hostname, URL, address
+
+**Bare host**:
+The short, unqualified name a developer actually writes — `api.test`. It is a
+convenience, and the only name that can be contested: when two containers claim
+it, one of them is not served under it.
+_Avoid_: canonical host, primary host
+
+**Qualified host**:
+The bare host with the Namespace inserted before the TLD — `api.shop.test`.
+Derived from the *declared* host and never from the container name, so replicas
+of one service share it. Always present and never moved by a Collision, which is
+what makes it the name a developer can rely on.
+_Avoid_: alias, secondary host, fallback
 
 **TLD**:
 The single DNS label proximo claims on the host resolver, `test` by default.
-One per machine; changing it re-points the entire environment.
+Exactly one per machine: the Namespace, never a second TLD, is how two groups of
+projects are kept apart. `test` is the only value carrying a guarantee (RFC 6761
+reserves it); any other label is a name someone else may one day own.
+_Avoid_: domain suffix, zone
 
 ### Naming and collisions
 
 **Namespace**:
-The qualifier that distinguishes two routes claiming the same base name — for
+The qualifier that distinguishes two routes claiming the same bare host — for
 example the same service running from two worktrees of one repository. Derived
-from the project's Compose project name, never invented by the developer.
+from the project's Compose project name, never invented by the developer: a
+hand-picked namespace would be a second host name, and host names are already
+declared by `proximo.hosts`. A container outside a Compose project has no
+namespace, and therefore no qualified host.
 _Avoid_: profile, environment, workspace, instance
-_Debt_: no implementation. Today a name clash is disambiguated by container ID,
-not by namespace.
 
 **Collision**:
-Two running containers claiming the same host. A collision is a condition
-proximo reports, not a state it silently resolves in favour of one claimant.
+Two containers claiming the same host. proximo reports a collision; it never
+resolves one in favour of a claimant. A collision costs a bare host, not a
+service: every claimant stays reachable at its own qualified host, and only the
+contested bare host is served by one of them. It is scoped to the host, so a
+container losing one host keeps every other host it declared.
 _Avoid_: conflict, duplicate, override
-_Debt_: the code both reports *and* resolves. Host collisions warn and then drop
-the loser by iteration order; safe-name collisions are resolved silently with a
-container-ID suffix and never reported at all.
+
+**Replica**:
+One of several containers of a single Project producing the same route,
+differing only in the backend they point at. Replicas are not claimants and
+there is nothing to report about them: they are one route with several backends,
+balanced round-robin. Replicas live inside one Project — containers of different
+Projects are never replicas.
+_Avoid_: collision, duplicate, instance
 
 ### Diagnosis and observation
 

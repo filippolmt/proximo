@@ -42,6 +42,56 @@ open https://whoami.test     # trusted HTTPS, no warning
 proximo status
 ```
 
+## The two hosts every route gets
+
+Every proximo route answers on **two** hosts, always, with no label to write and
+no switch to turn off:
+
+| | Example | Contested? |
+| --- | --- | --- |
+| **Bare host** — what you declared | `api.test` | yes: one container serves it |
+| **Qualified host** — with the Namespace inserted | `api.shop.test` | never |
+
+The **Namespace** is the container's Compose project name (`shop` above,
+`_` rewritten to `-`), so the qualified host needs nothing from you beyond
+already using Compose. It is derived from the *declared host*, not the container
+name, so every replica of a scaled service shares it.
+
+```sh
+$ proximo status
+CONTAINER   URL
+shop-api-1  https://api.test  + api.shop.test
+```
+
+Both hosts go into the same router rule and the same certificate, so both are
+trusted HTTPS from the first request. Because the qualified host can never be
+taken from a container by another claimant, it is the name to put in a README, a
+`.env`, or a colleague's bookmark.
+
+Two cases get **no** qualified host:
+
+- **A container outside a Compose project** — there is no project name to insert,
+  and it is the one case with no safety net. The remedy is short: put it in a
+  Compose project.
+- **A declared host outside the configured TLD** (`api.example.com`) — the local
+  resolver answers for `<tld>` only, so a qualified form of it would never
+  resolve.
+
+The stack's own routes (`traefik.<tld>`, and `logs`/`metrics` under
+[observability](observability.md)) stay unqualified: the stack is not a project.
+
+A collision inside **one** project is the one case the qualified host cannot
+soften — two containers of `shop` claiming `api.test` also claim
+`api.shop.test`, so the loser is left with nothing and `proximo status` says so.
+Give one of the two a different `proximo.hosts`.
+
+> **Cookie scope.** Under `api.shop.test` an app served at `shop.test` can set
+> `Domain=shop.test` and be sent that cookie by every qualified host of the
+> project — whereas `api.test` and `db.test` are isolated origins, because
+> browsers refuse `Domain=test` for a single-label TLD. Inside one project that
+> is usually what you want; it is a deliberate trade
+> ([ADR 0003](adr/0003-every-route-answers-on-a-qualified-host.md)).
+
 ## proximo.hosts — opt in and pick the host(s)
 
 Declaring `proximo.hosts` is the **only mandatory step** to be routed; no
@@ -61,11 +111,23 @@ labels:
   [where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings)) —
   this also prevents injection into the generated config.
 - Use hostnames under the configured TLD (default `.test`) so DNS resolves them.
+- Each host under the TLD also gets its qualified counterpart
+  ([the two hosts every route gets](#the-two-hosts-every-route-gets)):
+  `app.test, api.test` in project `shop` is served on four names.
+- Declaring a host that proximo would have generated (`api.shop.test`) is
+  allowed and wins: proximo withdraws its own generated name and reports the
+  withdrawal in `proximo status`.
 
 > **Reserved host.** `traefik.<tld>` (e.g. `traefik.test`) is reserved for the
 > stack's own Traefik dashboard and must not be claimed via `proximo.hosts` —
 > the dashboard route is injected by the watcher on every reconcile, so a
 > container claiming it collides with the stack's router.
+
+> **Collisions are reported, not resolved.** When two containers claim one bare
+> host, one of them serves it and the other is listed in `proximo status` with
+> the reason and the name of the container that won — it keeps every other host
+> it declared and stays reachable at its qualified host. See
+> [a host collision is reported](troubleshooting.md#a-host-collision-is-reported).
 
 ## proximo.port — usually you can omit it
 
@@ -198,9 +260,10 @@ services:
   the backend (off by default, since many backends expect the full path).
 - A bare container with no `proximo.path` (the `frontend` above) keeps matching
   **all** paths for its hosts, so it naturally serves as the fallback.
-- Two containers claiming the same host **and** the same prefix conflict; the
-  lexicographically-first container name wins and the other is logged — same
-  deterministic resolution as other host conflicts.
+- Two containers claiming the same host **and** the same prefix collide; the
+  lexicographically-first container name serves it and the other is reported by
+  `proximo status` — the same host-by-host resolution as any other
+  [collision](troubleshooting.md#a-host-collision-is-reported).
 
 `proximo status` lists each container with its prefix in the URL
 (`https://app.test/api`), so you can see the split at a glance.
@@ -334,7 +397,7 @@ HTTP (`proximo.port`) or TCP (`proximo.tcp.port`) — are treated as replicas of
 service: proximo emits a single router whose load balancer carries one server per
 container and distributes traffic round-robin. A lone container is unchanged (one
 server). Containers on the same host and the same path that differ in middleware or
-redirect are **not** merged — they still resolve deterministically as a conflict (see
+redirect are **not** merged — they still resolve deterministically as a collision (see
 [proximo.path](#proximopath--split-one-host-across-containers)). `proximo status`
 marks a balanced route with `(balanced ×N)`.
 

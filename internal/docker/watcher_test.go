@@ -170,7 +170,7 @@ func TestPortResultHint(t *testing.T) {
 // TestClassifyExplicitPort: classify resolves the explicit proximo.port (4.1).
 func TestClassifyExplicitPort(t *testing.T) {
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"})
-	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || !rc.proximo || rc.port != 8080 || !slices.Equal(rc.hosts, []string{"app.test"}) {
 		t.Fatalf("classify explicit = (hosts=%v, proximo=%v, port=%d, ok=%v), want ([app.test],true,8080,true)",
 			rc.hosts, rc.proximo, rc.port, ok)
@@ -183,7 +183,7 @@ func TestClassifyExplicitPort(t *testing.T) {
 func TestClassifyPortResolution(t *testing.T) {
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test"})
 
-	rc, ok, _ := classify(context.Background(), exposeInspect(network.PortSet{network.MustParsePort("3000/tcp"): {}}), c)
+	rc, ok, _ := classify(context.Background(), exposeInspect(network.PortSet{network.MustParsePort("3000/tcp"): {}}), c, "test")
 	if !ok || rc.port != 3000 {
 		t.Fatalf("single exposed port = (port=%d, ok=%v), want (3000,true)", rc.port, ok)
 	}
@@ -192,7 +192,7 @@ func TestClassifyPortResolution(t *testing.T) {
 		"zero":     {},
 		"multiple": {network.MustParsePort("80/tcp"): {}, network.MustParsePort("8080/tcp"): {}},
 	} {
-		rc, ok, info := classify(context.Background(), exposeInspect(ports), c)
+		rc, ok, info := classify(context.Background(), exposeInspect(ports), c, "test")
 		if ok {
 			t.Errorf("%s ports: expected not routed", name)
 		}
@@ -209,7 +209,7 @@ func TestClassifyPortResolution(t *testing.T) {
 // is classified without inspecting the container (4.3).
 func TestClassifyNativeNeedsNoInspect(t *testing.T) {
 	c := makeSummary(map[string]string{enableLabel: "true", "traefik.http.routers.w.rule": "Host(`x.test`)"})
-	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || rc.proximo || !slices.Equal(rc.hosts, []string{"x.test"}) {
 		t.Fatalf("native classify = (hosts=%v, proximo=%v, ok=%v), want ([x.test],false,true)", rc.hosts, rc.proximo, ok)
 	}
@@ -226,7 +226,7 @@ func TestWatcherAndStatusShareClassify(t *testing.T) {
 		enableLabel:                   "true",
 		"traefik.http.routers.x.rule": "Host(`live.test`)",
 	})
-	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || rc.proximo || !slices.Equal(rc.hosts, []string{"live.test"}) {
 		t.Fatalf("shared decision = (hosts=%v, proximo=%v, ok=%v), want ([live.test],false,true)", rc.hosts, rc.proximo, ok)
 	}
@@ -1109,7 +1109,7 @@ func TestParseProximoPath(t *testing.T) {
 // container not-routed and surfaces the bad value for the watcher to log (1.1).
 func TestClassifyInvalidPath(t *testing.T) {
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoPathLabel: "api"})
-	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	rc, ok, info := classify(context.Background(), failInspect(t), c, "test")
 	if ok {
 		t.Fatal("invalid path should not route")
 	}
@@ -1133,7 +1133,7 @@ func TestClassifyPathThreaded(t *testing.T) {
 		proximoPathLabel:      "/api",
 		proximoPathStripLabel: "true",
 	})
-	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || rc.path != "/api" || !rc.strip || rc.port != 8080 {
 		t.Fatalf("classify path = (path=%q, strip=%v, port=%d, ok=%v), want (/api,true,8080,true)",
 			rc.path, rc.strip, rc.port, ok)
@@ -1194,37 +1194,37 @@ func TestRenderRouterStrip(t *testing.T) {
 	}
 }
 
-// TestResolveRouteConflicts: two containers on the same host with different
-// prefixes are both kept; the same (host, prefix) pair is a conflict the
+// TestResolveRouteCollisions: two containers on the same host with different
+// prefixes are both kept; the same (host, prefix) pair is a collision the
 // lexicographically-first name wins; native routes are untouched (2.4, 3.2).
-func TestResolveRouteConflicts(t *testing.T) {
+func TestResolveRouteCollisions(t *testing.T) {
 	// Different prefixes on one host: both served (the intended split).
 	front := routedContainer{name: "front", hosts: []string{"app.test"}, proximo: true}
 	api := routedContainer{name: "api", hosts: []string{"app.test"}, proximo: true, path: "/api"}
-	res := resolveRouteConflicts([]routedContainer{front, api})
-	kept, conflicts := res.kept, res.conflicts
-	if len(kept) != 2 || len(conflicts) != 0 {
-		t.Fatalf("distinct prefixes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
+	res := resolveRoutes([]routedContainer{front, api})
+	kept, collisions := res.kept, res.collisions
+	if len(kept) != 2 || len(collisions) != 0 {
+		t.Fatalf("distinct prefixes: kept=%d collisions=%d, want 2 and 0", len(kept), len(collisions))
 	}
 
 	// Same (host, prefix): the lexicographically-first name (api) wins, zzz loses.
 	dup := routedContainer{name: "zzz", hosts: []string{"app.test"}, proximo: true, path: "/api"}
-	res = resolveRouteConflicts([]routedContainer{dup, api})
-	kept, conflicts = res.kept, res.conflicts
+	res = resolveRoutes([]routedContainer{dup, api})
+	kept, collisions = res.kept, res.collisions
 	if len(kept) != 1 || kept[0].name != "api" {
-		t.Fatalf("conflict winner = %v, want [api]", names(kept))
+		t.Fatalf("collision winner = %v, want [api]", names(kept))
 	}
-	if len(conflicts) != 1 || conflicts[0].name != "zzz" || conflicts[0].host != "app.test" || conflicts[0].path != "/api" {
-		t.Fatalf("conflict = %+v, want {zzz app.test /api}", conflicts)
+	if len(collisions) != 1 || collisions[0].name != "zzz" || collisions[0].host != "app.test" || collisions[0].path != "/api" {
+		t.Fatalf("collision = %+v, want {zzz app.test /api}", collisions)
 	}
 
-	// Native routes never conflict (Traefik's Docker provider owns them).
+	// Native routes never lose a host (Traefik's Docker provider owns them).
 	nat1 := routedContainer{name: "n1", hosts: []string{"x.test"}}
 	nat2 := routedContainer{name: "n2", hosts: []string{"x.test"}}
-	res = resolveRouteConflicts([]routedContainer{nat1, nat2})
-	kept, conflicts = res.kept, res.conflicts
-	if len(kept) != 2 || len(conflicts) != 0 {
-		t.Fatalf("native routes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
+	res = resolveRoutes([]routedContainer{nat1, nat2})
+	kept, collisions = res.kept, res.collisions
+	if len(kept) != 2 || len(collisions) != 0 {
+		t.Fatalf("native routes: kept=%d collisions=%d, want 2 and 0", len(kept), len(collisions))
 	}
 }
 
@@ -1293,7 +1293,7 @@ func TestParseTCPTLSMode(t *testing.T) {
 // the TLS mode is carried through and multiple ports are collected.
 func TestClassifyTCP(t *testing.T) {
 	c := makeSummary(map[string]string{proximoHostsLabel: "db.test", proximoTCPPortLabel: "5432"})
-	rc, ok, _ := classify(context.Background(), failInspect(t), c)
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || !rc.isTCP() || !slices.Equal(rc.tcpPorts, []int{5432}) || rc.tcpTLS != tcpTLSTerminate {
 		t.Fatalf("classify TCP = (ok=%v, tcpPorts=%v, tls=%q), want (true,[5432],terminate)", ok, rc.tcpPorts, rc.tcpTLS)
 	}
@@ -1302,7 +1302,7 @@ func TestClassifyTCP(t *testing.T) {
 	}
 
 	pass := makeSummary(map[string]string{proximoHostsLabel: "mqtt.test", proximoTCPPortsLabel: "8883,1883", proximoTCPTLSLabel: "passthrough"})
-	rc, ok, _ = classify(context.Background(), failInspect(t), pass)
+	rc, ok, _ = classify(context.Background(), failInspect(t), pass, "test")
 	if !ok || !slices.Equal(rc.tcpPorts, []int{8883, 1883}) || rc.tcpTLS != tcpTLSPassthrough {
 		t.Fatalf("classify TCP passthrough = (ok=%v, tcpPorts=%v, tls=%q), want (true,[8883 1883],passthrough)", ok, rc.tcpPorts, rc.tcpTLS)
 	}
@@ -1312,7 +1312,7 @@ func TestClassifyTCP(t *testing.T) {
 // when it is the only TCP label the container falls back to HTTP classification.
 func TestClassifyTCPInvalidPortSkipped(t *testing.T) {
 	c := makeSummary(map[string]string{proximoHostsLabel: "app.test", proximoTCPPortLabel: "notaport", proximoPortLabel: "8080"})
-	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	rc, ok, info := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || rc.isTCP() || rc.port != 8080 {
 		t.Fatalf("invalid-only TCP should fall back to HTTP = (ok=%v, isTCP=%v, port=%d), want (true,false,8080)", ok, rc.isTCP(), rc.port)
 	}
@@ -1321,20 +1321,20 @@ func TestClassifyTCPInvalidPortSkipped(t *testing.T) {
 	}
 }
 
-// TestResolveRouteConflictsReplicas: containers with identical bare-host routing
+// TestResolveRouteCollisionsReplicas: containers with identical bare-host routing
 // but different backends are merged into one round-robin route (HTTP and TCP);
 // the lexicographically-first name represents the group and carries every backend
-// as a server. Divergent config on the same host is not merged — it conflicts.
-func TestResolveRouteConflictsReplicas(t *testing.T) {
+// as a server. Divergent config on the same host is not merged — it collides.
+func TestResolveRouteCollisionsReplicas(t *testing.T) {
 	// Three identical HTTP backends on app.test:8080 -> one balanced route with a
 	// server per backend and a reported merge per absorbed replica.
 	web1 := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	web2 := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	web3 := routedContainer{name: "web-3", safe: "web-3", hosts: []string{"app.test"}, port: 8080, proximo: true}
-	res := resolveRouteConflicts([]routedContainer{web3, web1, web2})
-	kept, merges, conflicts := res.kept, res.merges, res.conflicts
-	if len(kept) != 1 || len(conflicts) != 0 || len(merges) != 2 {
-		t.Fatalf("HTTP replicas: kept=%d conflicts=%d merges=%d, want 1, 0, 2", len(kept), len(conflicts), len(merges))
+	res := resolveRoutes([]routedContainer{web3, web1, web2})
+	kept, merges, collisions := res.kept, res.merges, res.collisions
+	if len(kept) != 1 || len(collisions) != 0 || len(merges) != 2 {
+		t.Fatalf("HTTP replicas: kept=%d collisions=%d merges=%d, want 1, 0, 2", len(kept), len(collisions), len(merges))
 	}
 	if kept[0].name != "web-1" || !slices.Equal(kept[0].backends(), []string{"web-1", "web-2", "web-3"}) {
 		t.Fatalf("HTTP replicas: rep=%q backends=%v, want web-1 [web-1 web-2 web-3]", kept[0].name, kept[0].backends())
@@ -1346,60 +1346,60 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// Two identical TCP backends on db.test:5432 -> one balanced TCP route.
 	db1 := routedContainer{name: "db-1", safe: "db-1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
 	db2 := routedContainer{name: "db-2", safe: "db-2", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
-	res = resolveRouteConflicts([]routedContainer{db2, db1})
-	kept, conflicts = res.kept, res.conflicts
-	if len(kept) != 1 || len(conflicts) != 0 || !slices.Equal(kept[0].backends(), []string{"db-1", "db-2"}) {
-		t.Fatalf("TCP replicas: kept=%d conflicts=%d backends=%v, want 1, 0, [db-1 db-2]", len(kept), len(conflicts), kept[0].backends())
+	res = resolveRoutes([]routedContainer{db2, db1})
+	kept, collisions = res.kept, res.collisions
+	if len(kept) != 1 || len(collisions) != 0 || !slices.Equal(kept[0].backends(), []string{"db-1", "db-2"}) {
+		t.Fatalf("TCP replicas: kept=%d collisions=%d backends=%v, want 1, 0, [db-1 db-2]", len(kept), len(collisions), kept[0].backends())
 	}
 
-	// Same host, different port: not replicas -> conflict, not a merge.
+	// Same host, different port: not replicas -> collision, not a merge.
 	a := routedContainer{name: "a", safe: "a", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	b := routedContainer{name: "b", safe: "b", hosts: []string{"app.test"}, port: 9090, proximo: true}
-	res = resolveRouteConflicts([]routedContainer{a, b})
-	kept, merges, conflicts = res.kept, res.merges, res.conflicts
-	if len(kept) != 1 || kept[0].name != "a" || len(conflicts) != 1 || conflicts[0].name != "b" || len(merges) != 0 {
-		t.Fatalf("divergent port: kept=%v conflicts=%v merges=%d, want [a], one {b}, 0", names(kept), conflicts, len(merges))
+	res = resolveRoutes([]routedContainer{a, b})
+	kept, merges, collisions = res.kept, res.merges, res.collisions
+	if len(kept) != 1 || kept[0].name != "a" || len(collisions) != 1 || collisions[0].name != "b" || len(merges) != 0 {
+		t.Fatalf("divergent port: kept=%v collisions=%v merges=%d, want [a], one {b}, 0", names(kept), collisions, len(merges))
 	}
 
-	// Same host + port but divergent redirect -> not replicas, conflict (any router
+	// Same host + port but divergent redirect -> not replicas, collision (any router
 	// difference beyond the backend blocks merging, protecting the replicaKey invariant).
 	r1 := routedContainer{name: "r1", safe: "r1", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	r2 := routedContainer{name: "r2", safe: "r2", hosts: []string{"app.test"}, port: 8080, proximo: true, redirect: true}
-	res = resolveRouteConflicts([]routedContainer{r1, r2})
-	kept, merges, conflicts = res.kept, res.merges, res.conflicts
-	if len(kept) != 1 || len(merges) != 0 || len(conflicts) != 1 {
-		t.Fatalf("divergent redirect: kept=%d merges=%d conflicts=%d, want 1, 0, 1", len(kept), len(merges), len(conflicts))
+	res = resolveRoutes([]routedContainer{r1, r2})
+	kept, merges, collisions = res.kept, res.merges, res.collisions
+	if len(kept) != 1 || len(merges) != 0 || len(collisions) != 1 {
+		t.Fatalf("divergent redirect: kept=%d merges=%d collisions=%d, want 1, 0, 1", len(kept), len(merges), len(collisions))
 	}
 
-	// Same host + TCP port but divergent TLS mode -> not replicas, conflict.
+	// Same host + TCP port but divergent TLS mode -> not replicas, collision.
 	t1 := routedContainer{name: "t1", safe: "t1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
 	t2 := routedContainer{name: "t2", safe: "t2", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSPassthrough}
-	res = resolveRouteConflicts([]routedContainer{t1, t2})
-	kept, merges, conflicts = res.kept, res.merges, res.conflicts
-	if len(kept) != 1 || len(merges) != 0 || len(conflicts) != 1 {
-		t.Fatalf("divergent tcpTLS: kept=%d merges=%d conflicts=%d, want 1, 0, 1", len(kept), len(merges), len(conflicts))
+	res = resolveRoutes([]routedContainer{t1, t2})
+	kept, merges, collisions = res.kept, res.merges, res.collisions
+	if len(kept) != 1 || len(merges) != 0 || len(collisions) != 1 {
+		t.Fatalf("divergent tcpTLS: kept=%d merges=%d collisions=%d, want 1, 0, 1", len(kept), len(merges), len(collisions))
 	}
 
 	// An HTTP route and a TCP route on distinct hosts coexist — both served.
 	httpC := routedContainer{name: "web", safe: "web", hosts: []string{"web.test"}, port: 80, proximo: true}
 	tcpC := routedContainer{name: "cache", safe: "cache", hosts: []string{"cache.test"}, proximo: true, tcpPorts: []int{6379}, tcpTLS: tcpTLSTerminate}
-	res = resolveRouteConflicts([]routedContainer{httpC, tcpC})
-	kept, conflicts = res.kept, res.conflicts
-	if len(kept) != 2 || len(conflicts) != 0 {
-		t.Fatalf("HTTP+TCP coexistence: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
+	res = resolveRoutes([]routedContainer{httpC, tcpC})
+	kept, collisions = res.kept, res.collisions
+	if len(kept) != 2 || len(collisions) != 0 {
+		t.Fatalf("HTTP+TCP coexistence: kept=%d collisions=%d, want 2 and 0", len(kept), len(collisions))
 	}
 
 	// Host order must not defeat replica detection: same hosts, different order, merge.
 	o1 := routedContainer{name: "o1", safe: "o1", hosts: []string{"a.test", "b.test"}, port: 80, proximo: true}
 	o2 := routedContainer{name: "o2", safe: "o2", hosts: []string{"b.test", "a.test"}, port: 80, proximo: true}
-	res = resolveRouteConflicts([]routedContainer{o1, o2})
-	kept, merges, conflicts = res.kept, res.merges, res.conflicts
-	if len(kept) != 1 || len(merges) != 1 || len(conflicts) != 0 {
-		t.Fatalf("host-order replicas: kept=%d merges=%d conflicts=%d, want 1, 1, 0", len(kept), len(merges), len(conflicts))
+	res = resolveRoutes([]routedContainer{o1, o2})
+	kept, merges, collisions = res.kept, res.merges, res.collisions
+	if len(kept) != 1 || len(merges) != 1 || len(collisions) != 0 {
+		t.Fatalf("host-order replicas: kept=%d merges=%d collisions=%d, want 1, 1, 0", len(kept), len(merges), len(collisions))
 	}
 
 	// A lone container is a one-backend route, identical to pre-replica behavior.
-	res = resolveRouteConflicts([]routedContainer{web1})
+	res = resolveRoutes([]routedContainer{web1})
 	kept = res.kept
 	if len(kept) != 1 || !slices.Equal(kept[0].backends(), []string{"web-1"}) {
 		t.Fatalf("single: backends=%v, want [web-1]", kept[0].backends())
@@ -1481,7 +1481,7 @@ func TestInspectionRefusedOnReplicaSet(t *testing.T) {
 	a := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
 	b := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
 
-	res := resolveRouteConflicts([]routedContainer{a, b})
+	res := resolveRoutes([]routedContainer{a, b})
 	kept, merges, dropped := res.kept, res.merges, res.inspectDropped
 	if len(merges) != 1 {
 		t.Fatalf("expected the two replicas to merge, got %d merges", len(merges))
@@ -1497,7 +1497,7 @@ func TestInspectionRefusedOnReplicaSet(t *testing.T) {
 	}
 
 	// A single backend is still inspected.
-	res = resolveRouteConflicts([]routedContainer{a})
+	res = resolveRoutes([]routedContainer{a})
 	kept, dropped = res.kept, res.inspectDropped
 	if len(dropped) != 0 || !kept[0].inspect {
 		t.Fatalf("a single backend must keep Inspection, got kept=%+v dropped=%v", kept, dropped)
@@ -1509,7 +1509,7 @@ func TestClassifyInspectLabel(t *testing.T) {
 	rc, ok, _ := classify(context.Background(), failInspect(t), makeSummary(map[string]string{
 		proximoHostsLabel: "web.test",
 		proximoPortLabel:  "8080",
-	}))
+	}), "test")
 	if !ok || rc.inspect {
 		t.Fatalf("Inspection must be off without the label, got ok=%v inspect=%v", ok, rc.inspect)
 	}
@@ -1518,7 +1518,7 @@ func TestClassifyInspectLabel(t *testing.T) {
 		proximoHostsLabel:   "web.test",
 		proximoPortLabel:    "8080",
 		proximoInspectLabel: "true",
-	}))
+	}), "test")
 	if !ok || !rc.inspect {
 		t.Fatalf("proximo.inspect=true must opt in, got ok=%v inspect=%v", ok, rc.inspect)
 	}
@@ -1528,7 +1528,7 @@ func TestClassifyInspectLabel(t *testing.T) {
 		proximoHostsLabel:   "db.test",
 		proximoTCPPortLabel: "5432",
 		proximoInspectLabel: "true",
-	}))
+	}), "test")
 	if !ok || !slices.Contains(info.tcpIgnoredHTTP, proximoInspectLabel) {
 		t.Fatalf("proximo.inspect on a TCP route must be flagged, got %v", info.tcpIgnoredHTTP)
 	}
@@ -1542,14 +1542,14 @@ func TestInspectRefusalReachesStatus(t *testing.T) {
 		proximoHostsLabel:   "db.test",
 		proximoTCPPortLabel: "5432",
 		proximoInspectLabel: "true",
-	}))
+	}), "test")
 	if !slices.Contains(info.tcpIgnoredHTTP, proximoInspectLabel) {
 		t.Fatalf("classify must flag the TCP refusal for status to surface: %v", info.tcpIgnoredHTTP)
 	}
 
 	a := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
 	b := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
-	if dropped := resolveRouteConflicts([]routedContainer{a, b}).inspectDropped; len(dropped) != 1 {
+	if dropped := resolveRoutes([]routedContainer{a, b}).inspectDropped; len(dropped) != 1 {
 		t.Fatalf("the replica refusal must be reported for status too: %v", dropped)
 	}
 }
@@ -1564,7 +1564,7 @@ func TestClassifyTCPIgnoresHTTPLabels(t *testing.T) {
 		proximoAuthLabel:    "alice:s3cret",
 		proximoPathLabel:    "/db",
 	})
-	rc, ok, info := classify(context.Background(), failInspect(t), c)
+	rc, ok, info := classify(context.Background(), failInspect(t), c, "test")
 	if !ok || !rc.isTCP() {
 		t.Fatalf("expected a routed TCP container, got ok=%v isTCP=%v", ok, rc.isTCP())
 	}
@@ -1608,5 +1608,276 @@ func TestRenderTCPRouter(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("renderTCPRouter passthrough missing %q\n---\n%s", w, out)
 		}
+	}
+}
+
+// --- Qualified hosts (ADR 0003) ---
+
+// TestNamespaceOf: the Namespace is the Compose project name sanitized to a DNS
+// label; a container outside a Compose project has none.
+func TestNamespaceOf(t *testing.T) {
+	tests := []struct {
+		project string
+		want    string
+	}{
+		{"shop", "shop"},
+		{"My_Shop", "my-shop"},
+		{"  shop  ", "shop"},
+		{"", ""},
+		{"-shop", ""},
+		{"shop.two", ""},
+		{stackProject, ""}, // the stack's own project is not a Namespace
+	}
+	for _, tt := range tests {
+		if got := namespaceOf(map[string]string{composeProjectLabel: tt.project}); got != tt.want {
+			t.Errorf("namespaceOf(%q) = %q, want %q", tt.project, got, tt.want)
+		}
+	}
+	if got := namespaceOf(map[string]string{}); got != "" {
+		t.Errorf("no project label = %q, want empty", got)
+	}
+}
+
+// TestQualifiedHost: the Namespace is inserted before the TLD, and nothing is
+// generated when there is nothing to qualify.
+func TestQualifiedHost(t *testing.T) {
+	tests := []struct{ host, ns, want string }{
+		{"api.test", "shop", "api.shop.test"},
+		{"a.b.test", "shop", "a.b.shop.test"},
+		{"api.test", "", ""},                    // no Namespace, no qualified host
+		{"api.example.com", "shop", ""},         // outside the TLD: it would never resolve
+		{"api.shop.test", "shop", ""},           // already carries the Namespace
+		{"shop.test", "shop", "shop.shop.test"}, // named after the project: still qualified
+		{"test", "shop", ""},                    // the bare TLD
+	}
+	for _, tt := range tests {
+		if got := qualifiedHost(tt.host, tt.ns, "test"); got != tt.want {
+			t.Errorf("qualifiedHost(%q, %q) = %q, want %q", tt.host, tt.ns, got, tt.want)
+		}
+	}
+}
+
+// TestClassifyQualifiesHosts: a proximo route in a Compose project answers on
+// its bare host and on the qualified host derived from it; a native traefik.*
+// route is left alone (Traefik's Docker provider owns its rule).
+func TestClassifyQualifiesHosts(t *testing.T) {
+	c := makeSummary(map[string]string{
+		proximoHostsLabel:   "api.test,api.example.com",
+		proximoPortLabel:    "80",
+		composeProjectLabel: "shop",
+		composeServiceLabel: "api",
+	})
+	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
+	if !ok {
+		t.Fatal("container should be routed")
+	}
+	if !slices.Contains(rc.hosts, "api.shop.test") {
+		t.Errorf("hosts = %v, want the qualified host api.shop.test", rc.hosts)
+	}
+	if slices.Contains(rc.hosts, "api.example.com.shop.test") {
+		t.Errorf("a host outside the TLD must not be qualified: %v", rc.hosts)
+	}
+	if !rc.generated("api.shop.test") || rc.generated("api.test") {
+		t.Errorf("generated() must tell the derived host from the declared one: %v", rc.hosts)
+	}
+	if got := rc.bareHosts(); !slices.Equal(got, []string{"api.test", "api.example.com"}) {
+		t.Errorf("bareHosts() = %v, want the declared hosts only", got)
+	}
+
+	nat := makeSummary(map[string]string{
+		enableLabel:                   "true",
+		"traefik.http.routers.n.rule": "Host(`n.test`)",
+		composeProjectLabel:           "shop",
+	})
+	rc, ok, _ = classify(context.Background(), failInspect(t), nat, "test")
+	if !ok || !slices.Equal(rc.hosts, []string{"n.test"}) {
+		t.Errorf("native route hosts = %v, want [n.test] unqualified", rc.hosts)
+	}
+}
+
+// TestResolveRouteCollisionsPerHost: a Collision costs a bare host, not a
+// service — the loser keeps every other host it declared, and is reported.
+func TestResolveRouteCollisionsPerHost(t *testing.T) {
+	a := routedContainer{name: "aaa", hosts: []string{"app.test"}, proximo: true}
+	b := routedContainer{name: "bbb", hosts: []string{"app.test", "other.test"}, proximo: true}
+	res := resolveRoutes([]routedContainer{a, b})
+	if len(res.kept) != 2 {
+		t.Fatalf("kept = %v, want both containers", names(res.kept))
+	}
+	loser := res.kept[1]
+	if loser.name != "bbb" || !slices.Equal(loser.hosts, []string{"other.test"}) {
+		t.Fatalf("loser = %s %v, want bbb keeping [other.test]", loser.name, loser.hosts)
+	}
+	if len(res.collisions) != 1 || res.collisions[0].host != "app.test" || res.collisions[0].note == "" {
+		t.Fatalf("collisions = %+v, want one reported note for app.test", res.collisions)
+	}
+}
+
+// TestResolveRouteCollisionsYieldsGeneratedHost: where a qualified host proximo
+// generated meets a host a developer declared, proximo withdraws its own —
+// regardless of name order.
+func TestResolveRouteCollisionsYieldsGeneratedHost(t *testing.T) {
+	gen := routedContainer{
+		name: "aaa", hosts: []string{"api.test", "api.shop.test"}, proximo: true,
+		ns: "shop", qual: map[string]string{"api.test": "api.shop.test"},
+	}
+	declared := routedContainer{name: "zzz", hosts: []string{"api.shop.test"}, proximo: true}
+	res := resolveRoutes([]routedContainer{gen, declared})
+	if len(res.kept) != 2 {
+		t.Fatalf("kept = %v, want both", names(res.kept))
+	}
+	if !slices.Equal(res.kept[0].hosts, []string{"api.test"}) {
+		t.Errorf("generated host not withdrawn: %v", res.kept[0].hosts)
+	}
+	if !slices.Equal(res.kept[1].hosts, []string{"api.shop.test"}) {
+		t.Errorf("declared host must win: %v", res.kept[1].hosts)
+	}
+	if len(res.collisions) != 1 || res.collisions[0].name != "aaa" {
+		t.Fatalf("collisions = %+v, want the withdrawal reported against aaa", res.collisions)
+	}
+}
+
+// TestResolveRouteCollisionsYieldsToNative: a host already claimed by a native
+// traefik.* rule is left to it — proximo withdraws its router and reports it,
+// instead of leaving two routers standing on one host.
+func TestResolveRouteCollisionsYieldsToNative(t *testing.T) {
+	nat := routedContainer{name: "zzz", hosts: []string{"x.test"}, natives: []string{"x.test"}}
+	prox := routedContainer{name: "aaa", hosts: []string{"x.test", "y.test"}, proximo: true}
+	res := resolveRoutes([]routedContainer{nat, prox})
+	if len(res.kept) != 2 {
+		t.Fatalf("kept = %v, want both", names(res.kept))
+	}
+	for _, rc := range res.kept {
+		if rc.proximo && !slices.Equal(rc.hosts, []string{"y.test"}) {
+			t.Errorf("proximo route kept %v, want [y.test] after withdrawing x.test", rc.hosts)
+		}
+	}
+	if len(res.collisions) != 1 || res.collisions[0].host != "x.test" {
+		t.Fatalf("collisions = %+v, want x.test reported", res.collisions)
+	}
+
+	// One container carrying both schemes is the same duplicate-router case, and
+	// the one warnDuplicateHosts used to catch: proximo withdraws its own router
+	// and says so, instead of standing a second one beside Traefik's.
+	both := routedContainer{name: "aaa", hosts: []string{"x.test"}, natives: []string{"x.test"}, proximo: true}
+	res = resolveRoutes([]routedContainer{both})
+	if len(res.kept) != 0 {
+		t.Errorf("kept = %v, want the proximo router withdrawn", names(res.kept))
+	}
+	if len(res.collisions) != 1 || !strings.Contains(res.collisions[0].note, "this container") {
+		t.Fatalf("collisions = %+v, want the same-container withdrawal reported", res.collisions)
+	}
+}
+
+// TestResolveRouteCollisionsInsideOneProject: two containers of one project
+// claiming one host share the qualified host too, so the loser is left with
+// nothing — the note must say that instead of pointing at a host it also lost.
+func TestResolveRouteCollisionsInsideOneProject(t *testing.T) {
+	mk := func(name string, port int) routedContainer {
+		return routedContainer{
+			name: name, hosts: []string{"api.test", "api.shop.test"}, port: port, proximo: true,
+			ns: "shop", qual: map[string]string{"api.test": "api.shop.test"},
+		}
+	}
+	res := resolveRoutes([]routedContainer{mk("aaa", 80), mk("zzz", 81)})
+	if len(res.kept) != 1 || res.kept[0].name != "aaa" {
+		t.Fatalf("kept = %v, want [aaa]", names(res.kept))
+	}
+	if len(res.collisions) != 2 {
+		t.Fatalf("collisions = %+v, want both hosts reported against zzz", res.collisions)
+	}
+	for _, c := range res.collisions {
+		if c.name != "zzz" {
+			t.Errorf("collision reported against %q, want zzz", c.name)
+		}
+		if strings.Contains(c.note, "answers at") || strings.Contains(c.note, "keeps its other hosts") {
+			t.Errorf("note promises a host zzz also lost: %q", c.note)
+		}
+	}
+	if !strings.Contains(res.collisions[0].note, proximoHostsLabel) {
+		t.Errorf("note should name the remedy: %q", res.collisions[0].note)
+	}
+}
+
+// TestReplicaKeySeparatesProjects: replicas live inside one Project; two
+// containers of different Projects are never merged into one balanced route.
+func TestReplicaKeySeparatesProjects(t *testing.T) {
+	a := routedContainer{name: "a", hosts: []string{"api.example.com"}, port: 80, proximo: true, ns: "shop"}
+	b := routedContainer{name: "b", hosts: []string{"api.example.com"}, port: 80, proximo: true, ns: "warehouse"}
+	if replicaKey(a) == replicaKey(b) {
+		t.Fatal("containers of different projects must not merge as replicas")
+	}
+	b.ns = "shop"
+	if replicaKey(a) != replicaKey(b) {
+		t.Fatal("containers of one project with identical routing must merge as replicas")
+	}
+}
+
+// TestAssignSafeNamesFromNamespace: the safe name is the Namespace and the
+// Compose service, so a cert file traces back to a container by reading it and
+// stays stable as replicas come and go.
+func TestAssignSafeNamesFromNamespace(t *testing.T) {
+	rcs := []routedContainer{
+		{name: "shop-api-1", id: "aaaaaaaaaaaa1111", ns: "shop", service: "api"},
+		{name: "loose", id: "bbbbbbbbbbbb2222"},
+		{name: "traefik", safe: dashboardSafe},
+	}
+	assignSafeNames(rcs)
+	if rcs[0].safe != "shop-api" {
+		t.Errorf("safe = %q, want shop-api", rcs[0].safe)
+	}
+	if rcs[1].safe != "loose" {
+		t.Errorf("container outside a project keeps its name: got %q", rcs[1].safe)
+	}
+	if rcs[2].safe != dashboardSafe {
+		t.Errorf("reserved dashboard id must not be reassigned: got %q", rcs[2].safe)
+	}
+}
+
+// TestReconcileServesQualifiedHost drives a whole reconcile: a container in a
+// Compose project gets one router and one certificate covering both its bare and
+// its qualified host, under a file named for the Namespace and the service.
+func TestReconcileServesQualifiedHost(t *testing.T) {
+	f := newFakeDocker()
+	f.containers = []container.Summary{
+		{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}},
+		{
+			ID:    "apicid",
+			Names: []string{"/shop-api-1"},
+			Labels: map[string]string{
+				proximoHostsLabel:   "api.test",
+				proximoPortLabel:    "8080",
+				composeProjectLabel: "shop",
+				composeServiceLabel: "api",
+			},
+		},
+	}
+	w := testWatcher(t)
+	w.cli = f
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	route, err := os.ReadFile(filepath.Join(w.dynamicDir, routerFilePrefix+"shop-api.yml"))
+	if err != nil {
+		t.Fatalf("router file should be named for the namespace and service: %v", err)
+	}
+	for _, want := range []string{"Host(`api.test`)", "Host(`api.shop.test`)"} {
+		if !strings.Contains(string(route), want) {
+			t.Errorf("router rule missing %s:\n%s", want, route)
+		}
+	}
+
+	crt, err := os.ReadFile(filepath.Join(w.dynamicDir, "certs", "shop-api.crt"))
+	if err != nil {
+		t.Fatalf("cert should be named for the namespace and service: %v", err)
+	}
+	block, _ := pem.Decode(crt)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+	if !slices.Contains(cert.DNSNames, "api.test") || !slices.Contains(cert.DNSNames, "api.shop.test") {
+		t.Errorf("cert SANs = %v, want both the bare and the qualified host", cert.DNSNames)
 	}
 }

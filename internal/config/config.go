@@ -65,6 +65,28 @@ func NormalizeTLD(raw string) (string, error) {
 	return tld, nil
 }
 
+// reservedTLDs are the labels carrying a guarantee they will never be
+// delegated: RFC 6761's special-use names plus ICANN's .internal. Deliberately
+// not the complement — a list of currently-delegated gTLDs would age, and an
+// aging list lies.
+var reservedTLDs = map[string]bool{
+	"test":      true,
+	"internal":  true,
+	"example":   true,
+	"invalid":   true,
+	"localhost": true,
+}
+
+// TLDWarning returns advice for a TLD with no reservation behind it, or "" for
+// a reserved one. It never rejects: the choice is the user's, but a label
+// someone else may own shadows every public name under it.
+func TLDWarning(tld string) string {
+	if reservedTLDs[tld] {
+		return ""
+	}
+	return fmt.Sprintf(".%s is not reserved for private use: it may be delegated on the public internet, and routing it locally shadows every name under it. Reserved alternatives: .%s (RFC 6761) and .internal.", tld, DefaultTLD)
+}
+
 // Dir returns (creating if needed) the per-user state home at $HOME/.proximo.
 func Dir() (string, error) {
 	dir, err := HomePath()
