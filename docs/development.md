@@ -20,6 +20,10 @@ make tidy       # go mod tidy
 make check-links # validate Markdown links + anchors (lychee, offline — same check as CI)
 ```
 
+Run `make tidy` whenever a change touches imports, and commit the resulting
+`go.mod`/`go.sum` — CI re-runs `go mod tidy` and fails on any diff, the same way
+it fails on unformatted code.
+
 The binary is named per OS/arch (`bin/proximo-darwin-arm64`,
 `bin/proximo-linux-amd64`, …) so a macOS and a Linux build never overwrite each
 other in a shared working tree. Override the host target with
