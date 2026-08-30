@@ -113,6 +113,26 @@ before compiling. If it is missing at runtime the `inspector` container refuses
 to start and names the command, rather than serving a script that silently does
 nothing.
 
+### Renovate keeps the pins, you rebuild the artifact
+
+`renovate.json` watches all four pins in the Makefile — `SENTRY_VERSION`,
+`ESBUILD_VERSION`, `NODE_IMAGE` and `PUPPETEER_IMAGE` — so an update arrives as a
+PR like any other. What Renovate **cannot** do is rebuild a committed binary
+artifact: on its own, a `SENTRY_VERSION` bump would change one line and leave the
+shipped bundle untouched.
+
+`TestVendoredSDKMatchesMakefile` is what closes that. It compares the pins against
+the provenance banner stamped into the bundle, so a Renovate PR fails CI until:
+
+```sh
+make vendor-agent        # rebuild the bundle at the new pin
+make capture-envelope    # re-record the parser's fixture from it
+```
+
+pushed onto the same PR. `ESBUILD_VERSION` is checked the same way. The `node` and
+`puppeteer` images only affect how the artifact is produced, so their bumps need
+nothing.
+
 ### After a version bump
 
 The hop parses the Sentry envelope format, which proximo does not own, and

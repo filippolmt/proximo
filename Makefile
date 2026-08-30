@@ -45,7 +45,7 @@ OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 SENTRY_VERSION  ?= 10.72.0
 ESBUILD_VERSION ?= 0.25.10
 NODE_IMAGE      ?= node:22-alpine
-PUPPETEER_IMAGE ?= ghcr.io/puppeteer/puppeteer:latest
+PUPPETEER_IMAGE ?= ghcr.io/puppeteer/puppeteer:25.9.0
 AGENT_SDK       := internal/inspect/assets/sentry.min.js
 
 $(AGENT_SDK):
