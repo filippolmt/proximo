@@ -65,103 +65,100 @@ func TestStoreListFilters(t *testing.T) {
 	}
 }
 
-// --- envelope ---------------------------------------------------------------
+// --- the report format ------------------------------------------------------
 
-// envelope builds a Sentry envelope the way the browser SDK's tunnel would.
-func envelope(items ...[2]string) string {
-	var b strings.Builder
-	b.WriteString(`{"event_id":"7b1c","sent_at":"2026-08-30T10:00:00Z"}` + "\n")
-	for _, it := range items {
-		fmt.Fprintf(&b, "%s\n%s\n", strings.Replace(it[0], "$LEN", strconv.Itoa(len(it[1])), 1), it[1])
-	}
-	return b.String()
-}
-
-const eventPayload = `{
-  "timestamp": 1756548000.5,
+// sample is what agent.js posts for an uncaught TypeError, with the stack shaped
+// the way a browser writes it.
+const sample = `{
+  "at": 1756548000.5,
+  "type": "TypeError",
   "level": "error",
-  "exception": {"values": [{
-    "type": "TypeError",
-    "value": "Cannot read properties of undefined (reading 'total')",
-    "stacktrace": {"frames": [
-      {"filename": "src/checkout/Page.tsx", "function": "onMount", "lineno": 12, "colno": 5},
-      {"filename": "src/checkout/Summary.tsx", "function": "renderSummary", "lineno": 47, "colno": 18}
-    ]}
-  }]},
-  "breadcrumbs": {"values": [
-    {"timestamp": 1756547999, "category": "console", "level": "warning", "message": "slow render"},
-    {"timestamp": 1756548000, "category": "fetch", "message": "GET /api/cart"}
-  ]}
+  "message": "Cannot read properties of undefined (reading 'total')",
+  "file": "https://web.test/src/checkout/Page.tsx",
+  "line": 12,
+  "col": 5,
+  "stack": "TypeError: Cannot read properties of undefined (reading 'total')\n    at renderSummary (https://web.test/src/checkout/Summary.tsx:47:18)\n    at onMount (https://web.test/src/checkout/Page.tsx:12:5)\n    at r (https://web.test/.proximo/agent.js:16:7079)",
+  "dom": "<html><body>state at the time</body></html>",
+  "breadcrumbs": [
+    {"at": 1756547999, "category": "console", "level": "warning", "message": "slow render"},
+    {"at": 1756548000, "category": "fetch", "message": "GET /api/cart → 500"}
+  ]
 }`
 
-func TestDecodeEventAndSnapshot(t *testing.T) {
-	dom := "<html><body>state at the time</body></html>"
-	raw := envelope(
-		[2]string{`{"type":"event","length":$LEN}`, eventPayload},
-		[2]string{`{"type":"attachment","length":$LEN,"filename":"dom.html"}`, dom},
-	)
-
-	in, err := decode([]byte(raw))
+func TestDecodeReport(t *testing.T) {
+	in, err := decode([]byte(sample))
 	if err != nil || !in.Found {
 		t.Fatalf("decode: found=%v err=%v", in.Found, err)
 	}
 	r := in.Report
-	if string(in.Snapshot) != dom {
-		t.Errorf("snapshot = %q", in.Snapshot)
-	}
+
 	if r.Type != "TypeError" || !strings.Contains(r.Message, "reading 'total'") {
 		t.Errorf("report = %+v", r)
 	}
-	// The innermost frame is what actually failed, so it must come first.
-	if len(r.Frames) != 2 || r.Frames[0].Func != "renderSummary" || r.Frames[0].Line != 47 {
-		t.Errorf("frames = %+v", r.Frames)
+	if !strings.Contains(string(in.Snapshot), "state at the time") {
+		t.Errorf("snapshot = %q", in.Snapshot)
+	}
+	if r.At.IsZero() || r.At.Year() != 2025 {
+		t.Errorf("timestamp not parsed: %v", r.At)
+	}
+	// The raw stack is kept verbatim: it is what the browser wrote, and nothing
+	// parsed out of it can be as trustworthy.
+	if !strings.Contains(r.Stack, "at renderSummary") {
+		t.Errorf("stack not kept: %q", r.Stack)
+	}
+	// ...and parsed into frames for display, innermost first.
+	if len(r.Frames) != 2 {
+		t.Fatalf("frames = %+v, want 2 (the agent's own dropped)", r.Frames)
+	}
+	if r.Frames[0].Func != "renderSummary" || r.Frames[0].Line != 47 || r.Frames[0].Col != 18 {
+		t.Errorf("first frame = %+v", r.Frames[0])
+	}
+	for _, f := range r.Frames {
+		if strings.Contains(f.File, ReservedPath) {
+			t.Errorf("the agent's own frame survived: %+v", f)
+		}
 	}
 	if len(r.Breadcrumbs) != 2 || r.Breadcrumbs[1].Category != "fetch" {
 		t.Errorf("breadcrumbs = %+v", r.Breadcrumbs)
 	}
-	if r.At.IsZero() {
-		t.Error("epoch-seconds timestamp not parsed")
-	}
 	if lvl := r.Breadcrumbs[1].Level; lvl != "info" {
-		t.Errorf("missing breadcrumb level should default to info, got %q", lvl)
+		t.Errorf("a breadcrumb with no level should default to info, got %q", lvl)
 	}
 }
 
-// TestDecodeDropsAgentFrames: the agent is served from the page's own origin, so
-// Sentry does not filter its own frames the way it would for a CDN-hosted SDK.
-// A stack ending in /.proximo/agent.js points the reader at proximo instead of at
-// their bug, so those frames never reach a Client report.
-func TestDecodeDropsAgentFrames(t *testing.T) {
-	payload := `{"exception":{"values":[{"type":"TypeError","value":"boom","stacktrace":{"frames":[
-		{"filename":"https://web.test/.proximo/agent.js","function":"i","lineno":16,"colno":7079},
-		{"filename":"src/app.tsx","function":"render","lineno":9,"colno":3}
-	]}}]}}`
-	in, err := decode([]byte(envelope([2]string{`{"type":"event","length":$LEN}`, payload})))
+// TestDecodeWithoutAStack: a cross-origin script yields "Script error." with no
+// stack at all. The location window.onerror gave us is the only thing left, and
+// it must not be thrown away.
+func TestDecodeWithoutAStack(t *testing.T) {
+	in, err := decode([]byte(`{"message":"Script error.","file":"https://cdn.example/x.js","line":1,"col":0}`))
 	if err != nil || !in.Found {
 		t.Fatalf("decode: found=%v err=%v", in.Found, err)
 	}
-	if len(in.Report.Frames) != 1 || in.Report.Frames[0].File != "src/app.tsx" {
-		t.Fatalf("agent frames must be dropped, got %+v", in.Report.Frames)
+	if len(in.Report.Frames) != 1 || in.Report.Frames[0].File != "https://cdn.example/x.js" {
+		t.Fatalf("the onerror location must survive a missing stack: %+v", in.Report.Frames)
+	}
+	if in.Report.Type != "Error" || in.Report.Level != "error" {
+		t.Errorf("defaults not applied: %+v", in.Report)
 	}
 }
 
-func TestDecodeRFC3339TimestampAndPayloadWithNewlines(t *testing.T) {
-	// A length-prefixed payload may contain newlines — that is why the header
-	// carries a length at all.
-	payload := "{\n\"timestamp\": \"2026-08-30T10:00:00Z\",\n\"message\": \"plain\"\n}"
-	in, err := decode([]byte(envelope([2]string{`{"type":"event","length":$LEN}`, payload})))
-	if err != nil || !in.Found {
-		t.Fatalf("decode: found=%v err=%v", in.Found, err)
-	}
-	if in.Report.Message != "plain" || in.Report.At.Year() != 2026 {
-		t.Fatalf("report = %+v", in.Report)
+func TestDecodeAnonymousFrames(t *testing.T) {
+	in, _ := decode([]byte(`{"message":"boom","stack":"Error: boom\n    at https://web.test/app.js:9:3"}`))
+	if len(in.Report.Frames) != 1 || in.Report.Frames[0].Line != 9 || in.Report.Frames[0].Func != "" {
+		t.Fatalf("anonymous frame not parsed: %+v", in.Report.Frames)
 	}
 }
 
-func TestDecodeIgnoresEnvelopeWithoutEvent(t *testing.T) {
-	in, err := decode([]byte(envelope([2]string{`{"type":"session","length":$LEN}`, `{"sid":"1"}`})))
+func TestDecodeIgnoresAnEmptyReport(t *testing.T) {
+	in, err := decode([]byte(`{"breadcrumbs":[]}`))
 	if err != nil || in.Found {
-		t.Fatalf("a session-only envelope must be dropped quietly: found=%v err=%v", in.Found, err)
+		t.Fatalf("a report with nothing in it must be dropped quietly: found=%v err=%v", in.Found, err)
+	}
+}
+
+func TestDecodeRejectsGarbage(t *testing.T) {
+	if _, err := decode([]byte("not json")); err == nil {
+		t.Fatal("malformed JSON must be an error, not a silent empty report")
 	}
 }
 
@@ -364,9 +361,8 @@ func TestReservedPathServesAgentAndIngestsReports(t *testing.T) {
 	}
 
 	store.Add(&Exchange{ID: "deadbeef", At: time.Now(), Host: "web.test"})
-	raw := envelope([2]string{`{"type":"event","length":$LEN}`, eventPayload})
 	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "http://web.test/.proximo/ingest?x=deadbeef", strings.NewReader(raw)))
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "http://web.test/.proximo/ingest?x=deadbeef", strings.NewReader(sample)))
 	if w.Code != 200 {
 		t.Fatalf("ingest: %d %s", w.Code, w.Body.String())
 	}

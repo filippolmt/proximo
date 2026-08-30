@@ -87,69 +87,26 @@ consequences:
 - Installed users only get an asset fix on the **next release** — the binary
   carries its own asset copy.
 
-## The vendored browser agent
+## The injected agent
 
 The [Inspection](observability.md#inspection--what-the-browser-saw) hop injects
-`@sentry/browser` into inspected pages. Its npm package ships only ESM/CJS, so
-the browser bundle is **built here and committed** at
-`internal/inspect/assets/sentry.min.js`, then embedded: building proximo — and
-building the stack images from the published module — needs nothing but the
-module itself, and an inspected page works with no network.
+`internal/inspect/assets/agent.js`, which is proximo's own — no bundle to build,
+no version to pin, no artifact to regenerate. Edit it like any other source file;
+`make build` embeds it.
 
-```sh
-make vendor-agent                        # rebuild at the pinned versions
-make vendor-agent SENTRY_VERSION=10.73.0 # bump the SDK
-```
+It is one half of a contract whose other half is `internal/inspect/report.go`:
+the agent posts JSON proximo defines, and the Go decodes it. Nothing compiles the
+two together, so `TestAgent` checks that every field the decoder reads is one the
+agent actually sets. Add a field to one side and that test tells you about the
+other.
 
-The target runs npm + esbuild in `node:22-alpine` (both versions pinned in the
-Makefile) over an entry that re-exports only `init`, so tree-shaking drops
-tracing, replay, feedback and the AI integrations — about 89 KB raw, 30 KB
-gzipped. The hop serves it gzipped from a content-addressed, immutable URL, so an
-inspected page fetches it once per proximo version. The output carries a provenance banner; it is marked `-diff
-linguist-vendored` and is never hand-edited.
-
-`make build` depends on the file, so a checkout that somehow lacks it rebuilds it
-before compiling. If it is missing at runtime the `inspector` container refuses
-to start and names the command, rather than serving a script that silently does
-nothing.
-
-### Renovate keeps the pins, you rebuild the artifact
-
-`renovate.json` watches all four pins in the Makefile — `SENTRY_VERSION`,
-`ESBUILD_VERSION`, `NODE_IMAGE` and `PUPPETEER_IMAGE` — so an update arrives as a
-PR like any other. What Renovate **cannot** do is rebuild a committed binary
-artifact: on its own, a `SENTRY_VERSION` bump would change one line and leave the
-shipped bundle untouched.
-
-`TestVendoredSDKMatchesMakefile` is what closes that. It compares the pins against
-the provenance banner stamped into the bundle, so a Renovate PR fails CI until:
-
-```sh
-make vendor-agent        # rebuild the bundle at the new pin
-make capture-envelope    # re-record the parser's fixture from it
-```
-
-pushed onto the same PR. `ESBUILD_VERSION` is checked the same way. The `node` and
-`puppeteer` images only affect how the artifact is produced, so their bumps need
-nothing.
-
-### After a version bump
-
-The hop parses the Sentry envelope format, which proximo does not own, and
-attaches the DOM Snapshot through `hint.attachments` in `beforeSend`, which the
-SDK documents loosely. Both can change without any error — an inspected page
-would keep working and quietly report less. So the parser is tested against an
-envelope captured from the vendored agent in a real browser:
-
-```sh
-make vendor-agent SENTRY_VERSION=<new>
-make capture-envelope     # re-record the fixture, then run the tests
-```
-
-`TestFixtureMatchesVendoredSDK` fails while the fixture and the bundle name
-different versions, so the second command cannot be forgotten. (This is not
-theoretical: the first capture immediately showed the SDK sends `breadcrumbs` as
-a bare array, not the `{"values": …}` wrapper the store format documents.)
+**Chrome is the supported browser.** The agent leans on what
+`window.onerror` hands over — the message, the file, the line, the column and the
+`Error` object, whose `stack` the browser has already formatted — plus
+`unhandledrejection` and `securitypolicyviolation`. All of it is verified on
+Chrome; other engines are likely to work and are not tested. The raw stack is
+always kept on the report, so a stack proximo cannot parse into frames is printed
+as the browser wrote it rather than dropped.
 
 ## Releases
 

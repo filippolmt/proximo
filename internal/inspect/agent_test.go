@@ -5,30 +5,39 @@ import (
 	"testing"
 )
 
-// TestAgent pins the two halves of the injected script: the vendored SDK, which
-// is committed rather than fetched, and proximo's own snippet on top of it. A
-// checkout missing the bundle fails here rather than serving a script that
-// silently does nothing.
+// TestAgent pins the contract between the injected script and the Go that reads
+// what it sends. The two halves live in different languages and nothing compiles
+// them together, so the field names and the endpoint are checked here.
 func TestAgent(t *testing.T) {
 	agent, err := Agent()
 	if err != nil {
 		t.Fatalf("Agent(): %v", err)
 	}
+	js := string(agent)
+
 	for _, want := range []string{
-		"@sentry/browser",       // provenance banner
-		"var Sentry=",           // the IIFE's global
-		"Sentry.init({",         // our snippet
-		"tunnel:",               // where reports go
-		ReservedPath + "ingest", // ...which must be the reserved path
+		ReservedPath + "ingest", // where reports go, same-origin
 		"data-proximo-exchange", // how it learns the Exchange id
-		snapshotFilename,        // the DOM attachment
+		`addEventListener("error"`,
+		`addEventListener("unhandledrejection"`,
+		`addEventListener("securitypolicyviolation"`,
 	} {
-		if !strings.Contains(string(agent), want) {
-			t.Errorf("assembled agent missing %q", want)
+		if !strings.Contains(js, want) {
+			t.Errorf("agent is missing %q", want)
 		}
 	}
-	// The snippet must come after the SDK, or `Sentry` is undefined when it runs.
-	if strings.Index(string(agent), "Sentry.init({") < strings.Index(string(agent), "var Sentry=") {
-		t.Error("the snippet must be concatenated after the SDK")
+
+	// Every field report.go reads must be one the agent actually sets — as an
+	// object literal key or by assignment, since the report is built both ways.
+	for _, field := range []string{"type", "level", "message", "file", "line", "col", "stack", "dom", "breadcrumbs"} {
+		if !strings.Contains(js, field+":") && !strings.Contains(js, "."+field+" =") {
+			t.Errorf("agent never sets the %q field that report.go decodes", field)
+		}
+	}
+
+	// The agent must not report on itself: its own requests would otherwise
+	// appear as breadcrumbs of the page it is instrumenting.
+	if !strings.Contains(js, `indexOf("`+ReservedPath+`")`) {
+		t.Error("the agent does not exclude its own requests from breadcrumbs")
 	}
 }

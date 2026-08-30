@@ -14,53 +14,6 @@
       ],
       "depNameTemplate": "golang",
       "datasourceTemplate": "docker"
-    },
-    {
-      "description": "The @sentry/browser bundle the Inspection hop injects. A bump here needs `make vendor-agent && make capture-envelope`; TestVendoredSDKMatchesMakefile fails until it happens.",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^Makefile$/"
-      ],
-      "matchStrings": [
-        "SENTRY_VERSION\\s*\\?=\\s*(?<currentValue>\\S+)"
-      ],
-      "depNameTemplate": "@sentry/browser",
-      "datasourceTemplate": "npm"
-    },
-    {
-      "description": "esbuild, which builds that bundle.",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^Makefile$/"
-      ],
-      "matchStrings": [
-        "ESBUILD_VERSION\\s*\\?=\\s*(?<currentValue>\\S+)"
-      ],
-      "depNameTemplate": "esbuild",
-      "datasourceTemplate": "npm"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^Makefile$/"
-      ],
-      "matchStrings": [
-        "NODE_IMAGE\\s*\\?=\\s*node:(?<currentValue>[^-\\s]+)-alpine"
-      ],
-      "depNameTemplate": "node",
-      "datasourceTemplate": "docker"
-    },
-    {
-      "description": "The browser that captures the envelope fixture.",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^Makefile$/"
-      ],
-      "matchStrings": [
-        "PUPPETEER_IMAGE\\s*\\?=\\s*ghcr.io/puppeteer/puppeteer:(?<currentValue>\\S+)"
-      ],
-      "depNameTemplate": "ghcr.io/puppeteer/puppeteer",
-      "datasourceTemplate": "docker"
     }
   ]
 }

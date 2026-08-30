@@ -45,23 +45,35 @@ through.
 - **A `<script>` tag the developer adds to their own app.** Rejected: it destroys
   the only reason to build this inside proximo rather than reaching for a local
   Sentry — that a developer's own projects stay untouched.
+- **`@sentry/browser` as the injected agent.** Chosen first, then reversed, and
+  the reversal is the more useful record. The argument for it was that
+  normalising errors across engines is fiddly work already done. That turned out
+  to be work proximo does not need: `window.onerror` hands over the message, file,
+  line, column and the `Error` object, and `error.stack` is a string the engine
+  already formatted — and the consumer here is a person or an agent reading text,
+  for whom the raw stack is at least as good as normalised frames. What the choice
+  did cost was concrete: its npm package ships no browser bundle, so the artifact
+  had to be built with esbuild and **committed**, then kept in step with a pin, a
+  Renovate manager and two guard tests; the hop had to parse an envelope format
+  proximo does not own; and two couplings could break in silence — one of which
+  already had, dropping every breadcrumb because the SDK sends a bare array where
+  the documented format has a wrapper. Writing the agent removed all of it and
+  made the codebase smaller. The lighter Sentry-compatible clients were checked
+  too — `@micro-sentry/browser` is 2 kB but ESM-only across two packages, targets
+  the legacy `/store/` endpoint, and installs no global handlers, so it keeps
+  every cost and removes none of the work.
 
 ## Consequences
 
 - proximo modifies the HTML a project produced. This is why Inspection is opt-in
   per container (`proximo.inspect`) and never opt-out: everything else in proximo
   that is opt-in merely adds routing, whereas this changes content.
-- The injected agent is `@sentry/browser` pointed at `/.proximo/` with its
-  `tunnel` option, not code of ours. It already captures exceptions, rejections
-  and Breadcrumbs (console, fetch/XHR, clicks, navigation) and is
-  source-map-aware. The cost is that the hop must parse the Sentry envelope wire
-  format — public and documented. The bundle is ~89 KB raw; the hop serves it
-  gzipped (~30 KB) from a URL that carries a digest of its own content, so it is
-  cached immutably and a page pays for it once per proximo version rather than on
-  every load. Two things the SDK does not do for us ride on top: the DOM Snapshot,
-  attached to the envelope by hand because Sentry only captures DOM as part of its
-  replay product, and `securitypolicyviolation`, which raises no exception and has
-  no default integration.
+- The injected agent is proximo's own, and the report format is proximo's own.
+  It is served from a URL carrying a digest of its content, so it is cached
+  immutably and a page pays for it once per proximo version. Chrome is the
+  supported browser: the agent leans on what `window.onerror` already hands over,
+  including the `Error` whose `stack` the engine has formatted, and the raw stack
+  is always kept so one proximo cannot parse into frames is still shown.
 - Because it must work on any stack, the hop cannot assume a permissive page. It
   drops the browser's `Accept-Encoding` so the only encoding offered upstream is
   the gzip Go's own transport adds and unwraps, which keeps injection working

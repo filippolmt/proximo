@@ -29,9 +29,6 @@ const (
 	// BackendHeader carries the address of the container this request is really
 	// for. Traefik always overwrites it, so it cannot be forged from outside.
 	BackendHeader = "X-Proximo-Backend"
-
-	// maxIngestBody caps one envelope, whose bulk is the DOM Snapshot.
-	maxIngestBody = 32 << 20
 )
 
 // headClose matches the insertion point for the agent tag in any casing and with
@@ -271,7 +268,7 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing exchange id", http.StatusBadRequest)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxIngestBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxReportBody))
 	if err != nil {
 		http.Error(w, "envelope too large", http.StatusRequestEntityTooLarge)
 		return

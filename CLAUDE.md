@@ -61,8 +61,8 @@ before touching the corresponding code:
   [docs/development.md — Embedded stack assets](docs/development.md#embedded-stack-assets)
 - `PROXIMO_SRC` local-source builds vs published module:
   [docs/development.md — Local source builds](docs/development.md#local-source-builds)
-- Vendored browser agent (committed bundle, `make vendor-agent`):
-  [docs/development.md — The vendored browser agent](docs/development.md#the-vendored-browser-agent)
+- The injected agent & its contract with the Go decoder (Chrome-only):
+  [docs/development.md — The injected agent](docs/development.md#the-injected-agent)
 - Releases (tag → GoReleaser) and the CI workflows:
   [docs/development.md — Releases](docs/development.md#releases)
 

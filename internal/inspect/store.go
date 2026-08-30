@@ -37,6 +37,7 @@ type Report struct {
 	Message     string       `json:"message"`
 	Level       string       `json:"level"`
 	Frames      []Frame      `json:"frames,omitempty"`
+	Stack       string       `json:"stack,omitempty"` // as the browser formatted it
 	Breadcrumbs []Breadcrumb `json:"breadcrumbs,omitempty"`
 }
 
@@ -73,7 +74,7 @@ type Exchange struct {
 func (e *Exchange) size() int64 {
 	n := int64(512 + len(e.Snapshot))
 	for _, r := range e.Reports {
-		n += int64(256 + len(r.Message) + 128*len(r.Frames) + 128*len(r.Breadcrumbs))
+		n += int64(256 + len(r.Message) + len(r.Stack) + 128*len(r.Frames) + 128*len(r.Breadcrumbs))
 	}
 	return n
 }

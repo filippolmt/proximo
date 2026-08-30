@@ -123,7 +123,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds) ·
 [Version and module ref](development.md#version-and-module-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
-[The vendored browser agent](development.md#the-vendored-browser-agent) ·
+[The injected agent](development.md#the-injected-agent) ·
 [Releases](development.md#releases)
 
 ## New here?

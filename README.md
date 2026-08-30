@@ -25,7 +25,10 @@ Full guides live in [`docs/`](docs/README.md):
 - [Routing](docs/routing.md) — the `proximo.*` labels and Traefik compatibility.
 - [Dev-time observability](docs/observability.md) — opt-in `up --observability`
   logs (Dozzle) + metrics (Beszel) dashboards: credential-less and over trusted
-  HTTPS (`http://` auto-redirects).
+  HTTPS (`http://` auto-redirects). Also **Inspection**: label a container
+  `proximo.inspect=true` and `proximo errors` shows what the browser reported
+  alongside the response that caused it. **Chrome is the supported browser** —
+  other engines are likely to work and are not tested.
 - [Troubleshooting](docs/troubleshooting.md) — common issues. Container
   labeled but unreachable? Start with the
   [container not routed checklist](docs/troubleshooting.md#container-not-routed).

@@ -148,13 +148,19 @@ DevTools cannot — it never sees behind the proxy.
 
 ### What is captured
 
-The injected agent is [`@sentry/browser`](https://docs.sentry.io/platforms/javascript/),
-pointed at proximo instead of at Sentry, so what it collects is what that SDK
-collects: uncaught exceptions, unhandled rejections, policy violations, and the
-breadcrumbs before them — every `console.*` call, every `fetch`/XHR, clicks,
-navigations. proximo adds three things on top: the correlation id that joins the two halves, a
-snapshot of the DOM at the moment of the first report, and `securitypolicyviolation`
-events, which raise no exception and which the SDK has no integration for.
+The injected agent is proximo's own: about 200 lines of JavaScript with no
+dependencies, 7.8 KB — 2.9 KB over the wire, fetched once per proximo version
+because its URL carries a digest of its content. It captures uncaught exceptions, unhandled rejections and policy
+violations, each with the stack exactly as the browser wrote it, and the
+breadcrumbs before them: every `console.*` call, every `fetch` and XHR, clicks,
+navigations, and subresources that failed to load. To each report it adds the
+correlation id that joins the two halves of an Exchange and — for the first report
+of a page — a snapshot of the DOM.
+
+**Chrome is the supported browser.** Everything here is verified on Chrome; other
+engines are likely to work and are not tested. Source maps are not resolved, so
+frames point wherever the served code says — in development that is usually the
+real file already.
 
 Capture is deliberately wide and **filtering happens at display time**: `proximo
 errors` hides breadcrumbs below warning level so framework chatter does not bury
@@ -204,6 +210,12 @@ only Traefik reaches it, over the stack network.
 
 An inspected route also gains a hop, so it pays a little latency and has one more
 way to fail. Both are confined to the routes you labelled.
+
+### One thing that trips everyone up
+
+An error typed into the browser console is caught by DevTools and never reaches
+`window.onerror`, so the agent never sees it. Throw from a task instead —
+`setTimeout(function(){ null.foo }, 0)` — or just use the app until it breaks.
 
 ### If you only use Vite
 

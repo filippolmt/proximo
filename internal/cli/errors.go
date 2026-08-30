@@ -192,6 +192,14 @@ func writeExchange(w io.Writer, e inspect.Exchange, show detail) {
 		for _, f := range r.Frames {
 			fmt.Fprintf(w, "      at %s (%s)\n", orPlaceholder(f.Func), frameLocation(f))
 		}
+		// Nothing recognisable in the stack — an engine that formats it
+		// differently, or a cross-origin script. Print what the browser wrote
+		// rather than nothing: it is still the most useful thing on the page.
+		if len(r.Frames) == 0 && r.Stack != "" {
+			for _, line := range strings.Split(strings.TrimSpace(r.Stack), "\n") {
+				fmt.Fprintf(w, "      %s\n", strings.TrimSpace(line))
+			}
+		}
 		for _, b := range visibleBreadcrumbs(r.Breadcrumbs, show) {
 			fmt.Fprintf(w, "      · %-8s %-9s %s\n", b.Level, b.Category, b.Message)
 		}
