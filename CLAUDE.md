@@ -31,6 +31,8 @@ Architecture lives in `docs/`, never here. Whole picture:
 | The bare + qualified host every route answers on | [docs/routing.md — The two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets) |
 | A host collision: what is reported and what to do | [docs/troubleshooting.md — A host collision is reported](docs/troubleshooting.md#a-host-collision-is-reported) |
 | What a Check reports, and why `status` never prints a Remedy | [docs/cli.md — proximo doctor](docs/cli.md#proximo-doctor) |
+| The Skill proximo ships to agents, and what makes a copy Managed | [docs/skill.md](docs/skill.md) |
+| `skills/` (published) vs `.claude/skills/` (consumed), and `make skill-refs` | [docs/development.md — The published skill](docs/development.md#the-published-skill-skills) |
 | HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
 | Health-gated routing & the `proximo.health=false` opt-out | [docs/routing.md — proximo.health](docs/routing.md#proximohealth--wait-for-the-container-to-be-healthy) |
 | Curated middleware labels (auth/CORS/custom headers) & escape hatch | [docs/routing.md — proximo middlewares](docs/routing.md#proximo-middlewares--auth-cors-custom-headers) |
@@ -53,6 +55,11 @@ compiler will not enforce:
 - Adding a Check (the registry, its prerequisites, and the troubleshooting
   anchor a test asserts): [docs/adr/0004](docs/adr/0004-checks-report-remedies.md),
   `internal/checks/registry.go`
+- The published Skill: its source is `skills/proximo/`, its `references/` are
+  generated from `docs/` (`make skill-refs`, checked in CI), and no link out of
+  it may be repository-relative:
+  [The published skill](docs/development.md#the-published-skill-skills),
+  [docs/adr/0005](docs/adr/0005-the-agent-skill-ships-in-the-cli.md)
 - Version → image ref (`imageRef()` re-adds the `v` GoReleaser strips, and pins
   the stack image to the CLI version):
   [Version and image ref](docs/development.md#version-and-image-ref)

@@ -11,6 +11,7 @@ import (
 	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/platform"
+	"github.com/filippolmt/proximo/internal/skill"
 	"github.com/filippolmt/proximo/internal/tls"
 	"github.com/filippolmt/proximo/internal/version"
 	"github.com/moby/moby/client"
@@ -67,6 +68,10 @@ type Env struct {
 	Docker              func(ctx context.Context) error
 	Stack               func(ctx context.Context) (docker.StackInfo, error)
 	Routes              func(ctx context.Context) ([]docker.Route, error)
+	// AgentSkill reports every copy of the agent Skill proximo can see, so the
+	// registry can tell a copy that is level with this binary from one that is
+	// behind it and one it may not touch.
+	AgentSkill func() ([]skill.Copy, error)
 }
 
 // DefaultEnv wires the checks to the real host. It fails only where proximo
@@ -102,6 +107,7 @@ func DefaultEnv(tld string) (Env, error) {
 		PortHeldBy:          portHeldBy(once(docker.PublishedPorts)),
 		Docker:              DockerReachable,
 		Stack:               docker.StackStatus,
+		AgentSkill:          skill.Survey,
 		Routes: func(ctx context.Context) ([]docker.Route, error) {
 			return docker.Routes(ctx, tld)
 		},

@@ -59,6 +59,7 @@ func runInstall(cmd *cobra.Command) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
+	refreshSkills(out)
 	fmt.Fprintf(out, "\nInstalled. Containers are reachable at https://<name>.%s\n", cfg.TLD)
 	return nil
 }

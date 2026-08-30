@@ -21,6 +21,8 @@ proximo <command> [args]
 | [`doctor`](#proximo-doctor) | Report every check, with a remedy per failure | no | no |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
+| [`skill install`](#proximo-skill-install) | Install the agent Skill for the coding agents on this host | no | no |
+| [`skill uninstall`](#proximo-skill-uninstall) | Remove the Skill copies proximo installed | no | no |
 | [`uninstall`](#proximo-uninstall) | Reverse all host changes + stop the stack | yes | yes |
 | [`version`](#proximo-version) | Print version, commit, build date | no | no |
 
@@ -266,6 +268,7 @@ proximo doctor
 ✔ The proximo DNS server answers — proximo-doctor.test answers 127.0.0.1 on 127.0.0.1:5354
 ✔ The host resolver uses the proximo DNS server — proximo-doctor.test resolves to 127.0.0.1
 ✔ Every routed container is served — 3 route(s)
+✔ The agent skill matches the installed CLI — 1 copy at 0.4.0
 ```
 
 It prints the checks that **passed** too: those say where *not* to look, and
@@ -412,6 +415,48 @@ does not exist yet (proximo not installed yet), so callers must check existence
 themselves; the command itself is side-effect free and never creates
 directories.
 
+## proximo skill install
+
+Write the [agent Skill](skill.md) where a coding agent will read it. Needs
+neither Docker nor sudo: the Skill is compiled into the binary, and the
+destinations are your own files.
+
+```sh
+proximo skill install                          # every agent detected, this repository
+proximo skill install --scope global           # follow you instead of the repo
+proximo skill install --agent claude --dry-run # print the plan and stop
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--agent` | every agent detected | `claude`, `codex`, a comma-separated list, or `all` |
+| `--scope` | `project` | `project` (this repository) or `global` (`~/.claude`, `$CODEX_HOME`) |
+| `--dry-run` | off | Print the plan and stop |
+| `--force` | off | Overwrite a copy edited after proximo wrote it |
+
+The plan is printed before anything is written, and a project-scope write is
+announced as a tracked diff to review and commit. Outside a git repository,
+`--scope project` is an error naming `--scope global`, never a silent fallback.
+
+`install`, `up` and `update` refresh every copy proximo wrote and can see, so
+this is normally run once per repository. What auto-update cannot reach is
+reported by `doctor`:
+[The agent skill is out of date](troubleshooting.md#the-agent-skill-is-out-of-date).
+
+## proximo skill uninstall
+
+Remove the Skill copies proximo installed. Takes the same flags as
+`skill install`.
+
+```sh
+proximo skill uninstall --agent all
+```
+
+A copy edited after proximo wrote it, and a copy proximo did not write at all,
+are **listed and left alone** — `--force` removes an edited one, and nothing
+removes an unmanaged one. `proximo uninstall` does the same sweep across every
+destination it can see.
+
 ## proximo uninstall
 
 Reverse everything `install` did and tear down the stack:
@@ -431,7 +476,9 @@ proximo uninstall
 2. Remove the host resolver config for the TLD (and reload the resolver on
    Linux).
 3. Remove CA trust from the NSS and system stores.
-4. Delete the `~/.proximo` state home — config, CA, the materialized stack, and
+4. Remove the [agent Skill](skill.md) copies proximo installed and left
+   untouched, listing the edited and unmanaged ones it may not delete.
+5. Delete the `~/.proximo` state home — config, CA, the materialized stack, and
    the bind-mounted Traefik data (plus the Beszel metrics data, if observability
    was used) — so no proximo state is left on the host.
 

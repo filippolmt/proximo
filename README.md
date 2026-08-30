@@ -31,6 +31,10 @@ Full guides live in [`docs/`](docs/README.md):
   `proximo.inspect=true` and `proximo errors` shows what the browser reported
   alongside the response that caused it. **Chrome is the supported browser** —
   other engines are likely to work and are not tested.
+- [The agent skill](docs/skill.md) — `proximo skill install` puts a Skill in
+  your repository (or your home) that teaches Claude Code and Codex the label
+  contract and how to diagnose a broken route. It ships inside the binary, so
+  the version an agent reads is always the one you have installed.
 - [Troubleshooting](docs/troubleshooting.md) — common issues. Something broken?
   [`proximo doctor`](docs/cli.md#proximo-doctor) reports every check on the host
   and hands back the exact command to run for each failure. Container labeled

@@ -29,7 +29,7 @@ DEMO_URL     := https://whoami.test
 INSPECT_URL  := https://inspected.test
 OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
-.PHONY: build build-all test vet tidy check-links \
+.PHONY: build build-all test vet tidy check-links skill-refs \
 	install up down status doctor errors uninstall \
 	demo demo-down e2e e2e-inspect e2e-down clean
 
@@ -60,6 +60,14 @@ vet:
 ## tidy: go mod tidy in Docker
 tidy:
 	docker run $(DOCKER_FLAGS) $(GO_IMAGE) go mod tidy
+
+## skill-refs: regenerate the contracts the agent skill quotes from docs/
+# The Skill's references embed the label table and the two checklists verbatim;
+# `go test ./...` fails when they drift, and this rewrites them. See
+# docs/adr/0005-the-agent-skill-ships-in-the-cli.md.
+skill-refs:
+	docker run $(DOCKER_FLAGS) $(GO_IMAGE) \
+		go test ./internal/skill -run TestGeneratedBlocksMatchDocs -update
 
 ## check-links: validate Markdown links + anchors (lychee, offline — same as CI)
 check-links:

@@ -48,6 +48,8 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
+	removeSkills(out)
+
 	// Remove the state home last: the trust reversal above reads the CA from it,
 	// and the stack is already down so the data bind mounts are released.
 	fmt.Fprintln(out, "==> Removing the proximo state home")
