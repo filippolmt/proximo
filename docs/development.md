@@ -29,10 +29,10 @@ Run a **single test** (no Make target — invoke `go test` directly in the build
 image):
 
 ```sh
-docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine go test ./internal/docker/ -run TestImageRef -v
+docker run --rm -v "$PWD":/src -w /src golang:1.27-alpine go test ./internal/docker/ -run TestImageRef -v
 ```
 
-If a local Go ≥1.26 toolchain is present you can run `go build/test/vet ./...`
+If a local Go ≥1.27 toolchain is present you can run `go build/test/vet ./...`
 directly; the Docker path is just the no-toolchain-required default.
 
 ## Lifecycle targets
