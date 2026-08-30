@@ -47,13 +47,7 @@ jobs:
           fi
 
       - name: Tidy check
-        run: |
-          go mod tidy
-          if ! git diff --quiet go.mod go.sum; then
-            echo "go.mod/go.sum are not tidy; run 'make tidy' and commit the result:"
-            git diff go.mod go.sum
-            exit 1
-          fi
+        run: go mod tidy -diff
 
       - name: Test
         run: go test ./... -count=1

@@ -21,8 +21,10 @@ make check-links # validate Markdown links + anchors (lychee, offline — same c
 ```
 
 Run `make tidy` whenever a change touches imports, and commit the resulting
-`go.mod`/`go.sum` — CI re-runs `go mod tidy` and fails on any diff, the same way
-it fails on unformatted code.
+`go.mod`/`go.sum`. CI (`.github/workflows/ci.yml`) runs the same checks on every
+PR and on `main` — build, `go vet`, `gofmt -l`, `go mod tidy -diff` and the test
+suite — and fails on an untidy module graph the same way it fails on unformatted
+code.
 
 The binary is named per OS/arch (`bin/proximo-darwin-arm64`,
 `bin/proximo-linux-amd64`, …) so a macOS and a Linux build never overwrite each
@@ -36,8 +38,9 @@ image):
 docker run --rm -v "$PWD":/src -w /src golang:1.27-alpine go test ./internal/docker/ -run TestImageRef -v
 ```
 
-If a local Go ≥1.27 toolchain is present you can run `go build/test/vet ./...`
-directly; the Docker path is just the no-toolchain-required default.
+If a local Go toolchain satisfying the `go` directive in `go.mod` is present you
+can run `go build/test/vet ./...` directly; the Docker path is just the
+no-toolchain-required default.
 
 ## Lifecycle targets
 
@@ -130,7 +133,7 @@ as the browser wrote it rather than dropped.
 Push a `vX.Y.Z` tag → `.github/workflows/release.yml` runs GoReleaser
 (Homebrew cask `filippolmt/tap/proximo`, release archives), and
 `.github/workflows/image.yml` publishes the stack image. CI on PRs and `main`:
-`.github/workflows/ci.yml` (build, vet, gofmt, test) and
+`.github/workflows/ci.yml` ([the checks listed above](#build-and-test)) and
 `.github/workflows/docs.yml` (Markdown link + anchor check).
 
 ### The stack image
