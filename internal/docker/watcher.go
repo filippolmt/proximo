@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/filippolmt/proximo/internal/config"
+	inspecthop "github.com/filippolmt/proximo/internal/inspect"
 	"github.com/filippolmt/proximo/internal/tls"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
@@ -51,6 +52,12 @@ const (
 	// proximoPathStripLabel strips the matched path prefix before the request
 	// reaches the backend; defaults to false (truthy: true/1/yes).
 	proximoPathStripLabel = "proximo.path.strip"
+	// proximoInspectLabel opts a container's HTTP routes in to Inspection: the
+	// route is served through the proximo hop, which injects the reporting agent
+	// into HTML responses and records the resulting Exchanges. Defaults to false
+	// (truthy: true/1/yes) — it rewrites the responses a project produced, so it
+	// is never on by omission. See docs/adr/0001-inspection-injects-into-the-response-path.md.
+	proximoInspectLabel = "proximo.inspect"
 	// proximoHealthLabel gates route publication on the container's Docker
 	// health. It defaults to true: a container that declares a healthcheck is
 	// routed only while healthy. Setting it to a falsy value (false/0/no) opts
@@ -71,6 +78,12 @@ const (
 	// values; tcpTLSTerminate is the default when the label is absent.
 	tcpTLSTerminate   = "terminate"
 	tcpTLSPassthrough = "passthrough"
+
+	// inspectorService and inspectorPort address the Inspection hop on the stack
+	// network. A route under Inspection has the hop as its Traefik backend, and
+	// the hop learns the real one from the header below.
+	inspectorService = "inspector"
+	inspectorPort    = 9000
 
 	// routerFilePrefix prefixes the per-container Traefik dynamic config files
 	// the watcher writes into the file-provider directory.
@@ -119,6 +132,7 @@ type routedContainer struct {
 	path     string        // proximo.path prefix scoping the routes ("" = match all paths)
 	strip    bool          // true when proximo.path.strip removes the prefix before the backend
 	internal bool          // routed to a Traefik internal service (api@internal): no backend port is resolved
+	inspect  bool          // true when proximo.inspect routes this container through the Inspection hop
 	mw       middlewareSet // curated proximo middlewares (auth/cors/headers) attached to the router
 	tcpPorts []int         // TCP backend ports (proximo.tcp.port/.ports); non-empty makes the container TCP-routed instead of HTTP
 	tcpTLS   string        // TCP TLS mode: tcpTLSTerminate (default) or tcpTLSPassthrough (only meaningful when tcpPorts is set)
@@ -264,12 +278,17 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	}
 	containers := result.Items
 
-	traefikID, traefikNets := findTraefik(containers)
+	traefikID, traefikNets := findStackContainer(containers, "traefik")
 	if traefikID == "" {
 		return nil // Traefik not running yet.
 	}
+	// The hop needs the same reach as Traefik, but only into the projects it
+	// actually serves. An absent id means an older stack with no hop: Inspection
+	// then simply never resolves, and the route's own 502 says so.
+	inspectorID, inspectorNets := findStackContainer(containers, "inspector")
 
 	desired := map[string]bool{}
+	inspectDesired := map[string]bool{}
 	var routed []routedContainer
 	for _, c := range containers {
 		if !isRouted(c) {
@@ -284,6 +303,13 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 		}
 		for _, netID := range targetNetworks(c) {
 			desired[netID] = true
+			// ponytail: keyed off the label rather than the resolved route, so a
+			// replica set whose Inspection is refused below leaves the hop
+			// attached to one network it will not use. Harmless, and it keeps the
+			// attach decision in the one loop that already has the container.
+			if isProximoInspect(c.Labels) {
+				inspectDesired[netID] = true
+			}
 		}
 		if rc, ok := w.buildRouted(ctx, c); ok {
 			routed = append(routed, rc)
@@ -298,34 +324,20 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// container that claims the reserved traefik.<tld> host.
 	routed = append(routed, w.dashboardRoute())
 	warnDuplicateHosts(containers, routed)
-	routed, merges, conflicts := resolveRouteConflicts(routed)
+	routed, merges, conflicts, inspectDropped := resolveRouteConflicts(routed)
 	for _, c := range conflicts {
 		log.Printf("proximo watcher: container %s conflicts on host %q path %q with an already-routed container; the lexicographically-first name wins, %s is not routed", c.name, c.host, c.path, c.name)
 	}
 	for _, m := range merges {
 		log.Printf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host)
 	}
-
-	for netID := range desired {
-		if _, already := traefikNets[netID]; already {
-			continue
-		}
-		if _, err := w.cli.NetworkConnect(ctx, netID, client.NetworkConnectOptions{Container: traefikID, EndpointConfig: &network.EndpointSettings{}}); err != nil {
-			log.Printf("proximo watcher: connect traefik to %s: %v", short(netID), err)
-			continue
-		}
-		log.Printf("proximo watcher: connected traefik to network %s", short(netID))
+	for _, name := range inspectDropped {
+		log.Printf("proximo watcher: container %s: %s ignored — the route balances across several replicas and Inspection forwards to a single backend; scale the service to one replica to inspect it", name, proximoInspectLabel)
 	}
 
-	for netID, name := range traefikNets {
-		if isStackNetwork(name) || desired[netID] {
-			continue
-		}
-		if _, err := w.cli.NetworkDisconnect(ctx, netID, client.NetworkDisconnectOptions{Container: traefikID, Force: true}); err != nil {
-			log.Printf("proximo watcher: disconnect traefik from %s: %v", short(netID), err)
-			continue
-		}
-		log.Printf("proximo watcher: disconnected traefik from network %s (%s)", short(netID), name)
+	w.syncNetworks(ctx, "traefik", traefikID, traefikNets, desired)
+	if inspectorID != "" {
+		w.syncNetworks(ctx, "inspector", inspectorID, inspectorNets, inspectDesired)
 	}
 
 	w.syncDynamic(routed)
@@ -422,6 +434,11 @@ func classify(ctx context.Context, inspect inspector, c container.Summary) (rout
 			if strings.TrimSpace(c.Labels[proximoPathLabel]) != "" {
 				info.tcpIgnoredHTTP = append(info.tcpIgnoredHTTP, proximoPathLabel)
 			}
+			if isProximoInspect(c.Labels) {
+				// Inspection injects into an HTTP response body; a TCP (SNI)
+				// route has none to inject.
+				info.tcpIgnoredHTTP = append(info.tcpIgnoredHTTP, proximoInspectLabel)
+			}
 			rc.mw = middlewareSet{}
 			return rc, true, info
 		}
@@ -437,6 +454,7 @@ func classify(ctx context.Context, inspect inspector, c container.Summary) (rout
 		}
 		rc.path = prefix
 		rc.strip = isProximoPathStrip(c.Labels)
+		rc.inspect = isProximoInspect(c.Labels)
 
 		port, ok, res := resolveBackendPort(ctx, inspect, c)
 		if !ok {
@@ -684,13 +702,19 @@ func renderRouter(rc routedContainer) []byte {
 
 	redirectID := id + "-redirect"
 	stripID := id + "-strip"
+	inspectID := id + "-inspect"
 	stripping := rc.strip && rc.path != ""
+	// The dashboard self-route has no backend to inspect.
+	inspecting := rc.inspect && !rc.internal
 
 	// The websecure router references its curated middlewares in the fixed chain
 	// order auth -> cors -> headers, then the path-strip (closest to the backend).
 	websecureMW := rc.mw.chainRefs(id)
 	if stripping {
 		websecureMW = append(websecureMW, stripID)
+	}
+	if inspecting {
+		websecureMW = append(websecureMW, inspectID)
 	}
 
 	var b strings.Builder
@@ -732,7 +756,7 @@ func renderRouter(rc routedContainer) []byte {
 	// middlewares: is a sibling of routers:/services: under http:, so emitting
 	// it here (before services) is order-free. The curated, strip, and redirect
 	// middlewares all ride this same file, so they are cleaned up with the router.
-	if !rc.mw.empty() || stripping || rc.redirect {
+	if !rc.mw.empty() || stripping || rc.redirect || inspecting {
 		b.WriteString("  middlewares:\n")
 		rc.mw.renderDefs(&b, id)
 		if stripping {
@@ -747,6 +771,13 @@ func renderRouter(rc routedContainer) []byte {
 			b.WriteString("        scheme: https\n")
 			b.WriteString("        permanent: false\n")
 		}
+		if inspecting {
+			// Traefik always overwrites this header, so the hop can trust it and
+			// stay stateless — it never has to look a container up itself.
+			fmt.Fprintf(&b, "    %s:\n", inspectID)
+			b.WriteString("      headers:\n        customRequestHeaders:\n")
+			fmt.Fprintf(&b, "          %s: %q\n", inspecthop.BackendHeader, backendURL(rc))
+		}
 	}
 	if rc.internal {
 		return []byte(b.String())
@@ -755,10 +786,20 @@ func renderRouter(rc routedContainer) []byte {
 	fmt.Fprintf(&b, "    %s:\n", id)
 	b.WriteString("      loadBalancer:\n")
 	b.WriteString("        servers:\n")
+	if inspecting {
+		fmt.Fprintf(&b, "          - url: %q\n", "http://"+inspectorService+":"+strconv.Itoa(inspectorPort))
+		return []byte(b.String())
+	}
 	for _, name := range rc.backends() {
 		fmt.Fprintf(&b, "          - url: %q\n", "http://"+name+":"+strconv.Itoa(rc.port))
 	}
 	return []byte(b.String())
+}
+
+// backendURL is where the hop must forward an inspected route. Inspection is
+// refused for merged replica sets, so there is exactly one backend here.
+func backendURL(rc routedContainer) string {
+	return "http://" + rc.backends()[0] + ":" + strconv.Itoa(rc.port)
 }
 
 // tcpRouterRule builds a TCP router's HostSNI rule: the alternation of the
@@ -990,13 +1031,40 @@ func cleanStrayTemps(dirs ...string) {
 	}
 }
 
-func findTraefik(cs []container.Summary) (id string, nets map[string]string) {
+func findStackContainer(cs []container.Summary, role string) (id string, nets map[string]string) {
 	for _, c := range cs {
-		if c.Labels[roleLabel] == "traefik" {
+		if c.Labels[roleLabel] == role {
 			return c.ID, networksOf(c)
 		}
 	}
 	return "", nil
+}
+
+// syncNetworks attaches a stack container to every network it must reach and
+// detaches it from the ones it no longer does, leaving the stack's own network
+// alone. Traefik and the Inspection hop both need this, for different sets:
+// Traefik reaches every routed project, the hop only the inspected ones.
+func (w *Watcher) syncNetworks(ctx context.Context, role, id string, current map[string]string, desired map[string]bool) {
+	for netID := range desired {
+		if _, already := current[netID]; already {
+			continue
+		}
+		if _, err := w.cli.NetworkConnect(ctx, netID, client.NetworkConnectOptions{Container: id, EndpointConfig: &network.EndpointSettings{}}); err != nil {
+			log.Printf("proximo watcher: connect %s to %s: %v", role, short(netID), err)
+			continue
+		}
+		log.Printf("proximo watcher: connected %s to network %s", role, short(netID))
+	}
+	for netID, name := range current {
+		if isStackNetwork(name) || desired[netID] {
+			continue
+		}
+		if _, err := w.cli.NetworkDisconnect(ctx, netID, client.NetworkDisconnectOptions{Container: id, Force: true}); err != nil {
+			log.Printf("proximo watcher: disconnect %s from %s: %v", role, short(netID), err)
+			continue
+		}
+		log.Printf("proximo watcher: disconnected %s from network %s (%s)", role, short(netID), name)
+	}
 }
 
 func networksOf(c container.Summary) map[string]string {
@@ -1171,6 +1239,12 @@ func isProximoRedirect(labels map[string]string) bool {
 // truthy-value helper as proximo.redirect.
 func isProximoPathStrip(labels map[string]string) bool {
 	return isTruthyLabel(labels, proximoPathStripLabel)
+}
+
+// isProximoInspect reports whether a container opted in to Inspection (default
+// false), reusing the same truthy-value helper as proximo.redirect.
+func isProximoInspect(labels map[string]string) bool {
+	return isTruthyLabel(labels, proximoInspectLabel)
 }
 
 // parseProximoPath reads the proximo.path prefix. An absent (empty) label is
@@ -1359,7 +1433,7 @@ type routeMerge struct {
 // Docker provider owns them. It is the shared resolver behind both the watcher
 // (which logs the losers and the merges) and `proximo status` (which stays quiet),
 // so the two agree on which routes are served and which are balanced.
-func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, merges []routeMerge, conflicts []routeConflict) {
+func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, merges []routeMerge, conflicts []routeConflict, inspectDropped []string) {
 	sorted := append([]routedContainer(nil), routed...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
 
@@ -1392,6 +1466,16 @@ func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, me
 		groups = append(groups, &g)
 	}
 
+	// A merged group balances across several backends, and the hop is told the one
+	// backend to forward to by a single header. Rather than invent a multi-backend
+	// header format, Inspection is refused for the group and the developer is told.
+	for _, g := range groups {
+		if g.inspect && len(g.servers) > 1 {
+			g.inspect = false
+			inspectDropped = append(inspectDropped, g.name)
+		}
+	}
+
 	// Second pass: resolve (host, path prefix) collisions between distinct groups.
 	claimed := map[[2]string]string{} // {host, prefix} -> winning representative name
 	for _, g := range groups {
@@ -1415,7 +1499,7 @@ func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, me
 		}
 		kept = append(kept, *g)
 	}
-	return kept, merges, conflicts
+	return kept, merges, conflicts, inspectDropped
 }
 
 // targetNetworks returns the network IDs Traefik must join to reach a backend,

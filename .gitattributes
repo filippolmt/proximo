@@ -1,0 +1,4 @@
+graphify-out/graph.json merge=graphify
+
+# Vendored browser bundle, rebuilt by `make vendor-agent` — never hand-edited.
+internal/inspect/assets/sentry.min.js -diff linguist-vendored

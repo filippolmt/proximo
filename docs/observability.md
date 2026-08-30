@@ -118,6 +118,96 @@ no time-based "keep N days" option) and restart Docker:
 
 …or per service in your own compose under a `logging:` key.
 
+## Inspection — what the browser saw
+
+Dozzle and Beszel watch containers. Inspection watches **pages**: label a
+container `proximo.inspect=true` and its HTTP routes are served through a proximo
+hop that injects a reporting agent into HTML responses.
+
+```sh
+proximo errors --host web.test
+```
+
+```
+14:05:09  9f3a21ab  GET /checkout  →  200  184ms
+  ✗ TypeError: Cannot read properties of undefined (reading 'total')
+      at renderSummary (src/checkout/Summary.tsx:47:18)
+      at onMount (src/checkout/Page.tsx:12)
+      · error    fetch     GET /api/cart 500
+  DOM captured — `proximo errors dom 9f3a21ab`
+
+14:05:09  9f3a2417  GET /api/cart  →  500  1.2s
+  (no client report — the failure is the backend's)
+```
+
+That pairing is the point. proximo is the only component that sees both halves,
+so it can answer the question neither half answers alone: *is the page broken
+because the backend answered badly, or because the front-end mishandled a good
+answer?* An error tracker cannot — it never sees your backend. A browser's
+DevTools cannot — it never sees behind the proxy.
+
+### What is captured
+
+The injected agent is [`@sentry/browser`](https://docs.sentry.io/platforms/javascript/),
+pointed at proximo instead of at Sentry, so what it collects is what that SDK
+collects: uncaught exceptions, unhandled rejections, policy violations, and the
+breadcrumbs before them — every `console.*` call, every `fetch`/XHR, clicks,
+navigations. proximo adds the correlation id that joins the two halves and a
+snapshot of the DOM at the moment of the report.
+
+Capture is deliberately wide and **filtering happens at display time**: `proximo
+errors` hides breadcrumbs below warning level so framework chatter does not bury
+the report, and `--all` shows everything. Nothing is dropped at collection.
+
+### Trying it by hand
+
+An error typed into the browser console is caught by DevTools and never reaches
+`window.onerror`, so the agent never sees it. Throw from a task instead —
+`setTimeout(function(){ null.foo }, 0)` — or just use the app until it breaks,
+which is what this is for.
+
+### What is not
+
+No interactive panel: no DOM tree to click through, no element picker, no step
+debugging, no screenshots. Those are out of reach of an injected script, and
+proximo does not pretend otherwise — for those, the browser's own DevTools is
+still the tool. Minified stack traces are also not resolved through source maps:
+dev servers overwhelmingly serve unminified code or inline maps, so the frames
+usually already point at real files.
+
+### Where the data lives
+
+In memory in the hop, in a ring buffer bounded by bytes (64 MiB by default),
+oldest evicted first — and lost when the stack restarts. That is deliberate:
+client reports carry exception messages, breadcrumbs and a copy of the page,
+which in development routinely means tokens, session data and whatever you were
+working on. Keeping it off your disk means there is no retention to configure and
+nothing for `uninstall` to clean up.
+
+The read API is published on `127.0.0.1` only, so `proximo errors` can reach it
+and an inspected page cannot. The hop's proxy port is never published at all —
+only Traefik reaches it, over the stack network.
+
+### Two things it changes about your route
+
+- **The response body.** The agent tag is inserted before `</head>`. A response
+  with no `</head>` is left alone and the Exchange says so.
+- **The `Content-Security-Policy`, when it has to.** A page whose policy would
+  block the injected script has `script-src` relaxed with a nonce — and every
+  Exchange for that route carries a warning saying so. proximo never edits a
+  security header silently, and the relaxation disappears with the label.
+
+An inspected route also gains a hop, so it pays a little latency and has one more
+way to fail. Both are confined to the routes you labelled.
+
+### If you only use Vite
+
+Vite 8 ships [`forwardConsole`](https://vite.dev/config/), which sends browser
+console output and unhandled errors to the dev-server terminal with source-mapped
+stack traces. If every project you run is a Vite project, that is a lighter way
+to get the client-side half — it just cannot see the server side of the exchange,
+and it does not exist for Rails, Django, Laravel, Go templates or a static build.
+
 ## Notes & limits
 
 - **Pinned images.** `amir20/dozzle`, `henrygd/beszel`, and

@@ -44,6 +44,8 @@ ownership: [docs/architecture.md — Source map](docs/architecture.md#source-map
 | 502/503 right after a container restarts (health gating fix) | [docs/troubleshooting.md — 502/503 right after a container restarts](docs/troubleshooting.md#502503-right-after-a-container-restarts) |
 | Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |
 | What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
+| Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
+| The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
 | Observability bootstrap (Beszel hub/agent) | [docs/observability.md — How it is wired](docs/observability.md#how-it-is-wired) |
 
 ## Conventions & gotchas
@@ -57,11 +59,10 @@ before touching the corresponding code:
   [docs/development.md — Embedded stack assets](docs/development.md#embedded-stack-assets)
 - `PROXIMO_SRC` local-source builds vs published module:
   [docs/development.md — Local source builds](docs/development.md#local-source-builds)
+- Vendored browser agent (committed bundle, `make vendor-agent`):
+  [docs/development.md — The vendored browser agent](docs/development.md#the-vendored-browser-agent)
 - Releases (tag → GoReleaser) and the CI workflows:
   [docs/development.md — Releases](docs/development.md#releases)
-- **OpenSpec** lives in `openspec/` — this repo uses a spec-driven change workflow for
-  proposing features (`openspec/changes/`, `openspec/specs/`). Local-only tooling: the
-  directory is gitignored and its artifacts never land in PRs.
 
 ## graphify
 

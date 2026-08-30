@@ -1201,14 +1201,14 @@ func TestResolveRouteConflicts(t *testing.T) {
 	// Different prefixes on one host: both served (the intended split).
 	front := routedContainer{name: "front", hosts: []string{"app.test"}, proximo: true}
 	api := routedContainer{name: "api", hosts: []string{"app.test"}, proximo: true, path: "/api"}
-	kept, _, conflicts := resolveRouteConflicts([]routedContainer{front, api})
+	kept, _, conflicts, _ := resolveRouteConflicts([]routedContainer{front, api})
 	if len(kept) != 2 || len(conflicts) != 0 {
 		t.Fatalf("distinct prefixes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
 	}
 
 	// Same (host, prefix): the lexicographically-first name (api) wins, zzz loses.
 	dup := routedContainer{name: "zzz", hosts: []string{"app.test"}, proximo: true, path: "/api"}
-	kept, _, conflicts = resolveRouteConflicts([]routedContainer{dup, api})
+	kept, _, conflicts, _ = resolveRouteConflicts([]routedContainer{dup, api})
 	if len(kept) != 1 || kept[0].name != "api" {
 		t.Fatalf("conflict winner = %v, want [api]", names(kept))
 	}
@@ -1219,7 +1219,7 @@ func TestResolveRouteConflicts(t *testing.T) {
 	// Native routes never conflict (Traefik's Docker provider owns them).
 	nat1 := routedContainer{name: "n1", hosts: []string{"x.test"}}
 	nat2 := routedContainer{name: "n2", hosts: []string{"x.test"}}
-	kept, _, conflicts = resolveRouteConflicts([]routedContainer{nat1, nat2})
+	kept, _, conflicts, _ = resolveRouteConflicts([]routedContainer{nat1, nat2})
 	if len(kept) != 2 || len(conflicts) != 0 {
 		t.Fatalf("native routes: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
 	}
@@ -1328,7 +1328,7 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	web1 := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	web2 := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	web3 := routedContainer{name: "web-3", safe: "web-3", hosts: []string{"app.test"}, port: 8080, proximo: true}
-	kept, merges, conflicts := resolveRouteConflicts([]routedContainer{web3, web1, web2})
+	kept, merges, conflicts, _ := resolveRouteConflicts([]routedContainer{web3, web1, web2})
 	if len(kept) != 1 || len(conflicts) != 0 || len(merges) != 2 {
 		t.Fatalf("HTTP replicas: kept=%d conflicts=%d merges=%d, want 1, 0, 2", len(kept), len(conflicts), len(merges))
 	}
@@ -1342,7 +1342,7 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// Two identical TCP backends on db.test:5432 -> one balanced TCP route.
 	db1 := routedContainer{name: "db-1", safe: "db-1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
 	db2 := routedContainer{name: "db-2", safe: "db-2", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
-	kept, _, conflicts = resolveRouteConflicts([]routedContainer{db2, db1})
+	kept, _, conflicts, _ = resolveRouteConflicts([]routedContainer{db2, db1})
 	if len(kept) != 1 || len(conflicts) != 0 || !slices.Equal(kept[0].backends(), []string{"db-1", "db-2"}) {
 		t.Fatalf("TCP replicas: kept=%d conflicts=%d backends=%v, want 1, 0, [db-1 db-2]", len(kept), len(conflicts), kept[0].backends())
 	}
@@ -1350,7 +1350,7 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// Same host, different port: not replicas -> conflict, not a merge.
 	a := routedContainer{name: "a", safe: "a", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	b := routedContainer{name: "b", safe: "b", hosts: []string{"app.test"}, port: 9090, proximo: true}
-	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{a, b})
+	kept, merges, conflicts, _ = resolveRouteConflicts([]routedContainer{a, b})
 	if len(kept) != 1 || kept[0].name != "a" || len(conflicts) != 1 || conflicts[0].name != "b" || len(merges) != 0 {
 		t.Fatalf("divergent port: kept=%v conflicts=%v merges=%d, want [a], one {b}, 0", names(kept), conflicts, len(merges))
 	}
@@ -1359,7 +1359,7 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// difference beyond the backend blocks merging, protecting the replicaKey invariant).
 	r1 := routedContainer{name: "r1", safe: "r1", hosts: []string{"app.test"}, port: 8080, proximo: true}
 	r2 := routedContainer{name: "r2", safe: "r2", hosts: []string{"app.test"}, port: 8080, proximo: true, redirect: true}
-	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{r1, r2})
+	kept, merges, conflicts, _ = resolveRouteConflicts([]routedContainer{r1, r2})
 	if len(kept) != 1 || len(merges) != 0 || len(conflicts) != 1 {
 		t.Fatalf("divergent redirect: kept=%d merges=%d conflicts=%d, want 1, 0, 1", len(kept), len(merges), len(conflicts))
 	}
@@ -1367,7 +1367,7 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// Same host + TCP port but divergent TLS mode -> not replicas, conflict.
 	t1 := routedContainer{name: "t1", safe: "t1", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSTerminate}
 	t2 := routedContainer{name: "t2", safe: "t2", hosts: []string{"db.test"}, proximo: true, tcpPorts: []int{5432}, tcpTLS: tcpTLSPassthrough}
-	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{t1, t2})
+	kept, merges, conflicts, _ = resolveRouteConflicts([]routedContainer{t1, t2})
 	if len(kept) != 1 || len(merges) != 0 || len(conflicts) != 1 {
 		t.Fatalf("divergent tcpTLS: kept=%d merges=%d conflicts=%d, want 1, 0, 1", len(kept), len(merges), len(conflicts))
 	}
@@ -1375,7 +1375,7 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// An HTTP route and a TCP route on distinct hosts coexist — both served.
 	httpC := routedContainer{name: "web", safe: "web", hosts: []string{"web.test"}, port: 80, proximo: true}
 	tcpC := routedContainer{name: "cache", safe: "cache", hosts: []string{"cache.test"}, proximo: true, tcpPorts: []int{6379}, tcpTLS: tcpTLSTerminate}
-	kept, _, conflicts = resolveRouteConflicts([]routedContainer{httpC, tcpC})
+	kept, _, conflicts, _ = resolveRouteConflicts([]routedContainer{httpC, tcpC})
 	if len(kept) != 2 || len(conflicts) != 0 {
 		t.Fatalf("HTTP+TCP coexistence: kept=%d conflicts=%d, want 2 and 0", len(kept), len(conflicts))
 	}
@@ -1383,13 +1383,13 @@ func TestResolveRouteConflictsReplicas(t *testing.T) {
 	// Host order must not defeat replica detection: same hosts, different order, merge.
 	o1 := routedContainer{name: "o1", safe: "o1", hosts: []string{"a.test", "b.test"}, port: 80, proximo: true}
 	o2 := routedContainer{name: "o2", safe: "o2", hosts: []string{"b.test", "a.test"}, port: 80, proximo: true}
-	kept, merges, conflicts = resolveRouteConflicts([]routedContainer{o1, o2})
+	kept, merges, conflicts, _ = resolveRouteConflicts([]routedContainer{o1, o2})
 	if len(kept) != 1 || len(merges) != 1 || len(conflicts) != 0 {
 		t.Fatalf("host-order replicas: kept=%d merges=%d conflicts=%d, want 1, 1, 0", len(kept), len(merges), len(conflicts))
 	}
 
 	// A lone container is a one-backend route, identical to pre-replica behavior.
-	kept, _, _ = resolveRouteConflicts([]routedContainer{web1})
+	kept, _, _, _ = resolveRouteConflicts([]routedContainer{web1})
 	if len(kept) != 1 || !slices.Equal(kept[0].backends(), []string{"web-1"}) {
 		t.Fatalf("single: backends=%v, want [web-1]", kept[0].backends())
 	}
@@ -1417,6 +1417,107 @@ func TestRenderRouterReplicas(t *testing.T) {
 	single := string(renderRouter(routedContainer{name: "solo", safe: "solo", hosts: []string{"solo.test"}, port: 80, proximo: true}))
 	if strings.Count(single, "- url:") != 1 {
 		t.Errorf("single backend should render exactly one server\n---\n%s", single)
+	}
+}
+
+// TestRenderRouterInspection: a route under Inspection is served through the hop
+// instead of the container, and carries the header the hop reads the real
+// backend from. Without the label nothing about the route changes.
+func TestRenderRouterInspection(t *testing.T) {
+	base := routedContainer{name: "web", safe: "web", hosts: []string{"web.test"}, port: 8080, proximo: true}
+
+	off := string(renderRouter(base))
+	for _, unwanted := range []string{"inspector", "X-Proximo-Backend", "proximo-web-inspect"} {
+		if strings.Contains(off, unwanted) {
+			t.Errorf("Inspection is opt-in, but the route mentions %q\n---\n%s", unwanted, off)
+		}
+	}
+
+	base.inspect = true
+	on := string(renderRouter(base))
+	wants := []string{
+		"- proximo-web-inspect",
+		"proximo-web-inspect:",
+		"customRequestHeaders:",
+		"X-Proximo-Backend: \"http://web:8080\"",
+		"url: \"http://inspector:9000\"",
+	}
+	for _, w := range wants {
+		if !strings.Contains(on, w) {
+			t.Errorf("inspected route missing %q\n---\n%s", w, on)
+		}
+	}
+	if strings.Contains(on, "url: \"http://web:8080\"") {
+		t.Errorf("Traefik must reach the hop, not the container directly\n---\n%s", on)
+	}
+}
+
+// TestRenderRouterInspectionWithStrip: the strip middleware still runs ahead of
+// the hop, so the backend keeps seeing the path it would have seen.
+func TestRenderRouterInspectionWithStrip(t *testing.T) {
+	rc := routedContainer{name: "web", safe: "web", hosts: []string{"web.test"}, port: 8080, proximo: true, path: "/app", strip: true, inspect: true}
+	out := string(renderRouter(rc))
+	i, j := strings.Index(out, "- proximo-web-strip"), strings.Index(out, "- proximo-web-inspect")
+	if i < 0 || j < 0 || i > j {
+		t.Errorf("strip must precede the hop in the chain\n---\n%s", out)
+	}
+}
+
+// TestInspectionRefusedOnReplicaSet: a merged replica set balances across several
+// backends and the hop is told exactly one, so Inspection is refused for the
+// group rather than silently forwarding every request to one replica.
+func TestInspectionRefusedOnReplicaSet(t *testing.T) {
+	a := routedContainer{name: "web-1", safe: "web-1", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
+	b := routedContainer{name: "web-2", safe: "web-2", hosts: []string{"web.test"}, port: 8080, proximo: true, inspect: true}
+
+	kept, merges, _, dropped := resolveRouteConflicts([]routedContainer{a, b})
+	if len(merges) != 1 {
+		t.Fatalf("expected the two replicas to merge, got %d merges", len(merges))
+	}
+	if len(kept) != 1 || kept[0].inspect {
+		t.Fatalf("Inspection must be refused for a merged group, got %+v", kept)
+	}
+	if len(dropped) != 1 || dropped[0] != "web-1" {
+		t.Fatalf("the refusal must name the route, got %v", dropped)
+	}
+	if strings.Contains(string(renderRouter(kept[0])), "inspector") {
+		t.Error("a refused route must not be rendered through the hop")
+	}
+
+	// A single backend is still inspected.
+	kept, _, _, dropped = resolveRouteConflicts([]routedContainer{a})
+	if len(dropped) != 0 || !kept[0].inspect {
+		t.Fatalf("a single backend must keep Inspection, got kept=%+v dropped=%v", kept, dropped)
+	}
+}
+
+// TestClassifyInspectLabel: proximo.inspect is opt-in and HTTP-only.
+func TestClassifyInspectLabel(t *testing.T) {
+	rc, ok, _ := classify(context.Background(), failInspect(t), makeSummary(map[string]string{
+		proximoHostsLabel: "web.test",
+		proximoPortLabel:  "8080",
+	}))
+	if !ok || rc.inspect {
+		t.Fatalf("Inspection must be off without the label, got ok=%v inspect=%v", ok, rc.inspect)
+	}
+
+	rc, ok, _ = classify(context.Background(), failInspect(t), makeSummary(map[string]string{
+		proximoHostsLabel:   "web.test",
+		proximoPortLabel:    "8080",
+		proximoInspectLabel: "true",
+	}))
+	if !ok || !rc.inspect {
+		t.Fatalf("proximo.inspect=true must opt in, got ok=%v inspect=%v", ok, rc.inspect)
+	}
+
+	// A TCP route has no HTTP response body to inject into.
+	_, ok, info := classify(context.Background(), failInspect(t), makeSummary(map[string]string{
+		proximoHostsLabel:   "db.test",
+		proximoTCPPortLabel: "5432",
+		proximoInspectLabel: "true",
+	}))
+	if !ok || !slices.Contains(info.tcpIgnoredHTTP, proximoInspectLabel) {
+		t.Fatalf("proximo.inspect on a TCP route must be flagged, got %v", info.tcpIgnoredHTTP)
 	}
 }
 

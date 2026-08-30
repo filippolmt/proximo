@@ -144,6 +144,49 @@ healthy)` rather than as a working URL.
   indefinitely; `proximo.health=false` opts out and routes on running. See
   [proximo.health](routing.md#proximohealth--wait-for-the-container-to-be-healthy).
 
+## An error I typed in the browser console never shows up
+
+It never will, and nothing is broken. An expression that throws in Chrome's
+console is caught by DevTools itself, so `window.onerror` never fires — and that
+is what the agent listens to. The same is true of anything you `try`/`catch`
+yourself: a handled error is not an uncaught one.
+
+Throw from a real task instead, which is what a broken app does:
+
+```js
+setTimeout(function(){ null.foo }, 0)
+```
+
+## proximo errors shows nothing for an inspected route
+
+If you were testing by hand from the console, read the entry above first — that
+accounts for most of it. Otherwise work down this list; each step is visible
+without guessing.
+
+1. **The label is on and the route is HTTP.** `proximo status` lists the route;
+   `proximo.inspect` is ignored on a TCP (SNI) route and on a
+   [replica set](routing.md#round-robin-across-replicas). The watcher logs why —
+   see [Where to read watcher warnings](#where-to-read-watcher-warnings).
+2. **The page is HTML with a `</head>`.** The agent is inserted before the
+   closing head tag. A response without one is left untouched, and the Exchange
+   for it carries a warning saying so.
+3. **The stack is recent enough to have the hop.** An older stack has no
+   `inspector` container, and an inspected route then 502s. `proximo update`.
+4. **The page really loaded the agent.** View source and look for
+   `/.proximo/agent.js`. If it is in the HTML but the browser did not run it, the
+   page's `Content-Security-Policy` blocked it — the Exchange will say proximo
+   relaxed the policy, and if it does not, the policy came from somewhere proximo
+   cannot rewrite (a `<meta http-equiv>` tag in your own markup).
+5. **The Exchange is still held.** The buffer is bounded and in memory: a restart
+   of the stack clears it, and heavy traffic evicts the oldest first.
+
+## An inspected route 404s on part of my app
+
+proximo reserves the path prefix `/.proximo/` on the origin of an inspected route
+— that is where the page reports to, same-origin. If your project serves anything
+under that prefix, it is unreachable for as long as the route carries the label.
+Remove `proximo.inspect` and the prefix is yours again.
+
 ## VPN or corporate DNS overrides the resolver
 
 VPN clients and corporate DNS setups often install their own resolver

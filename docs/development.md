@@ -46,6 +46,7 @@ automatically so the in-stack images build from
 make install    # host setup (CA, resolver, trust) + start stack — asks for sudo
 make up         # start the stack (no host changes)
 make status     # list routed containers
+make errors     # Exchanges from inspected routes (ARGS="--host web.test")
 make down       # stop the stack
 make uninstall  # reverse host changes + tear down
 make e2e        # install + start the whoami demo + open https://whoami.test
@@ -84,6 +85,31 @@ consequences:
   re-materialized** (re-`install`/`up`/`update`).
 - Installed users only get an asset fix on the **next release** — the binary
   carries its own asset copy.
+
+## The vendored browser agent
+
+The [Inspection](observability.md#inspection--what-the-browser-saw) hop injects
+`@sentry/browser` into inspected pages. Its npm package ships only ESM/CJS, so
+the browser bundle is **built here and committed** at
+`internal/inspect/assets/sentry.min.js`, then embedded: building proximo — and
+building the stack images from the published module — needs nothing but the
+module itself, and an inspected page works with no network.
+
+```sh
+make vendor-agent                        # rebuild at the pinned versions
+make vendor-agent SENTRY_VERSION=10.73.0 # bump the SDK
+```
+
+The target runs npm + esbuild in `node:22-alpine` (both versions pinned in the
+Makefile) over an entry that re-exports only `init`, so tree-shaking drops
+tracing, replay, feedback and the AI integrations — about 89 KB, 30 KB over the
+wire. The output carries a provenance banner; it is marked `-diff
+linguist-vendored` and is never hand-edited.
+
+`make build` depends on the file, so a checkout that somehow lacks it rebuilds it
+before compiling. If it is missing at runtime the `inspector` container refuses
+to start and names the command, rather than serving a script that silently does
+nothing.
 
 ## Releases
 

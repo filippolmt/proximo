@@ -40,6 +40,7 @@ map** of it — every `##` section of every guide is linked below.
 [`proximo down`](cli.md#proximo-down) ·
 [`proximo update`](cli.md#proximo-update) ·
 [`proximo status`](cli.md#proximo-status) ·
+[`proximo errors`](cli.md#proximo-errors) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
 [`proximo uninstall`](cli.md#proximo-uninstall) ·
@@ -57,7 +58,7 @@ map** of it — every `##` section of every guide is linked below.
 
 [The big picture](architecture.md#the-big-picture) ·
 [The CLI is a one-shot orchestrator](architecture.md#the-cli-is-a-one-shot-orchestrator) ·
-[The stack: three services](architecture.md#the-stack-three-services) ·
+[The stack: four services](architecture.md#the-stack-four-services) ·
 [DNS](architecture.md#dns) ·
 [TLS and trust](architecture.md#tls-and-trust) ·
 [The watcher](architecture.md#the-watcher) ·
@@ -70,6 +71,7 @@ map** of it — every `##` section of every guide is linked below.
 [`proximo.port` — usually you can omit it](routing.md#proximoport--usually-you-can-omit-it) ·
 [`proximo.enable` — temporary opt-out](routing.md#proximoenable--temporary-opt-out) ·
 [`proximo.redirect` — opt in to the HTTP→HTTPS redirect](routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) ·
+[`proximo.inspect` — see what the browser saw](routing.md#proximoinspect--see-what-the-browser-saw) ·
 [What happens behind the scenes](routing.md#what-happens-behind-the-scenes) ·
 [Native Traefik labels (backward compatible)](routing.md#native-traefik-labels-backward-compatible) ·
 [Multiple networks](routing.md#multiple-networks) ·
@@ -83,6 +85,7 @@ map** of it — every `##` section of every guide is linked below.
 [No hardcoded secret](observability.md#no-hardcoded-secret) ·
 [Tear it down](observability.md#tear-it-down) ·
 [Logs, metrics & retention](observability.md#logs-metrics--retention) ·
+[Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 
 ### [Troubleshooting](troubleshooting.md)
@@ -95,6 +98,9 @@ map** of it — every `##` section of every guide is linked below.
 [macOS Gatekeeper blocks the binary](troubleshooting.md#macos-gatekeeper-blocks-the-binary) ·
 [Where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings) ·
 [Container not routed](troubleshooting.md#container-not-routed) ·
+[An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
+[proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
+[An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·
 [Degraded stack](troubleshooting.md#degraded-stack)
 
@@ -105,6 +111,7 @@ map** of it — every `##` section of every guide is linked below.
 [Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds) ·
 [Version and module ref](development.md#version-and-module-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
+[The vendored browser agent](development.md#the-vendored-browser-agent) ·
 [Releases](development.md#releases)
 
 ## New here?

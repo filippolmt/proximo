@@ -200,6 +200,46 @@ read-only **skew warning** recommending `proximo update` (it never rebuilds):
 ⚠ stack is running 0.1.0 but the CLI is 0.2.0; run `proximo update` to converge
 ```
 
+## proximo errors
+
+Show recent Exchanges from routes labelled
+[`proximo.inspect`](routing.md#proximoinspect--see-what-the-browser-saw): what the
+stack served, and what the browser reported while that page was live.
+
+```sh
+proximo errors                       # everything from the last 15 minutes
+proximo errors --host web.test       # one host
+proximo errors --since 1h --limit 50
+proximo errors --all                 # include breadcrumbs below warning level
+proximo errors --json                # structured, for tooling
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--host` | all | Only this host, e.g. `web.test`. |
+| `--since` | `15m` | Only Exchanges newer than this. |
+| `--limit` | `20` | Most recent N. |
+| `--all` | `false` | Include `debug`/`info`/`log` breadcrumbs, hidden by default so framework chatter does not bury the report. |
+| `--json` | `false` | Emit the raw Exchanges instead of the reading layout. |
+
+The default layout has a stable field order on purpose — it is read as often by
+an agent as by a person. See
+[Inspection](observability.md#inspection--what-the-browser-saw) for what is
+captured and where it lives.
+
+### proximo errors dom
+
+Write the DOM captured for one Exchange to a file and print the path. It is never
+dumped into the terminal: a page's DOM is hundreds of kilobytes.
+
+```sh
+proximo errors dom 9f3a21ab
+proximo errors dom 9f3a21ab -o /tmp/broken.html
+```
+
+A missing snapshot means either the Exchange was evicted, or no client report on
+that page carried one.
+
 ## proximo config tld
 
 Change the top-level domain routed to the local proxy. Updates the host resolver

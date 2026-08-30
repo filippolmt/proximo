@@ -20,6 +20,7 @@ keep working for advanced cases.
 | `proximo.auth` | no | — | Require HTTP basic auth. Comma-separated `user:password` pairs; plaintext passwords are hashed on disk. A pair missing `:` is skipped with a warning. |
 | `proximo.cors` | no | — | Add CORS response headers. `true` for permissive CORS, or a comma-separated allowed-origin list. A blank value is skipped with a warning. |
 | `proximo.header.<Name>` | no | — | Add a custom response header `<Name>: <value>`. Repeatable; an invalid header name is skipped with a warning. |
+| `proximo.inspect` | no | `false` | Serve the container's HTTP routes through the Inspection hop, which injects a reporting agent into HTML responses and records what the browser reports. Truthy: `true`/`1`/`yes`. HTTP-only; ignored on TCP routes and on replica sets. See [Inspection](observability.md#inspection--what-the-browser-saw). |
 | `proximo.tcp.port` | no | — | Route the container's hosts over **TCP-over-TLS by SNI** on the given backend port (for DBs, gRPC, MQTT, HTTPS backends). Invalid values are skipped with a warning. |
 | `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port`. Note: SNI routes by host only, so several ports on one host cannot be told apart — give each TCP service its own host. |
 | `proximo.tcp.tls` | no | `terminate` | TLS mode for TCP routes: `terminate` (proxy terminates with the per-host proximo cert, forwards plaintext) or `passthrough` (proxy routes the raw TLS stream by SNI; the backend terminates). |
@@ -253,6 +254,38 @@ per container so you can confirm what is wired.
 > — raw `traefik.*` middlewares remain the escape hatch (see
 > [Native Traefik labels](#native-traefik-labels-backward-compatible)).
 
+## proximo.inspect — see what the browser saw
+
+An inspected route is served **through a proximo hop** instead of straight to
+your container. The hop injects a small reporting agent into HTML responses, and
+records the request it served alongside whatever the browser reported while that
+page was live — an uncaught exception, a rejected promise, a CSP violation, the
+console and network breadcrumbs that led up to it, and a snapshot of the DOM at
+the moment it broke.
+
+```yaml
+services:
+  web:
+    image: node:22
+    labels:
+      - "proximo.hosts=web.test"
+      - "proximo.inspect=true"
+```
+
+```sh
+proximo errors --host web.test
+```
+
+It is **opt-in and never opt-out**, because it is the one proximo label that
+changes the bytes your project sent: every other label only adds routing. It
+applies to HTTP routes only — a TCP (SNI) route has no response body to inject
+into, so the label is ignored with a warning — and it is refused for a
+[replica set](#round-robin-across-replicas), because the hop forwards to a single
+backend; scale the service to one replica to inspect it.
+
+Read [Inspection](observability.md#inspection--what-the-browser-saw) for what is
+captured, what is deliberately not, and where the data lives.
+
 ## proximo.tcp.port — route TCP services by name (SNI)
 
 HTTP routing multiplexes every host on `:443` by the `Host` header, but raw TCP
@@ -397,6 +430,11 @@ labels:
 - "proximo.hosts=db.test"
 - "proximo.tcp.port=5432"      # default: proxy terminates TLS, plaintext to backend
 - "proximo.tcp.tls=passthrough"  # optional: backend terminates TLS end-to-end
+
+# See client-side errors, correlated with the response that caused them
+labels:
+  - "proximo.hosts=web.test"
+  - "proximo.inspect=true"
 
 # Advanced: native Traefik labels
 - "traefik.enable=true"

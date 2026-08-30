@@ -51,13 +51,14 @@ embedded `docker compose` project, materialized to `~/.proximo/stack/`
 from assets compiled into the binary (`//go:embed`), with the TLD and DNS port
 substituted in.
 
-## The stack: three services
+## The stack: four services
 
 | Service | Image / build | Role |
 | --- | --- | --- |
 | **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. Its built-in **dashboard** (`api.dashboard`, read-only — `api.insecure` stays off) is served at `https://traefik.<tld>`. |
 | **dns** | built from this repo | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
-| **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik to backend networks. Mounts the Docker socket and the CA. |
+| **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Mounts the Docker socket and the CA. |
+| **inspector** | built from this repo | The [Inspection](observability.md#inspection--what-the-browser-saw) hop. In the request path only for containers labelled `proximo.inspect`; idle otherwise. Publishes a loopback-only read API for `proximo errors` and holds Exchanges in memory, never on disk. |
 
 The watcher and Traefik share the host directory `~/.proximo/data/traefik`
 (**bind-mounted** into both at `/etc/traefik/dynamic`, not a Docker named volume):
@@ -167,4 +168,5 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher. |
 | `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
-| `cmd/dnsserver/`, `cmd/watcher/` | Entrypoints for the two in-stack services. |
+| `internal/inspect/` | The Inspection hop: response injection, CSP reconciliation, Sentry-envelope ingest, the in-memory Exchange store. |
+| `cmd/dnsserver/`, `cmd/watcher/`, `cmd/inspector/` | Entrypoints for the in-stack services. |
