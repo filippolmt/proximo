@@ -111,21 +111,26 @@ e2e: install
 	-$(OPEN) $(DEMO_URL)
 
 ## e2e-inspect: prove Inspection end to end (stack must be installed/up)
+# The agent's URL carries a digest of its content, so nothing here hardcodes it:
+# the path is read back out of the page, which is also what proves the tag was
+# injected in the first place.
 e2e-inspect: build
 	docker compose -f $(DEMO_COMPOSE) up -d
 	@echo "==> waiting for $(INSPECT_URL) to serve the injected agent"
 	@for i in $$(seq 1 30); do \
-		curl -fsS $(INSPECT_URL) 2>/dev/null | grep -q "/.proximo/agent.js" && break || sleep 1; \
+		curl -fsS $(INSPECT_URL) 2>/dev/null | grep -q data-proximo-exchange && break || sleep 1; \
 	done
-	@curl -fsS $(INSPECT_URL) | grep -q "/.proximo/agent.js" \
-		|| { echo "FAIL: agent not injected into $(INSPECT_URL)"; exit 1; }
-	@curl -fsS $(INSPECT_URL)/.proximo/agent.js | grep -q "proximo" \
-		|| { echo "FAIL: agent.js not served on the reserved path"; exit 1; }
-	@curl -fsS $(DEMO_URL) | grep -q "/.proximo/agent.js" \
-		&& { echo "FAIL: an unlabelled route was injected into"; exit 1; } || true
+	@agent=$$(curl -fsS $(INSPECT_URL) | sed -n 's|.*<script src="\(/\.proximo/agent\.[^"]*\)".*|\1|p' | head -1); \
+	if [ -z "$$agent" ]; then echo "FAIL: agent not injected into $(INSPECT_URL)"; exit 1; fi; \
+	echo "    injected: $$agent"; \
+	curl -fsS "$(INSPECT_URL)$$agent" | grep -q "proximo Inspection agent" \
+		|| { echo "FAIL: $$agent not served on the reserved path"; exit 1; }
+	@curl -fsS $(DEMO_URL) | grep -q data-proximo-exchange \
+		&& { echo "FAIL: $(DEMO_URL) carries no label but was injected into"; exit 1; } || true
 	@$(BIN) errors --json | grep -q "inspected.test" \
 		|| { echo "FAIL: no Exchange recorded for inspected.test"; exit 1; }
 	@echo "OK: agent injected and served, unlabelled route untouched, Exchange recorded"
+	@echo "    (client reports need a browser: open $(INSPECT_URL) and run setTimeout(function(){ null.foo }, 0))"
 	$(BIN) errors --host inspected.test
 
 ## e2e-down: stop demo and uninstall (restore the host)

@@ -50,6 +50,7 @@ make errors     # Exchanges from inspected routes (ARGS="--host web.test")
 make down       # stop the stack
 make uninstall  # reverse host changes + tear down
 make e2e        # install + start the whoami demo + open https://whoami.test
+make e2e-inspect # prove Inspection end to end against the running stack
 make e2e-down   # stop demo + uninstall
 ```
 
