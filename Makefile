@@ -13,7 +13,7 @@ BIN     := bin/$(BINARY)-$(GOOS)-$(GOARCH)
 SRC     := $(CURDIR)
 
 # All Go work runs through Docker — no local Go toolchain required.
-GO_IMAGE     ?= golang:1.26-alpine
+GO_IMAGE     ?= golang:1.27-alpine
 LYCHEE_IMAGE ?= lycheeverse/lychee:latest
 DOCKER_FLAGS := --rm -v "$(CURDIR)":/src -w /src \
 	-v proximo-go-mod:/go/pkg/mod -v proximo-go-build:/root/.cache/go-build \
