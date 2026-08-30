@@ -3,17 +3,40 @@
   "extends": [
     "config:recommended"
   ],
+  "packageRules": [
+    {
+      "matchDepNames": [
+        "go",
+        "golang"
+      ],
+      "groupName": "go"
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^Makefile$/"
+        "/^Makefile$/",
+        "/^Dockerfile$/",
+        "/^docs\\/development\\.md$/"
       ],
       "matchStrings": [
-        "GO_IMAGE\\s*\\?=\\s*golang:(?<currentValue>[^-\\s]+)-alpine"
+        "golang:(?<currentValue>[0-9][^-\\s]*)-alpine",
+        "ARG GO_VERSION=(?<currentValue>[^\\s]+)"
       ],
       "depNameTemplate": "golang",
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^go\\.mod$/"
+      ],
+      "matchStrings": [
+        "(?m)^go (?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)$"
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "golang-version"
     }
   ]
 }

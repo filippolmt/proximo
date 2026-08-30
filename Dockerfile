@@ -8,7 +8,7 @@
 # It is also the image `PROXIMO_SRC` builds from a local checkout (the dev
 # override in internal/docker/stack.go points `build:` here), so the published
 # path and the contributor path cannot drift.
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 
 # Cross-compile from the build platform: Go needs no emulation, so a two-arch
 # manifest costs one native build leg per arch instead of a QEMU run.
