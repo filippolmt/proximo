@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,8 +40,12 @@ func newErrorsCmd() *cobra.Command {
 			"processing. Use `proximo errors dom <id>` for the page's DOM at the time.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			q := fmt.Sprintf("?host=%s&since=%s&limit=%d", host, since, limit)
-			exchanges, err := fetchExchanges(inspectAPI("/exchanges" + q))
+			q := url.Values{
+				"host":  {host},
+				"since": {since.String()},
+				"limit": {strconv.Itoa(limit)},
+			}
+			exchanges, err := fetchExchanges(inspectAPI("/exchanges?" + q.Encode()))
 			if err != nil {
 				return err
 			}
@@ -54,8 +59,12 @@ func newErrorsCmd() *cobra.Command {
 				fmt.Fprintln(out, "No Exchanges recorded. Label a container with proximo.inspect=true and load a page.")
 				return nil
 			}
+			show := warnAndAbove
+			if all {
+				show = everything
+			}
 			for _, e := range exchanges {
-				writeExchange(out, e, all)
+				writeExchange(out, e, show)
 			}
 			return nil
 		},
@@ -81,7 +90,7 @@ func newErrorsDOMCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
-			resp, err := http.Get(inspectAPI("/dom?x=" + id))
+			resp, err := http.Get(inspectAPI("/dom?" + url.Values{"x": {id}}.Encode()))
 			if err != nil {
 				return hopUnreachable(err)
 			}
@@ -123,22 +132,48 @@ func fetchExchanges(url string) ([]inspect.Exchange, error) {
 	return out, nil
 }
 
+// inspectRouteWarnings asks the hop what it had to do to the routes it serves.
+// Best-effort by design: `proximo status` must still list routes when the hop is
+// not up, so an unreachable hop simply yields nothing.
+func inspectRouteWarnings() map[string][]string {
+	resp, err := http.Get(inspectAPI("/warnings"))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var out map[string][]string
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil
+	}
+	return out
+}
+
 func hopUnreachable(err error) error {
 	return fmt.Errorf("cannot reach the inspection hop on 127.0.0.1:%d — is the stack up? (`proximo up`): %w",
 		config.InspectAPIPort, err)
 }
 
-// noisyBreadcrumb levels are hidden unless --all: in development the console is
-// dominated by framework warnings and dev-server chatter, and burying the report
-// in them is the fastest way to make the output useless. Nothing is dropped at
-// capture time, only here.
+// detail says how much of a Client report's trail to render. Nothing is ever
+// dropped at capture time — in development the console is dominated by framework
+// warnings and dev-server chatter, and burying the report in them is the fastest
+// way to make the output useless — so the filtering happens here and only here.
+type detail int
+
+const (
+	warnAndAbove detail = iota // the default: what a developer is looking for
+	everything                 // --all
+)
+
 var noisyBreadcrumb = map[string]bool{"debug": true, "info": true, "log": true, "": true}
 
 // writeExchange renders one Exchange as a fixed-order block. The shape is stable
 // on purpose: it is read as often by an agent as by a person.
-func writeExchange(w io.Writer, e inspect.Exchange, all bool) {
+func writeExchange(w io.Writer, e inspect.Exchange, show detail) {
 	fmt.Fprintf(w, "%s  %s  %s %s  →  %s  %s\n",
-		e.At.Local().Format("15:04:05"), e.ID, e.Method, e.Path, status(e.Status), duration(e.Duration))
+		e.At.Local().Format("15:04:05"), e.ID, e.Method, e.Path, formatStatus(e.Status), formatDuration(e.Duration))
 
 	for _, warn := range e.Warnings {
 		fmt.Fprintf(w, "  %s%s\n", warnPrefix, warn)
@@ -155,9 +190,9 @@ func writeExchange(w io.Writer, e inspect.Exchange, all bool) {
 	for _, r := range e.Reports {
 		fmt.Fprintf(w, "  ✗ %s\n", r.Message)
 		for _, f := range r.Frames {
-			fmt.Fprintf(w, "      at %s (%s)\n", orUnknown(f.Func), location(f))
+			fmt.Fprintf(w, "      at %s (%s)\n", orPlaceholder(f.Func), frameLocation(f))
 		}
-		for _, b := range visibleBreadcrumbs(r.Breadcrumbs, all) {
+		for _, b := range visibleBreadcrumbs(r.Breadcrumbs, show) {
 			fmt.Fprintf(w, "      · %-8s %-9s %s\n", b.Level, b.Category, b.Message)
 		}
 	}
@@ -167,8 +202,8 @@ func writeExchange(w io.Writer, e inspect.Exchange, all bool) {
 	fmt.Fprintln(w)
 }
 
-func visibleBreadcrumbs(crumbs []inspect.Breadcrumb, all bool) []inspect.Breadcrumb {
-	if all {
+func visibleBreadcrumbs(crumbs []inspect.Breadcrumb, show detail) []inspect.Breadcrumb {
+	if show == everything {
 		return crumbs
 	}
 	out := crumbs[:0:0]
@@ -180,29 +215,29 @@ func visibleBreadcrumbs(crumbs []inspect.Breadcrumb, all bool) []inspect.Breadcr
 	return out
 }
 
-func location(f inspect.Frame) string {
-	loc := orUnknown(f.File) + ":" + strconv.Itoa(f.Line)
+func frameLocation(f inspect.Frame) string {
+	loc := orPlaceholder(f.File) + ":" + strconv.Itoa(f.Line)
 	if f.Col > 0 {
 		loc += ":" + strconv.Itoa(f.Col)
 	}
 	return loc
 }
 
-func orUnknown(s string) string {
+func orPlaceholder(s string) string {
 	if s == "" {
 		return "?"
 	}
 	return s
 }
 
-func status(code int) string {
+func formatStatus(code int) string {
 	if code == 0 {
 		return "---"
 	}
 	return strconv.Itoa(code)
 }
 
-func duration(d time.Duration) string {
+func formatDuration(d time.Duration) string {
 	if d >= time.Second {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}

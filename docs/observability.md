@@ -152,8 +152,9 @@ The injected agent is [`@sentry/browser`](https://docs.sentry.io/platforms/javas
 pointed at proximo instead of at Sentry, so what it collects is what that SDK
 collects: uncaught exceptions, unhandled rejections, policy violations, and the
 breadcrumbs before them — every `console.*` call, every `fetch`/XHR, clicks,
-navigations. proximo adds the correlation id that joins the two halves and a
-snapshot of the DOM at the moment of the report.
+navigations. proximo adds three things on top: the correlation id that joins the two halves, a
+snapshot of the DOM at the moment of the first report, and `securitypolicyviolation`
+events, which raise no exception and which the SDK has no integration for.
 
 Capture is deliberately wide and **filtering happens at display time**: `proximo
 errors` hides breadcrumbs below warning level so framework chatter does not bury
@@ -192,10 +193,14 @@ only Traefik reaches it, over the stack network.
 
 - **The response body.** The agent tag is inserted before `</head>`. A response
   with no `</head>` is left alone and the Exchange says so.
-- **The `Content-Security-Policy`, when it has to.** A page whose policy would
-  block the injected script has `script-src` relaxed with a nonce — and every
-  Exchange for that route carries a warning saying so. proximo never edits a
-  security header silently, and the relaxation disappears with the label.
+- **The `Content-Security-Policy`, when it has to.** A policy can defeat
+  Inspection twice over: by refusing to load the agent, and by refusing to let it
+  report. proximo reuses the page's own nonce where there is one; otherwise it
+  relaxes `script-src` with a minted nonce, and widens `connect-src` with `'self'`
+  so the same-origin report can go out. It never does either silently — the
+  warning appears on every Exchange for that route in `proximo errors`, and
+  against the route itself in `proximo status`, for as long as it carries the
+  label. The relaxation disappears with the label.
 
 An inspected route also gains a hop, so it pays a little latency and has one more
 way to fail. Both are confined to the routes you labelled.

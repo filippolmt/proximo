@@ -79,14 +79,14 @@ The metadata of one request that passed through the stack — host, method,
 status, latency, size. Deliberately excludes request and response bodies. One
 half of an Exchange: what the stack saw from outside the application.
 _Avoid_: trace, transaction, log entry
-_Debt_: no implementation. Traefik's access log is not enabled.
+_Debt_: recorded only for routes under Inspection, which is where the hop sees
+the exchange. Every other route produces none: Traefik's access log is off.
 
 **Inspection**:
 The collection of Exchanges for one route, live only while its container carries
 the `proximo.inspect` label. Inspection is never on by omission: it rewrites the
 responses a project produced, so it is always something the developer asked for.
 _Avoid_: monitoring, tracing, debugging, instrumentation
-_Debt_: no implementation.
 
 **Reserved path**:
 A path prefix on a project's *own* origin that proximo answers for instead of the
@@ -94,7 +94,6 @@ backend, so that a page can report to proximo same-origin. There is one,
 `/.proximo/`, and it is unavailable to the project for as long as the route is
 under Inspection.
 _Avoid_: internal route, hook, callback, endpoint
-_Debt_: no implementation.
 
 **Client report**:
 What the browser observed about one page — an uncaught exception, a rejected
@@ -103,21 +102,21 @@ led up to it. The other half of an Exchange. Capture is deliberately wide and
 filtering happens at display: a report is never dropped at collection time
 because it looked redundant.
 _Avoid_: error, log, event, exception (alone)
-_Debt_: no implementation.
 
 **Breadcrumb**:
 One thing that happened before a Client report — a console call, a request the
 page made, a click, a navigation. Breadcrumbs are the sequence; the report is the
 end of it.
 _Avoid_: history, timeline, trace, span
-_Debt_: no implementation.
 
 **Snapshot**:
-The page's DOM as it stood when a Client report was raised. Never printed to a
+The page's DOM as it stood when the *first* Client report of an Exchange was
+raised. One per Exchange, not one per report: a page rarely changes shape between
+two errors of the same load, and a copy of the DOM is the heaviest thing proximo
+holds. Never printed to a
 terminal: it is handed over as a file, because it is meant to be read by whoever
 is diagnosing, not scrolled past.
 _Avoid_: dump, capture, replay
-_Debt_: no implementation.
 
 **Exchange**:
 One Access record joined to the Client reports that arose while the page it
@@ -125,4 +124,3 @@ served was live. The unit proximo hands to a developer or an agent, and the
 reason both halves are collected: neither half alone says whether a broken page
 is the backend's fault or the front-end's.
 _Avoid_: session, request, correlation
-_Debt_: no implementation.

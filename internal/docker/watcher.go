@@ -324,14 +324,15 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// container that claims the reserved traefik.<tld> host.
 	routed = append(routed, w.dashboardRoute())
 	warnDuplicateHosts(containers, routed)
-	routed, merges, conflicts, inspectDropped := resolveRouteConflicts(routed)
-	for _, c := range conflicts {
+	res := resolveRouteConflicts(routed)
+	routed = res.kept
+	for _, c := range res.conflicts {
 		log.Printf("proximo watcher: container %s conflicts on host %q path %q with an already-routed container; the lexicographically-first name wins, %s is not routed", c.name, c.host, c.path, c.name)
 	}
-	for _, m := range merges {
+	for _, m := range res.merges {
 		log.Printf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host)
 	}
-	for _, name := range inspectDropped {
+	for _, name := range res.inspectDropped {
 		log.Printf("proximo watcher: container %s: %s ignored — the route balances across several replicas and Inspection forwards to a single backend; scale the service to one replica to inspect it", name, proximoInspectLabel)
 	}
 
@@ -1433,7 +1434,24 @@ type routeMerge struct {
 // Docker provider owns them. It is the shared resolver behind both the watcher
 // (which logs the losers and the merges) and `proximo status` (which stays quiet),
 // so the two agree on which routes are served and which are balanced.
-func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, merges []routeMerge, conflicts []routeConflict, inspectDropped []string) {
+// routeResolution is what conflict resolution produced: the routes to serve, and
+// everything the watcher owes the developer an explanation for. It is one value
+// rather than four returns because the next thing worth reporting would make it
+// five, and every call site would have to grow another blank.
+type routeResolution struct {
+	kept           []routedContainer
+	merges         []routeMerge
+	conflicts      []routeConflict
+	inspectDropped []string // routes whose proximo.inspect could not be honoured
+}
+
+func resolveRouteConflicts(routed []routedContainer) routeResolution {
+	var (
+		kept           []routedContainer
+		merges         []routeMerge
+		conflicts      []routeConflict
+		inspectDropped []string
+	)
 	sorted := append([]routedContainer(nil), routed...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
 
@@ -1499,7 +1517,7 @@ func resolveRouteConflicts(routed []routedContainer) (kept []routedContainer, me
 		}
 		kept = append(kept, *g)
 	}
-	return kept, merges, conflicts, inspectDropped
+	return routeResolution{kept: kept, merges: merges, conflicts: conflicts, inspectDropped: inspectDropped}
 }
 
 // targetNetworks returns the network IDs Traefik must join to reach a backend,

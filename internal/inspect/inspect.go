@@ -2,7 +2,10 @@ package inspect
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -42,14 +45,41 @@ var headClose = regexp.MustCompile(`(?i)</head\s*>`)
 // loopback-only listener.
 type Handler struct {
 	store *Store
-	agent []byte
 	proxy *httputil.ReverseProxy
+
+	// The agent is fixed for the life of the binary, so it is addressed by a
+	// digest of its own content and served immutable: a page pays for it once per
+	// proximo version instead of on every load. Both encodings are prepared up
+	// front — it is ~87 KB raw and ~30 KB gzipped, and compressing it per request
+	// would be work repeated for no reason.
+	agent     []byte
+	agentGzip []byte
+	agentPath string // "agent.<digest>.js"
+	agentETag string
 }
 
 // NewHandler returns a hop recording into store and serving agent as the
 // injected script.
 func NewHandler(store *Store, agent []byte) *Handler {
-	h := &Handler{store: store, agent: agent}
+	sum := sha256.Sum256(agent)
+	digest := hex.EncodeToString(sum[:8])
+
+	var gz bytes.Buffer
+	if w, err := gzip.NewWriterLevel(&gz, gzip.BestCompression); err == nil {
+		if _, err := w.Write(agent); err == nil && w.Close() == nil {
+			// only trusted when the whole round-trip succeeded
+		} else {
+			gz.Reset()
+		}
+	}
+
+	h := &Handler{
+		store:     store,
+		agent:     agent,
+		agentGzip: gz.Bytes(),
+		agentPath: "agent." + digest + ".js",
+		agentETag: `"` + digest + `"`,
+	}
 	h.proxy = &httputil.ReverseProxy{
 		Rewrite:        h.rewrite,
 		ModifyResponse: h.modifyResponse,
@@ -66,6 +96,7 @@ func NewHandler(store *Store, agent []byte) *Handler {
 // the response is what fills in the rest.
 type state struct {
 	id       string
+	host     string
 	backend  *url.URL
 	status   int
 	warnings []string
@@ -90,7 +121,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st := &state{id: NewID(), backend: backend}
+	st := &state{id: NewID(), host: r.Host, backend: backend}
 	cw := &countingWriter{ResponseWriter: w}
 	start := time.Now()
 	h.proxy.ServeHTTP(cw, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
@@ -151,10 +182,14 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 	nonce, warning := reconcileCSP(resp.Header)
 	if warning != "" {
 		st.warnings = append(st.warnings, warning)
+		// Also recorded against the host, where eviction cannot reach it: a
+		// relaxed security policy has to stay visible in `proximo status` for as
+		// long as the route is inspected.
+		h.store.NoteRouteWarning(st.host, warning)
 	}
 
 	if loc := headClose.FindIndex(body); loc != nil {
-		tag := agentTag(st.id, nonce)
+		tag := agentTag(h.agentPath, st.id, nonce)
 		body = append(body[:loc[0]:loc[0]], append(tag, body[loc[0]:]...)...)
 	} else {
 		st.warnings = append(st.warnings, "agent not injected: no </head> in the response")
@@ -166,13 +201,13 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 	return nil
 }
 
-func agentTag(id, nonce string) []byte {
+func agentTag(agentPath, id, nonce string) []byte {
 	attr := ""
 	if nonce != "" {
 		attr = ` nonce="` + html.EscapeString(nonce) + `"`
 	}
 	return fmt.Appendf(nil, `<script src=%q data-proximo-exchange=%q%s></script>`,
-		ReservedPath+"agent.js", id, attr)
+		ReservedPath+agentPath, id, attr)
 }
 
 func isHTML(resp *http.Response) bool {
@@ -196,14 +231,33 @@ func (w *countingWriter) Write(b []byte) (int, error) {
 // agent, and where it reports to.
 func (h *Handler) serveReserved(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimPrefix(r.URL.Path, ReservedPath) {
-	case "agent.js":
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Write(h.agent)
+	case h.agentPath:
+		h.serveAgent(w, r)
 	case "ingest":
 		h.ingest(w, r)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// serveAgent hands over the injected script. Its URL carries a digest of its own
+// content, so it can be cached hard: a new proximo version changes the URL.
+func (h *Handler) serveAgent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("ETag", h.agentETag)
+	if r.Header.Get("If-None-Match") == h.agentETag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	body := h.agent
+	if len(h.agentGzip) > 0 && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		body = h.agentGzip
+	}
+	if _, err := w.Write(body); err != nil {
+		log.Printf("proximo inspect: serving the agent: %v", err)
 	}
 }
 
@@ -222,14 +276,14 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "envelope too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	report, snapshot, ok, err := decode(body)
+	in, err := decode(body)
 	if err != nil {
 		log.Printf("proximo inspect: envelope for %s: %v", id, err)
 		http.Error(w, "malformed envelope", http.StatusBadRequest)
 		return
 	}
-	if ok {
-		h.store.Attach(id, report, snapshot)
+	if in.Found {
+		h.store.Attach(id, in)
 	}
 	// The agent must never be told anything useful about the store, and never
 	// has to retry: a dropped report is not worth a failed page.
@@ -247,9 +301,9 @@ func (a AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/exchanges":
 		since, _ := time.ParseDuration(q.Get("since"))
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		out := a.Store.List(Query{Host: q.Get("host"), Since: since, Limit: limit})
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(out)
+		writeJSON(w, a.Store.List(Query{Host: q.Get("host"), Since: since, Limit: limit}))
+	case "/warnings":
+		writeJSON(w, a.Store.RouteWarnings())
 	case "/dom":
 		snap := a.Store.Snapshot(q.Get("x"))
 		if snap == nil {
@@ -257,8 +311,17 @@ func (a AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(snap)
+		if _, err := w.Write(snap); err != nil {
+			log.Printf("proximo inspect: serving a snapshot: %v", err)
+		}
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("proximo inspect: encoding a response: %v", err)
 	}
 }

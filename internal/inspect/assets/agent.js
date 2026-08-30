@@ -39,6 +39,22 @@
         return event;
       },
     });
+    // A blocked script or fetch raises no exception — the browser fires this
+    // event instead, and Sentry has no default integration for it. Without this,
+    // a policy violation would be exactly the kind of silent failure Inspection
+    // exists to surface.
+    addEventListener("securitypolicyviolation", function (ev) {
+      try {
+        Sentry.captureMessage(
+          "Content-Security-Policy blocked " +
+            (ev.blockedURI || "an inline resource") +
+            " (" + (ev.effectiveDirective || ev.violatedDirective) + ")",
+          "warning"
+        );
+      } catch (e) {
+        // A report about a blocked report is not worth breaking the page over.
+      }
+    });
   } catch (e) {
     // Inspection must never be the reason a page fails to run.
   }

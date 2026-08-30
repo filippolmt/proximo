@@ -34,6 +34,8 @@ ownership: [docs/architecture.md — Source map](docs/architecture.md#source-map
 
 | Question | Read |
 | --- | --- |
+| What a domain term means, and which words to avoid | [CONTEXT.md](CONTEXT.md) |
+| Why a design is the way it is, and what was rejected | [docs/adr/](docs/adr/) |
 | Routing label contract & port resolution rules | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels) |
 | Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
 | HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |

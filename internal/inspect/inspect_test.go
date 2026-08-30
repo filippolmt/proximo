@@ -20,7 +20,7 @@ func TestStoreEvictsByBytesAndKeepsTheNewest(t *testing.T) {
 	for i := range 20 {
 		e := &Exchange{ID: strconv.Itoa(i), At: time.Now(), Host: "web.test"}
 		s.Add(e)
-		s.Attach(e.ID, Report{Message: "boom"}, make([]byte, 1024))
+		s.Attach(e.ID, ingested{Report: Report{Message: "boom"}, Snapshot: make([]byte, 1024)})
 	}
 	got := s.List(Query{})
 	if len(got) == 0 {
@@ -42,7 +42,7 @@ func TestStoreEvictsByBytesAndKeepsTheNewest(t *testing.T) {
 
 func TestStoreAttachToEvictedExchangeIsDropped(t *testing.T) {
 	s := NewStore(4096)
-	if s.Attach("nope", Report{Message: "x"}, nil) {
+	if s.Attach("nope", ingested{Report: Report{Message: "x"}}) {
 		t.Fatal("attaching to an unknown id must report false, not panic")
 	}
 }
@@ -101,12 +101,13 @@ func TestDecodeEventAndSnapshot(t *testing.T) {
 		[2]string{`{"type":"attachment","length":$LEN,"filename":"dom.html"}`, dom},
 	)
 
-	r, snap, ok, err := decode([]byte(raw))
-	if err != nil || !ok {
-		t.Fatalf("decode: ok=%v err=%v", ok, err)
+	in, err := decode([]byte(raw))
+	if err != nil || !in.Found {
+		t.Fatalf("decode: found=%v err=%v", in.Found, err)
 	}
-	if string(snap) != dom {
-		t.Errorf("snapshot = %q", snap)
+	r := in.Report
+	if string(in.Snapshot) != dom {
+		t.Errorf("snapshot = %q", in.Snapshot)
 	}
 	if r.Type != "TypeError" || !strings.Contains(r.Message, "reading 'total'") {
 		t.Errorf("report = %+v", r)
@@ -135,12 +136,12 @@ func TestDecodeDropsAgentFrames(t *testing.T) {
 		{"filename":"https://web.test/.proximo/agent.js","function":"i","lineno":16,"colno":7079},
 		{"filename":"src/app.tsx","function":"render","lineno":9,"colno":3}
 	]}}]}}`
-	r, _, ok, err := decode([]byte(envelope([2]string{`{"type":"event","length":$LEN}`, payload})))
-	if err != nil || !ok {
-		t.Fatalf("decode: ok=%v err=%v", ok, err)
+	in, err := decode([]byte(envelope([2]string{`{"type":"event","length":$LEN}`, payload})))
+	if err != nil || !in.Found {
+		t.Fatalf("decode: found=%v err=%v", in.Found, err)
 	}
-	if len(r.Frames) != 1 || r.Frames[0].File != "src/app.tsx" {
-		t.Fatalf("agent frames must be dropped, got %+v", r.Frames)
+	if len(in.Report.Frames) != 1 || in.Report.Frames[0].File != "src/app.tsx" {
+		t.Fatalf("agent frames must be dropped, got %+v", in.Report.Frames)
 	}
 }
 
@@ -148,19 +149,19 @@ func TestDecodeRFC3339TimestampAndPayloadWithNewlines(t *testing.T) {
 	// A length-prefixed payload may contain newlines — that is why the header
 	// carries a length at all.
 	payload := "{\n\"timestamp\": \"2026-08-30T10:00:00Z\",\n\"message\": \"plain\"\n}"
-	r, _, ok, err := decode([]byte(envelope([2]string{`{"type":"event","length":$LEN}`, payload})))
-	if err != nil || !ok {
-		t.Fatalf("decode: ok=%v err=%v", ok, err)
+	in, err := decode([]byte(envelope([2]string{`{"type":"event","length":$LEN}`, payload})))
+	if err != nil || !in.Found {
+		t.Fatalf("decode: found=%v err=%v", in.Found, err)
 	}
-	if r.Message != "plain" || r.At.Year() != 2026 {
-		t.Fatalf("report = %+v", r)
+	if in.Report.Message != "plain" || in.Report.At.Year() != 2026 {
+		t.Fatalf("report = %+v", in.Report)
 	}
 }
 
 func TestDecodeIgnoresEnvelopeWithoutEvent(t *testing.T) {
-	_, _, ok, err := decode([]byte(envelope([2]string{`{"type":"session","length":$LEN}`, `{"sid":"1"}`})))
-	if err != nil || ok {
-		t.Fatalf("a session-only envelope must be dropped quietly: ok=%v err=%v", ok, err)
+	in, err := decode([]byte(envelope([2]string{`{"type":"session","length":$LEN}`, `{"sid":"1"}`})))
+	if err != nil || in.Found {
+		t.Fatalf("a session-only envelope must be dropped quietly: found=%v err=%v", in.Found, err)
 	}
 }
 
@@ -243,7 +244,7 @@ func hop(t *testing.T, backend http.HandlerFunc) (*Handler, *Store, func(path st
 
 func TestHopInjectsIntoHTMLAndRecordsTheExchange(t *testing.T) {
 	page := "<html><head><title>hi</title></head><body>ok</body></html>"
-	_, store, do := hop(t, func(w http.ResponseWriter, r *http.Request) {
+	h, store, do := hop(t, func(w http.ResponseWriter, r *http.Request) {
 		// The browser's list is dropped: only the gzip Go's transport unwraps
 		// itself may reach the backend.
 		if got := r.Header.Get("Accept-Encoding"); got != "gzip" {
@@ -266,7 +267,7 @@ func TestHopInjectsIntoHTMLAndRecordsTheExchange(t *testing.T) {
 	if m == nil {
 		t.Fatalf("agent tag not injected: %s", body)
 	}
-	if !strings.Contains(body, `<script src="/.proximo/agent.js"`) {
+	if !strings.Contains(body, `<script src="`+ReservedPath+h.agentPath+`"`) {
 		t.Errorf("agent src wrong: %s", body)
 	}
 	if !strings.Contains(body, m[0]+`></script></head>`) {
@@ -357,9 +358,9 @@ func TestReservedPathServesAgentAndIngestsReports(t *testing.T) {
 
 	// The agent is served from the page's own origin, so no CORS is involved.
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://web.test/.proximo/agent.js", nil))
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://web.test"+ReservedPath+h.agentPath, nil))
 	if w.Code != 200 || w.Body.String() != "// agent" {
-		t.Fatalf("agent.js: %d %q", w.Code, w.Body.String())
+		t.Fatalf("agent: %d %q", w.Code, w.Body.String())
 	}
 
 	store.Add(&Exchange{ID: "deadbeef", At: time.Now(), Host: "web.test"})
@@ -411,7 +412,7 @@ func readAll(t *testing.T, resp *http.Response) string {
 // backend that compresses whatever it was asked for still gets the agent, because
 // the transport unwraps the gzip it negotiated itself.
 func TestHopInjectsIntoAGzippingBackend(t *testing.T) {
-	_, store, do := hop(t, func(w http.ResponseWriter, r *http.Request) {
+	h, store, do := hop(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Content-Encoding", "gzip")
 		gz := gzip.NewWriter(w)
@@ -419,10 +420,101 @@ func TestHopInjectsIntoAGzippingBackend(t *testing.T) {
 		fmt.Fprint(gz, "<html><head></head><body>ok</body></html>")
 	})
 	body := readAll(t, do("/"))
-	if !strings.Contains(body, "/.proximo/agent.js") {
+	if !strings.Contains(body, h.agentPath) {
 		t.Fatalf("agent not injected into a gzipped page: %q", body)
 	}
 	if ex := store.List(Query{}); len(ex[0].Warnings) != 0 {
 		t.Errorf("unexpected warnings: %v", ex[0].Warnings)
+	}
+}
+
+// TestReconcileCSPConnectSrc: a policy can admit the script and still forbid the
+// report POST. The tunnel is same-origin, so 'self' is what connect-src needs —
+// a nonce means nothing there.
+func TestReconcileCSPConnectSrc(t *testing.T) {
+	h := http.Header{}
+	h.Set("Content-Security-Policy", "script-src 'self'; connect-src https://api.example")
+	nonce, warning := reconcileCSP(h)
+
+	if nonce != "" {
+		t.Errorf("script-src 'self' already admits the tag; no nonce needed, got %q", nonce)
+	}
+	got := h.Get("Content-Security-Policy")
+	if !strings.Contains(got, "connect-src https://api.example 'self'") {
+		t.Errorf("connect-src not widened: %q", got)
+	}
+	if !strings.Contains(warning, "connect-src") {
+		t.Errorf("the relaxation must be named, got %q", warning)
+	}
+
+	// A policy that admits both is left completely alone.
+	h = http.Header{}
+	h.Set("Content-Security-Policy", "default-src 'self'")
+	if nonce, warning = reconcileCSP(h); nonce != "" || warning != "" {
+		t.Errorf("nothing to do, got nonce=%q warning=%q", nonce, warning)
+	}
+}
+
+// TestAgentIsCacheableAndCompressed pins the two properties that keep the ~87 KB
+// bundle from being re-fetched on every page load: the URL carries a digest of
+// the content, so it can be immutable, and gzip is offered to anyone who asks.
+func TestAgentIsCacheableAndCompressed(t *testing.T) {
+	h, _, _ := hop(t, func(w http.ResponseWriter, r *http.Request) {})
+
+	if !strings.HasPrefix(h.agentPath, "agent.") || !strings.HasSuffix(h.agentPath, ".js") {
+		t.Fatalf("agent path = %q, want agent.<digest>.js", h.agentPath)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://web.test"+ReservedPath+h.agentPath, nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("gzip not served to a client that asked: %q", w.Header().Get("Content-Encoding"))
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want immutable — the URL is content-addressed", cc)
+	}
+
+	// A second load costs nothing.
+	req = httptest.NewRequest(http.MethodGet, "http://web.test"+ReservedPath+h.agentPath, nil)
+	req.Header.Set("If-None-Match", w.Header().Get("ETag"))
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNotModified {
+		t.Errorf("revalidation = %d, want 304", w.Code)
+	}
+}
+
+// TestRouteWarningsOutliveEviction: a relaxed security policy is a property of
+// the route, not of one request, so `proximo status` must still see it after the
+// Exchange that discovered it has been evicted.
+func TestRouteWarningsOutliveEviction(t *testing.T) {
+	h, store, do := hop(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		fmt.Fprint(w, "<html><head></head><body></body></html>")
+	})
+	_ = h
+	do("/")
+
+	warnings := store.RouteWarnings()
+	if len(warnings["web.test"]) != 1 || !strings.Contains(warnings["web.test"][0], "Content-Security-Policy") {
+		t.Fatalf("route warning not recorded: %+v", warnings)
+	}
+
+	// Push the Exchange out of the buffer; the route warning must survive.
+	for range 200 {
+		e := &Exchange{ID: NewID(), At: time.Now(), Host: "web.test"}
+		store.Add(e)
+		store.Attach(e.ID, ingested{Report: Report{Message: "x"}, Snapshot: make([]byte, 4096)})
+	}
+	if len(store.RouteWarnings()["web.test"]) != 1 {
+		t.Error("the warning was evicted with its Exchange")
+	}
+	// And it is never recorded twice.
+	do("/")
+	if n := len(store.RouteWarnings()["web.test"]); n != 1 {
+		t.Errorf("warning recorded %d times, want 1", n)
 	}
 }

@@ -78,7 +78,8 @@ source.
 
 The compose project lives in `internal/docker/assets/` and is compiled into
 the binary (`//go:embed`), then materialized to `~/.proximo/stack/` with the
-`__TLD__`, `__DNSPORT__` and `__DATADIR__` sentinels substituted. Two
+`__TLD__`, `__DNSPORT__`, `__DATADIR__`, `__OBS_HUBPORT__` and `__INSPECTPORT__`
+sentinels substituted. Two
 consequences:
 
 - **Editing an asset has no effect until the binary is rebuilt AND the stack
@@ -102,14 +103,33 @@ make vendor-agent SENTRY_VERSION=10.73.0 # bump the SDK
 
 The target runs npm + esbuild in `node:22-alpine` (both versions pinned in the
 Makefile) over an entry that re-exports only `init`, so tree-shaking drops
-tracing, replay, feedback and the AI integrations — about 89 KB, 30 KB over the
-wire. The output carries a provenance banner; it is marked `-diff
+tracing, replay, feedback and the AI integrations — about 89 KB raw, 30 KB
+gzipped. The hop serves it gzipped from a content-addressed, immutable URL, so an
+inspected page fetches it once per proximo version. The output carries a provenance banner; it is marked `-diff
 linguist-vendored` and is never hand-edited.
 
 `make build` depends on the file, so a checkout that somehow lacks it rebuilds it
 before compiling. If it is missing at runtime the `inspector` container refuses
 to start and names the command, rather than serving a script that silently does
 nothing.
+
+### After a version bump
+
+The hop parses the Sentry envelope format, which proximo does not own, and
+attaches the DOM Snapshot through `hint.attachments` in `beforeSend`, which the
+SDK documents loosely. Both can change without any error — an inspected page
+would keep working and quietly report less. So the parser is tested against an
+envelope captured from the vendored agent in a real browser:
+
+```sh
+make vendor-agent SENTRY_VERSION=<new>
+make capture-envelope     # re-record the fixture, then run the tests
+```
+
+`TestFixtureMatchesVendoredSDK` fails while the fixture and the bundle name
+different versions, so the second command cannot be forgotten. (This is not
+theoretical: the first capture immediately showed the SDK sends `breadcrumbs` as
+a bare array, not the `{"values": …}` wrapper the store format documents.)
 
 ## Releases
 

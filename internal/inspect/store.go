@@ -88,6 +88,13 @@ type Store struct {
 	used   int64
 	items  []*Exchange // oldest first
 	byID   map[string]*Exchange
+
+	// routeWarnings are the warnings that describe the route rather than one
+	// request — today, that proximo had to relax the page's policy. They are kept
+	// outside the ring buffer on purpose: `proximo status` has to show them for as
+	// long as the route is inspected, not only while some Exchange survives
+	// eviction.
+	routeWarnings map[string][]string // host -> warnings, deduplicated
 }
 
 // DefaultBudget is how much memory the Store is allowed before it starts
@@ -100,7 +107,7 @@ func NewStore(budget int64) *Store {
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	return &Store{budget: budget, byID: map[string]*Exchange{}}
+	return &Store{budget: budget, byID: map[string]*Exchange{}, routeWarnings: map[string][]string{}}
 }
 
 // NewID mints the correlation id that joins the two halves of an Exchange.
@@ -128,7 +135,7 @@ func (s *Store) Add(e *Exchange) {
 // Attach adds a Client report — and, the first time one carries it, the DOM
 // Snapshot — to the Exchange that served the page. It reports whether the id was
 // known: an unknown id means the Exchange has already been evicted.
-func (s *Store) Attach(id string, r Report, snapshot []byte) bool {
+func (s *Store) Attach(id string, in ingested) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.byID[id]
@@ -136,13 +143,36 @@ func (s *Store) Attach(id string, r Report, snapshot []byte) bool {
 		return false
 	}
 	before := e.size()
-	e.Reports = append(e.Reports, r)
-	if len(snapshot) > 0 && len(e.Snapshot) == 0 {
-		e.Snapshot = snapshot
+	e.Reports = append(e.Reports, in.Report)
+	if len(in.Snapshot) > 0 && len(e.Snapshot) == 0 {
+		e.Snapshot = in.Snapshot
 	}
 	s.used += e.size() - before
 	s.evict()
 	return true
+}
+
+// NoteRouteWarning records a warning against a host, ignoring one already held.
+func (s *Store) NoteRouteWarning(host, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, w := range s.routeWarnings[host] {
+		if w == msg {
+			return
+		}
+	}
+	s.routeWarnings[host] = append(s.routeWarnings[host], msg)
+}
+
+// RouteWarnings returns the per-host warnings, for `proximo status`.
+func (s *Store) RouteWarnings() map[string][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string][]string, len(s.routeWarnings))
+	for host, ws := range s.routeWarnings {
+		out[host] = append([]string(nil), ws...)
+	}
+	return out
 }
 
 // evict drops the oldest Exchanges until the Store fits its budget. The most

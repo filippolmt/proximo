@@ -104,15 +104,38 @@ type sentryEvent struct {
 			} `json:"stacktrace"`
 		} `json:"values"`
 	} `json:"exception"`
-	Breadcrumbs struct {
-		Values []struct {
-			Timestamp sentryTime `json:"timestamp"`
-			Category  string     `json:"category"`
-			Level     string     `json:"level"`
-			Message   string     `json:"message"`
-			Type      string     `json:"type"`
-		} `json:"values"`
-	} `json:"breadcrumbs"`
+	Breadcrumbs breadcrumbList `json:"breadcrumbs"`
+}
+
+// sentryCrumb is one breadcrumb as the SDK serializes it.
+type sentryCrumb struct {
+	Timestamp sentryTime `json:"timestamp"`
+	Category  string     `json:"category"`
+	Level     string     `json:"level"`
+	Message   string     `json:"message"`
+	Type      string     `json:"type"`
+}
+
+// breadcrumbList accepts both shapes Sentry uses for the same field: the bare
+// array the browser SDK puts in an envelope, and the `{"values": [...]}` wrapper
+// the store endpoint documents. Guessing one of the two is how breadcrumbs get
+// dropped without anyone noticing — testdata/envelope.bin is what caught it.
+type breadcrumbList []sentryCrumb
+
+func (b *breadcrumbList) UnmarshalJSON(raw []byte) error {
+	var bare []sentryCrumb
+	if err := json.Unmarshal(raw, &bare); err == nil {
+		*b = bare
+		return nil
+	}
+	var wrapped struct {
+		Values []sentryCrumb `json:"values"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return fmt.Errorf("breadcrumbs: %w", err)
+	}
+	*b = wrapped.Values
+	return nil
 }
 
 // sentryTime accepts both shapes Sentry SDKs emit for a timestamp: epoch seconds
@@ -176,7 +199,7 @@ func reportFrom(payload []byte) (Report, error) {
 		}
 	}
 
-	for _, b := range ev.Breadcrumbs.Values {
+	for _, b := range ev.Breadcrumbs {
 		level := b.Level
 		if level == "" {
 			level = "info"
@@ -192,24 +215,33 @@ func reportFrom(payload []byte) (Report, error) {
 	return r, nil
 }
 
-// decode turns one envelope into the Client report it carries and the DOM
-// Snapshot attached to it. An envelope with no event item — a session or a
-// standalone attachment — yields ok=false and is dropped.
-func decode(b []byte) (r Report, snapshot []byte, ok bool, err error) {
+// ingested is what one envelope carried. The Snapshot travels with the Report it
+// belongs to rather than beside it, because nothing ever wants one without the
+// other. Found is false for an envelope with no event item — a session, or a
+// standalone attachment — which is dropped.
+type ingested struct {
+	Report   Report
+	Snapshot []byte
+	Found    bool
+}
+
+// decode turns one Sentry envelope into the Client report it carries.
+func decode(b []byte) (ingested, error) {
 	items, err := parseEnvelope(b)
 	if err != nil {
-		return Report{}, nil, false, err
+		return ingested{}, err
 	}
+	var in ingested
 	for _, it := range items {
 		switch {
 		case it.Type == "event":
-			if r, err = reportFrom(it.Payload); err != nil {
-				return Report{}, nil, false, err
+			if in.Report, err = reportFrom(it.Payload); err != nil {
+				return ingested{}, err
 			}
-			ok = true
+			in.Found = true
 		case it.Type == "attachment" && it.Filename == snapshotFilename:
-			snapshot = it.Payload
+			in.Snapshot = it.Payload
 		}
 	}
-	return r, snapshot, ok, nil
+	return in, nil
 }

@@ -31,7 +31,7 @@ OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
 .PHONY: build build-all test vet tidy check-links vendor-agent \
 	install up down status errors uninstall \
-	demo demo-down e2e e2e-inspect e2e-down clean
+	demo demo-down e2e e2e-inspect e2e-down capture-envelope clean
 
 # ---- Vendored browser agent ---------------------------------------------------
 # The injected agent is @sentry/browser. Its npm package ships only ESM/CJS, so
@@ -39,11 +39,13 @@ OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 # result is committed: building proximo — and building the stack images from the
 # published module — must need nothing but the module itself, and an inspected
 # page must work with no network. The entry re-exports only `init`, so
-# tree-shaking drops tracing, replay, feedback and the AI integrations: ~89 KB,
-# ~30 KB over the wire.
+# tree-shaking drops tracing, replay, feedback and the AI integrations: ~89 KB
+# raw, ~30 KB gzipped — and the hop serves it gzipped, content-addressed and
+# immutable, so a page pays for it once per proximo version.
 SENTRY_VERSION  ?= 10.72.0
 ESBUILD_VERSION ?= 0.25.10
 NODE_IMAGE      ?= node:22-alpine
+PUPPETEER_IMAGE ?= ghcr.io/puppeteer/puppeteer:latest
 AGENT_SDK       := internal/inspect/assets/sentry.min.js
 
 $(AGENT_SDK):
@@ -51,7 +53,7 @@ $(AGENT_SDK):
 		set -e; cd /tmp; \
 		npm install --silent --no-audit --no-fund \
 			@sentry/browser@$(SENTRY_VERSION) esbuild@$(ESBUILD_VERSION) >/dev/null 2>&1; \
-		echo "export { init } from \"@sentry/browser\";" > entry.js; \
+		echo "export { init, captureMessage } from \"@sentry/browser\";" > entry.js; \
 		./node_modules/.bin/esbuild entry.js --bundle --format=iife --global-name=Sentry \
 			--minify --target=es2018 --log-level=error \
 			--banner:js="/* @sentry/browser $(SENTRY_VERSION), bundled by esbuild $(ESBUILD_VERSION) via \`make vendor-agent\`. Do not edit. */" \
@@ -61,6 +63,15 @@ $(AGENT_SDK):
 vendor-agent:
 	rm -f $(AGENT_SDK)
 	$(MAKE) $(AGENT_SDK)
+
+## capture-envelope: re-record the parser's fixture from the vendored agent
+# The envelope parser reads a format proximo does not own, so it is tested
+# against bytes the SDK really produced: this drives the vendored agent in a real
+# browser and saves the envelope it sends. Run it after every vendor-agent — a
+# test fails until the fixture and the bundle name the same version.
+capture-envelope: $(AGENT_SDK)
+	docker run --rm -v "$(CURDIR)":/src -w /src -e NODE_PATH=/home/pptruser/node_modules \
+		$(PUPPETEER_IMAGE) node internal/inspect/testdata/capture.js
 
 # ---- Build (Go runs in Docker) ------------------------------------------------
 

@@ -23,6 +23,18 @@ map** of it — every `##` section of every guide is linked below.
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
 | [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases. |
 
+### [The domain model](../CONTEXT.md)
+
+The project's glossary: the terms proximo uses and the ones it deliberately
+avoids. Normative — a term with no implementation is marked as a declared debt,
+not described as if it worked. Read it before naming anything new.
+
+### [Decision records](adr/)
+
+Why a design is the way it is, and what was rejected on the way.
+
+[0001 — Client reports are captured by a proximo hop that rewrites the response](adr/0001-inspection-injects-into-the-response-path.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·

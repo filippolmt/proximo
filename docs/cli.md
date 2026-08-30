@@ -222,6 +222,10 @@ proximo errors --json                # structured, for tooling
 | `--all` | `false` | Include `debug`/`info`/`log` breadcrumbs, hidden by default so framework chatter does not bury the report. |
 | `--json` | `false` | Emit the raw Exchanges instead of the reading layout. |
 
+`proximo status` lists which routes are under Inspection, and anything proximo had
+to relax on them to get there — that belongs with the route, which is why it is
+not only in `proximo errors`.
+
 The default layout has a stable field order on purpose — it is read as often by
 an agent as by a person. See
 [Inspection](observability.md#inspection--what-the-browser-saw) for what is

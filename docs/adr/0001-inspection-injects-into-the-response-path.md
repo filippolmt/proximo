@@ -55,22 +55,37 @@ through.
   `tunnel` option, not code of ours. It already captures exceptions, rejections
   and Breadcrumbs (console, fetch/XHR, clicks, navigation) and is
   source-map-aware. The cost is that the hop must parse the Sentry envelope wire
-  format — public and documented — and that ~30 KB over the wire is added to every
-  inspected page. The Snapshot rides along as an envelope attachment, since the
-  SDK does not capture DOM without its replay product.
+  format — public and documented. The bundle is ~89 KB raw; the hop serves it
+  gzipped (~30 KB) from a URL that carries a digest of its own content, so it is
+  cached immutably and a page pays for it once per proximo version rather than on
+  every load. Two things the SDK does not do for us ride on top: the DOM Snapshot,
+  attached to the envelope by hand because Sentry only captures DOM as part of its
+  replay product, and `securitypolicyviolation`, which raises no exception and has
+  no default integration.
 - Because it must work on any stack, the hop cannot assume a permissive page. It
   drops the browser's `Accept-Encoding` so the only encoding offered upstream is
   the gzip Go's own transport adds and unwraps, which keeps injection working
   even against a backend that compresses regardless, and it reconciles the
   response's
-  `Content-Security-Policy`: it carries the page's nonce onto the injected tag
-  where there is one, and where the policy still would not admit the agent it
-  **relaxes `script-src` and says so** — a warning in `proximo errors` and in
-  `proximo status`, for as long as the route carries the label. Silently editing a
-  security header was rejected outright: the relaxation is confined to routes the
-  developer opted in, disappears with the label, and is never invisible.
+  `Content-Security-Policy` on two axes, because a policy can defeat Inspection by
+  refusing to load the agent *or* by refusing to let it report. For loading it
+  carries the page's own nonce onto the injected tag where there is one, and
+  otherwise **relaxes `script-src` with a minted nonce** — a nonce, not a source,
+  because it is the one thing that works under `'strict-dynamic'` and under a
+  hash-only policy alike. For reporting it widens `connect-src` with `'self'`,
+  the tunnel being same-origin. Either way it **says so**: on the Exchange, which
+  `proximo errors` prints, and against the host, which `proximo status` prints for
+  as long as the route is inspected — the second is kept outside the ring buffer
+  precisely so eviction cannot hide it. Silently editing a security header was
+  rejected outright: the relaxation is confined to routes the developer opted in,
+  disappears with the label, and is never invisible.
 - Inspected routes gain an extra hop, so they pay latency and acquire a new way to
   fail. Both are bounded to the routes the developer explicitly opted in.
+- The label is refused, with a warning, where it cannot be honoured: on a TCP
+  (SNI) route, which has no response body to inject into, and on a merged replica
+  set, because the hop is told one backend by one header and inventing a
+  multi-backend header format is not worth it for the rare case. A refusal is
+  never silent — `proximo status` shows it against the route.
 - proximo reserves `/.proximo/` on the project's own origin. A project serving that
   prefix collides with the collector.
 - Exchanges live in an in-memory ring buffer bounded by bytes, not by count, and

@@ -30,7 +30,7 @@ func TestWriteExchange(t *testing.T) {
 	}
 
 	var b strings.Builder
-	writeExchange(&b, e, false)
+	writeExchange(&b, e, warnAndAbove)
 	out := b.String()
 
 	for _, want := range []string{
@@ -51,7 +51,7 @@ func TestWriteExchange(t *testing.T) {
 		t.Errorf("info breadcrumbs must be hidden without --all\n---\n%s", out)
 	}
 	b.Reset()
-	writeExchange(&b, e, true)
+	writeExchange(&b, e, everything)
 	if !strings.Contains(b.String(), "HMR update") {
 		t.Error("--all must show every breadcrumb")
 	}
@@ -62,7 +62,7 @@ func TestWriteExchange(t *testing.T) {
 // agent simply never fired.
 func TestWriteExchangeBackendFailure(t *testing.T) {
 	var b strings.Builder
-	writeExchange(&b, inspect.Exchange{ID: "a1", At: time.Now(), Method: "GET", Path: "/api/cart", Status: 500, Duration: 1200 * time.Millisecond}, false)
+	writeExchange(&b, inspect.Exchange{ID: "a1", At: time.Now(), Method: "GET", Path: "/api/cart", Status: 500, Duration: 1200 * time.Millisecond}, warnAndAbove)
 	out := b.String()
 	if !strings.Contains(out, "1.2s") {
 		t.Errorf("sub-second and second scales must both render: %q", out)
@@ -79,7 +79,7 @@ func TestWriteExchangeWarnings(t *testing.T) {
 	writeExchange(&b, inspect.Exchange{
 		ID: "a1", At: time.Now(), Method: "GET", Path: "/", Status: 200,
 		Warnings: []string{"relaxed Content-Security-Policy on this route so the proximo agent could load"},
-	}, false)
+	}, warnAndAbove)
 	if !strings.Contains(b.String(), warnPrefix+"relaxed Content-Security-Policy") {
 		t.Errorf("warning not shown\n---\n%s", b.String())
 	}
