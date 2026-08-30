@@ -62,11 +62,7 @@ func newErrorsCmd() *cobra.Command {
 				return enc.Encode(exchanges)
 			}
 			if len(exchanges) == 0 {
-				if all {
-					fmt.Fprintln(out, "No Exchanges recorded. Label a container with proximo.inspect=true and load a page.")
-				} else {
-					fmt.Fprintln(out, "Nothing went wrong in this window. Widen it with --since, or use --all to see the clean Exchanges too.")
-				}
+				writeNothingFound(out, all)
 				return nil
 			}
 			show := warnAndAbove
@@ -159,6 +155,41 @@ func inspectRouteWarnings() map[string][]string {
 		return nil
 	}
 	return out
+}
+
+// writeNothingFound explains an empty listing. The two reasons it can be empty
+// are opposite — nothing broke, or the buffer was just emptied — and a restart is
+// easy to cause by accident: bringing the stack up to pick up a change discards
+// every Exchange recorded before it.
+func writeNothingFound(out io.Writer, all bool) {
+	if uptime := hopUptime(); uptime > 0 && uptime < 10*time.Minute {
+		fmt.Fprintf(out, "No Exchanges: the inspection hop restarted %s ago, and Exchanges are held in memory only.\n",
+			uptime.Round(time.Second))
+		fmt.Fprintln(out, "Reload the page and reproduce the problem — anything recorded before the restart is gone.")
+		return
+	}
+	if all {
+		fmt.Fprintln(out, "No Exchanges recorded. Label a container with proximo.inspect=true and load a page.")
+		return
+	}
+	fmt.Fprintln(out, "Nothing went wrong in this window. Widen it with --since, or use --all to see the clean Exchanges too.")
+}
+
+// hopUptime returns how long the hop has been running, or zero when it cannot be
+// asked. Best-effort: this only ever adds a hint to a message.
+func hopUptime() time.Duration {
+	resp, err := http.Get(inspectAPI("/info"))
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	var info struct {
+		Started time.Time `json:"started"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.Started.IsZero() {
+		return 0
+	}
+	return time.Since(info.Started)
 }
 
 func hopUnreachable(err error) error {

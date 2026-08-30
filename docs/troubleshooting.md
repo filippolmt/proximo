@@ -177,8 +177,11 @@ without guessing.
    page's `Content-Security-Policy` blocked it — the Exchange will say proximo
    relaxed the policy, and if it does not, the policy came from somewhere proximo
    cannot rewrite (a `<meta http-equiv>` tag in your own markup).
-5. **The Exchange is still held.** The buffer is bounded and in memory: a restart
-   of the stack clears it, and heavy traffic evicts the oldest first.
+5. **The Exchange is still held.** The buffer is bounded and in memory, so
+   `proximo up` — including the one you ran to pick up a change — throws away
+   everything recorded before it. This catches people out: reproduce the problem
+   *after* the restart, not before. `proximo errors` says so when the hop came up
+   in the last ten minutes.
 6. **You are looking in the right window.** `--since` defaults to 15 minutes and
    follows the report, not the page load, so a page opened an hour ago that threw
    a moment ago still appears. `--all` adds the Exchanges with nothing wrong, which

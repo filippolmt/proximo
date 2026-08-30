@@ -96,6 +96,11 @@ type Store struct {
 	// long as the route is inspected, not only while some Exchange survives
 	// eviction.
 	routeWarnings map[string][]string // host -> warnings, deduplicated
+
+	// started is when this Store came up. Exchanges do not survive a restart, so
+	// an empty list means one of two very different things — nothing went wrong,
+	// or everything was just thrown away — and a developer must be told which.
+	started time.Time
 }
 
 // DefaultBudget is how much memory the Store is allowed before it starts
@@ -108,7 +113,10 @@ func NewStore(budget int64) *Store {
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	return &Store{budget: budget, byID: map[string]*Exchange{}, routeWarnings: map[string][]string{}}
+	return &Store{
+		budget: budget, byID: map[string]*Exchange{},
+		routeWarnings: map[string][]string{}, started: time.Now(),
+	}
 }
 
 // NewID mints the correlation id that joins the two halves of an Exchange.
@@ -252,6 +260,10 @@ func (s *Store) List(q Query) []Exchange {
 	}
 	return out
 }
+
+// Started reports when the Store came up, so an empty listing can say whether a
+// restart is the reason.
+func (s *Store) Started() time.Time { return s.started }
 
 // Snapshot returns the DOM captured for one Exchange, or nil when there is none.
 func (s *Store) Snapshot(id string) []byte {

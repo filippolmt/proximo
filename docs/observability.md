@@ -185,7 +185,9 @@ usually already point at real files.
 ### Where the data lives
 
 In memory in the hop, in a ring buffer bounded by bytes (64 MiB by default),
-oldest evicted first — and lost when the stack restarts. That is deliberate:
+oldest evicted first — and **lost when the stack restarts**, `proximo up`
+included. Reproduce a problem after a restart, not before; `proximo errors` tells
+you when a recent restart is why it has nothing to show. That is deliberate:
 client reports carry exception messages, breadcrumbs and a copy of the page,
 which in development routinely means tokens, session data and whatever you were
 working on. Keeping it off your disk means there is no retention to configure and

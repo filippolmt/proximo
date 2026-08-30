@@ -304,6 +304,8 @@ func (a AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}))
 	case "/warnings":
 		writeJSON(w, a.Store.RouteWarnings())
+	case "/info":
+		writeJSON(w, map[string]any{"started": a.Store.Started()})
 	case "/dom":
 		snap := a.Store.Snapshot(q.Get("x"))
 		if snap == nil {
