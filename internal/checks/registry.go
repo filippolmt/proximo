@@ -9,6 +9,7 @@ import (
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
+	"github.com/filippolmt/proximo/internal/skill"
 )
 
 // Check IDs. They are the vocabulary prerequisites are written in, so they are
@@ -28,6 +29,7 @@ const (
 	IDDNSServer    = "dns-server"
 	IDDNSResolver  = "dns-resolver"
 	IDRoutes       = "routes"
+	IDAgentSkill   = "agent-skill"
 )
 
 // All is the registry: every check proximo knows how to make, in the order a
@@ -200,7 +202,75 @@ func All(env Env) []Check {
 					"%s", notesOf(unserved))
 			},
 		},
+		Check{
+			ID:   IDAgentSkill,
+			Name: "The agent skill matches the installed CLI",
+			Doc:  "the-agent-skill-is-out-of-date",
+			Run: func(context.Context) Result {
+				return agentSkill(env)
+			},
+		},
 	)
+}
+
+// agentSkill closes what auto-update deliberately cannot reach: a copy skipped
+// because somebody edited it, and a project copy in a repository proximo is not
+// being run from. The two have different cures, so they are reported apart.
+//
+// With no managed copy it is skipped rather than failed: a developer who uses
+// no coding agent must never see a red line about one.
+func agentSkill(env Env) Result {
+	copies, err := env.AgentSkill()
+	if err != nil {
+		// A skip, not a failure: the environment could not answer, and there is
+		// no command that cures it — the destinations could not be resolved at
+		// all, so every command naming one would meet the same wall. A Remedy
+		// here would be advice dressed as a cure.
+		return Skipped("the installed agent skills could not be read: %v", err)
+	}
+
+	var managed int
+	var stale, modified, unmanaged []skill.Copy
+	for _, c := range copies {
+		if c.State.Managed() {
+			managed++
+		}
+		switch c.State {
+		case skill.Stale:
+			stale = append(stale, c)
+		case skill.Modified:
+			modified = append(modified, c)
+		case skill.Unmanaged:
+			unmanaged = append(unmanaged, c)
+		}
+	}
+
+	switch {
+	case managed == 0 && len(unmanaged) > 0:
+		// Named rather than passed over in silence: a developer looking at the
+		// directory would otherwise read "no agent skill" as flatly false.
+		return Skipped("proximo installed no agent skill on this host (%s came from another channel, and proximo neither updates nor removes it)",
+			skill.Dirs(unmanaged))
+	case managed == 0:
+		return Skipped("proximo installed no agent skill on this host")
+	case len(modified) > 0:
+		return Failed(skill.Command("install", modified, true),
+			"%s was edited after proximo wrote it, so it is left at whatever it now says",
+			skill.Dirs(modified))
+	case len(stale) > 0:
+		return Failed(skill.Command("install", stale, false),
+			"%s was written by another version of proximo", skill.Dirs(stale))
+	}
+
+	noun := "copies"
+	if managed == 1 {
+		noun = "copy"
+	}
+	if len(unmanaged) > 0 {
+		return Passed("%d %s at %s; %s is unmanaged, so nothing keeps it level",
+			managed, noun, env.CLIVersion, skill.Dirs(unmanaged))
+	}
+	return Passed("%d %s at %s", managed, noun, env.CLIVersion)
 }
 
 // PreInstall is what `install` gates on: Preflight plus the one statement about

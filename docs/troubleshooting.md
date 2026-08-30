@@ -376,3 +376,48 @@ almost always one of three:
 proximo never falls back to building the image on your host: that retry needs
 the same network that just failed, and on the rare success it would leave you
 running an image nobody else has.
+
+## The agent skill is out of date
+
+`proximo doctor` reports the copies of the [agent skill](skill.md) proximo
+installed and found behind the binary, or edited since:
+
+```
+✘ The agent skill matches the installed CLI
+    ~/.claude/skills/proximo was written by another version of proximo
+    Remedy: proximo skill install --scope global
+    See:    https://github.com/filippolmt/proximo/blob/main/docs/troubleshooting.md#the-agent-skill-is-out-of-date
+```
+
+`install`, `up` and `update` already refresh every copy they can see, so a copy
+this Check names is one they could not reach:
+
+- **A project copy in a repository proximo is not being run from.** Auto-update
+  reaches a `--scope project` copy only while proximo runs inside that
+  repository, so a repository left alone holds a stale copy until someone
+  returns to it. Run `proximo skill install` there.
+- **A global copy no lifecycle command has run beside.** `skill install`
+  defaults to project scope, so the Remedy names `--scope global` when the copy
+  it is about lives under your home. A failure spanning both scopes takes two
+  runs, and the next report names what is left.
+- **A copy edited after proximo wrote it.** proximo never overwrites one: at
+  project scope that content belongs to a team. The Remedy is
+  `proximo skill install --force`, which discards the local edits — the only
+  command that does.
+
+Two answers are not failures. A copy with no `.proximo-skill.json` beside it is
+**unmanaged** — installed from a marketplace or by an agent's own installer — so
+proximo neither updates nor removes it, and the Check names it rather than
+claiming a version it cannot know:
+
+```
+– The agent skill matches the installed CLI — proximo installed no agent skill
+  on this host (~/.claude/skills/proximo came from another channel, and proximo
+  neither updates nor removes it)
+```
+
+And a host with no copy at all **skips** the Check with nothing to name: a
+developer who uses no coding agent should never see a red line about one.
+
+After any of these, restart the agent session — a skill is read when the session
+starts.

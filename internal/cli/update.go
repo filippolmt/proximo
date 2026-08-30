@@ -90,6 +90,11 @@ func runUpdate(cmd *cobra.Command, force bool, image string) error {
 	// An explicit --image always converges, even onto a stack already running
 	// that ref: while an override is in effect `update` must never claim the
 	// stack is up to date with the CLI, because it is not running the CLI's image.
+	// The Skill is in this binary, so it is level with the CLI whatever the
+	// stack turns out to be doing — including the three cases below that
+	// converge nothing.
+	refreshSkills(out)
+
 	switch decideUpdate(dockerUp, force || image != "", stack, cliVer, wantImage) {
 	case actionDockerDown:
 		fmt.Fprintln(out, "Docker is not reachable; the update will apply on the next `proximo up`.")

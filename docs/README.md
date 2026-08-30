@@ -20,6 +20,7 @@ map** of it — every `##` section of every guide is linked below.
 | [Architecture](architecture.md) | explanation | How it works under the hood: the embedded stack, the DNS server, the local CA and trust, the watcher. |
 | [Routing](routing.md) | reference | How to expose a container: the `proximo.*` labels, port auto-detection, multiple hosts, and native Traefik compatibility. |
 | [Dev-time observability](observability.md) | how-to | The opt-in `up --observability` logs (Dozzle) + metrics (Beszel) dashboards — credential-less and no-secret. |
+| [The agent skill](skill.md) | how-to | The Skill proximo ships to coding agents: installing it, the Managed copy that keeps it level with the binary, and what it knows. |
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
 | [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases and the stack image pipeline. |
 
@@ -40,6 +41,8 @@ Why a design is the way it is, and what was rejected on the way.
 [0003 — Every route answers on a qualified host](adr/0003-every-route-answers-on-a-qualified-host.md)
 
 [0004 — Checks are a first-class concept, with a report and a remedy](adr/0004-checks-report-remedies.md)
+
+[0005 — The agent skill ships in the CLI, and the CLI keeps it current](adr/0005-the-agent-skill-ships-in-the-cli.md)
 
 ### [Installation](installation.md)
 
@@ -62,6 +65,8 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo errors`](cli.md#proximo-errors) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
+[`proximo skill install`](cli.md#proximo-skill-install) ·
+[`proximo skill uninstall`](cli.md#proximo-skill-uninstall) ·
 [`proximo uninstall`](cli.md#proximo-uninstall) ·
 [`proximo version`](cli.md#proximo-version) ·
 [Typical sessions](cli.md#typical-sessions)
@@ -109,6 +114,13 @@ Why a design is the way it is, and what was rejected on the way.
 [Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 
+### [The agent skill](skill.md)
+
+[Install it](skill.md#install-it) ·
+[Managed and unmanaged copies](skill.md#managed-and-unmanaged-copies) ·
+[What the Skill knows](skill.md#what-the-skill-knows) ·
+[Without the binary](skill.md#without-the-binary)
+
 ### [Troubleshooting](troubleshooting.md)
 
 [The Docker daemon is not reachable](troubleshooting.md#the-docker-daemon-is-not-reachable) ·
@@ -128,7 +140,8 @@ Why a design is the way it is, and what was rejected on the way.
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·
 [Degraded stack](troubleshooting.md#degraded-stack) ·
 [The stack runs an overridden image](troubleshooting.md#the-stack-runs-an-overridden-image) ·
-[The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled)
+[The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled) ·
+[The agent skill is out of date](troubleshooting.md#the-agent-skill-is-out-of-date)
 
 ### [Development](development.md)
 
@@ -137,6 +150,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds) ·
 [Version and image ref](development.md#version-and-image-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
+[The published skill (`skills/`)](development.md#the-published-skill-skills) ·
 [The injected agent](development.md#the-injected-agent) ·
 [Releases](development.md#releases)
 

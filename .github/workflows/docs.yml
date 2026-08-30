@@ -13,6 +13,24 @@ permissions:
   contents: read
 
 jobs:
+  # The agent skill quotes contracts out of docs/ verbatim. This runs in the
+  # docs workflow, not in CI, because CI ignores `docs/**` — and a docs edit is
+  # exactly what makes the skill drift.
+  skill-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check the agent skill is in sync with docs/
+        run: go test ./internal/skill -run TestGeneratedBlocksMatchDocs -count=1
+
   link-check:
     runs-on: ubuntu-latest
     steps:

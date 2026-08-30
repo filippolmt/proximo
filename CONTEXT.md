@@ -165,3 +165,25 @@ served was live. The unit proximo hands to a developer or an agent, and the
 reason both halves are collected: neither half alone says whether a broken page
 is the backend's fault or the front-end's.
 _Avoid_: session, request, correlation
+
+### What proximo hands to an agent
+
+**Skill**:
+The artefact proximo hands an agent so the agent can operate proximo on a
+developer's behalf: what to ask, in what order, and what not to do. Not
+documentation, which is written for a person who is reading, and not a command,
+which is written for a shell — it is the procedure an agent follows when the
+developer asks *it*, rather than proximo, why a page is broken. There is exactly
+one: the developer's question is never "is this a routing problem or a front-end
+one", so the answer is never a choice between two skills.
+_Avoid_: plugin, integration, prompt, tool, agent instructions
+
+**Managed copy**:
+A copy of the Skill that proximo itself wrote, and whose version and content it
+therefore knows. proximo keeps a managed copy level with the CLI, and on
+uninstall removes the ones it recognises. A copy that arrived by any other route
+is not managed: proximo neither updates nor deletes it, because it did not put it
+there — and it says so, rather than leaving an agent to assume a copy is current.
+A copy a developer has edited stops being current without stopping being theirs:
+proximo reports it and leaves it alone.
+_Avoid_: installed skill, tracked copy, vendored skill

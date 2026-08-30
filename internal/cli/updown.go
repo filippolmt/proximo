@@ -68,6 +68,7 @@ func newUpCmd() *cobra.Command {
 			if err := docker.Converge(cfg.TLD, certDir, opts); err != nil {
 				return err
 			}
+			refreshSkills(cmd.OutOrStdout())
 			fmt.Fprintln(cmd.OutOrStdout(), "Proximo stack started.")
 			return nil
 		},
@@ -107,6 +108,7 @@ func upObservability(cmd *cobra.Command, tld, certDir string, opts docker.Conver
 		return err
 	}
 
+	refreshSkills(out)
 	fmt.Fprintln(out, "Proximo stack started with observability.")
 	fmt.Fprintf(out, "  Logs:    https://logs.%s\n", tld)
 	fmt.Fprintf(out, "  Metrics: https://metrics.%s\n", tld)

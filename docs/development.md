@@ -108,6 +108,39 @@ boot-time container restart. Two consequences:
 - Installed users only get an asset fix on the **next release** — the binary
   carries its own asset copy.
 
+## The published skill (`skills/`)
+
+The word "skill" means two things in this tree, and they are not the same
+directory:
+
+| Directory | What it is |
+| --- | --- |
+| `skills/proximo/` | What proximo **publishes** — the single source of the [agent Skill](skill.md), compiled into the binary and written out by `proximo skill install`. A public, stable path: a marketplace entry pins a `git-subdir` on it. |
+| `.claude/skills/` | What proximo **consumes** while it is being developed — skills this repository vendors for its own contributors. Nothing ships from here. |
+
+`skills/embed.go` exists only so the source has a Go package to be embedded
+from: `//go:embed` cannot reach out of its own directory, and the source must
+stay at `skills/proximo/`.
+
+The Skill's `references/` quote contracts out of `docs/` verbatim, inside
+`<!-- generated:start source=docs/<file>.md#<anchor> -->` markers. Regenerate
+them after editing the source section:
+
+```sh
+make skill-refs
+```
+
+`go test ./...` fails when they drift, and the **Docs** workflow runs the same
+check — CI ignores `docs/**`, and a docs edit is exactly what makes the Skill
+drift. The generator takes the first table or ordered list in the named section
+and rewrites every relative link to the published site: an installed copy has
+no `docs/` beside it, so a repository-relative link out of the Skill would
+resolve to nothing.
+
+The Skill's version is the CLI's version. There is no independent release
+cadence to reason about — and no way to ship a Skill fix without shipping a
+binary.
+
 ## The injected agent
 
 The [Inspection](observability.md#inspection--what-the-browser-saw) hop injects

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/filippolmt/proximo/internal/docker"
+	"github.com/filippolmt/proximo/internal/skill"
 )
 
 // healthyEnv is a machine where every statement holds. It is the fixture the
@@ -44,6 +45,9 @@ func healthyEnv() Env {
 		},
 		Routes: func(context.Context) ([]docker.Route, error) {
 			return []docker.Route{{Container: "web", Host: "web.test"}}, nil
+		},
+		AgentSkill: func() ([]skill.Copy, error) {
+			return []skill.Copy{{Dest: skill.Dest{Dir: "/home/dev/.claude/skills/proximo"}, State: skill.Current}}, nil
 		},
 	}
 }
@@ -490,5 +494,92 @@ func TestPrivilegedPortsAreNotHeldByDefault(t *testing.T) {
 		if held(port, "tcp") {
 			t.Skipf("something is listening on :%d in this environment", port)
 		}
+	}
+}
+
+// The agent-skill Check reports what auto-update could not reach, and says
+// nothing at all on a host that installed no skill.
+func TestAgentSkillCheck(t *testing.T) {
+	at := func(state skill.State, scope skill.Scope, dir string) skill.Copy {
+		return skill.Copy{Dest: skill.Dest{Scope: scope, Dir: dir}, State: state}
+	}
+	for _, tc := range []struct {
+		name   string
+		copies []skill.Copy
+		want   Status
+		remedy string
+		// detail is a substring the observation must carry, where the point of
+		// the case is what it says rather than only its status.
+		detail string
+	}{
+		{
+			name: "no managed copy is skipped, not failed",
+			copies: []skill.Copy{
+				at(skill.Absent, skill.Global, "/home/dev/.claude/skills/proximo"),
+				at(skill.Absent, skill.Global, "/home/dev/.codex/skills/proximo"),
+			},
+			want: Skip,
+		},
+		{
+			// The skip says a copy is there and proximo did not put it there,
+			// rather than reading as "no agent skill" to someone looking at it.
+			name:   "an unmanaged copy is named by the skip",
+			copies: []skill.Copy{at(skill.Unmanaged, skill.Global, "/home/dev/.claude/skills/proximo")},
+			want:   Skip,
+			detail: "another channel",
+		},
+		{
+			name: "an unmanaged copy is named beside a passing one",
+			copies: []skill.Copy{
+				at(skill.Current, skill.Project, "/repo/.claude/skills/proximo"),
+				at(skill.Unmanaged, skill.Global, "/home/dev/.codex/skills/proximo"),
+			},
+			want:   Pass,
+			detail: "unmanaged",
+		},
+		{
+			name:   "a copy behind the binary is cured by a plain install",
+			copies: []skill.Copy{at(skill.Stale, skill.Project, "/repo/.claude/skills/proximo")},
+			want:   Fail,
+			remedy: "proximo skill install",
+		},
+		{
+			// `skill install` defaults to project scope, so a failure that is
+			// only about the home copy must name the scope that reaches it.
+			name:   "a global copy names the scope that reaches it",
+			copies: []skill.Copy{at(skill.Stale, skill.Global, "/home/dev/.claude/skills/proximo")},
+			want:   Fail,
+			remedy: "proximo skill install --scope global",
+		},
+		{
+			// Distinct remedy: nothing but --force overwrites an edited copy.
+			name: "an edited copy names the only command that overwrites it",
+			copies: []skill.Copy{
+				at(skill.Stale, skill.Project, "/a"),
+				at(skill.Modified, skill.Project, "/b"),
+			},
+			want:   Fail,
+			remedy: "proximo skill install --force",
+		},
+		{
+			name:   "a copy level with the binary passes",
+			copies: []skill.Copy{at(skill.Current, skill.Global, "/home/dev/.claude/skills/proximo")},
+			want:   Pass,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := healthyEnv()
+			env.AgentSkill = func() ([]skill.Copy, error) { return tc.copies, nil }
+			res := agentSkill(env)
+			if res.Status != tc.want {
+				t.Fatalf("status %q (%s), want %q", res.Status, res.Detail, tc.want)
+			}
+			if res.Remedy != tc.remedy {
+				t.Errorf("remedy %q, want %q", res.Remedy, tc.remedy)
+			}
+			if tc.detail != "" && !strings.Contains(res.Detail, tc.detail) {
+				t.Errorf("detail %q does not mention %q", res.Detail, tc.detail)
+			}
+		})
 	}
 }
