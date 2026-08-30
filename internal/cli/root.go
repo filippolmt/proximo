@@ -16,6 +16,10 @@ func newRootCmd() *cobra.Command {
 			"https://<name>.<tld> with zero per-container port publishing and " +
 			"zero hosts-file edits, on macOS and Linux.",
 		SilenceUsage: true,
+		// Execute prints the error itself, with a "error:" prefix; without this
+		// cobra prints it too, which doubles every multi-line error (a converge
+		// failure carries a Remedy on its own lines).
+		SilenceErrors: true,
 	}
 	root.AddCommand(
 		newInstallCmd(),

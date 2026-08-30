@@ -226,3 +226,34 @@ proximo up                                # converges the stack back to healthy
 Stale routes left behind by a crash are cleaned up on the next reconcile after
 the watcher restarts. If `proximo status` reports a version skew between the
 CLI and the stack, run `proximo update` — see [Updating](updating.md#proximo-update).
+
+## The stack image cannot be pulled
+
+A converge that leaves the stack image absent ends with a **Remedy** naming it:
+
+```
+the stack image ghcr.io/filippolmt/proximo:v0.4.0 is not on this host.
+Remedy: docker pull ghcr.io/filippolmt/proximo:v0.4.0
+```
+
+Run that pull. proximo does not claim the pull is what broke — other services
+can fail the same converge — but the pull's own output settles it, and it is
+almost always one of three:
+
+- **No route to `ghcr.io`** (offline, VPN, proxy). Then the pinned Traefik and
+  dashboard images cannot be fetched either; nothing else is wrong, and the next
+  `proximo up` converges once the registry is reachable.
+- **`denied` / `unauthorized`.** The image tag for this CLI version has not been
+  published yet (a release still building), or the package is no longer public.
+  A published version tag is never deleted, so a tag that used to work and now
+  denies is a package-visibility problem, not a missing image.
+- **`manifest unknown`.** You are on a CLI built from an unreleased ref. Use a
+  published version, or point the stack at an image you have:
+  `proximo up --image <ref>` — see
+  [Running a different image](updating.md#running-a-different-image).
+- **The pull succeeds.** Then the image was never the problem — read the error
+  above the Remedy for the service that actually failed.
+
+proximo never falls back to building the image on your host: that retry needs
+the same network that just failed, and on the rare success it would leave you
+running an image nobody else has.

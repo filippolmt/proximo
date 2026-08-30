@@ -5,3 +5,5 @@ openspec
 .claude
 .codex
 *.md
+graphify-out
+examples

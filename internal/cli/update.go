@@ -12,21 +12,26 @@ import (
 )
 
 func newUpdateCmd() *cobra.Command {
-	var force bool
+	var (
+		force bool
+		image string
+	)
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Converge the running stack to the installed CLI version",
-		Long: "Reconcile the running stack (traefik, dns, watcher) with the " +
-			"installed CLI: re-materialize the embedded assets, rebuild the " +
-			"in-stack images at the CLI version, and re-pull Traefik. " +
+		Long: "Reconcile the running stack (traefik, dns, watcher, inspector) " +
+			"with the installed CLI: re-materialize the embedded assets, pull " +
+			"the stack image pinned to the CLI version, and re-pull Traefik. " +
 			"Idempotent, never needs sudo, and a soft no-op when Docker or the " +
 			"stack is down (it applies on the next `proximo up`).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUpdate(cmd, force)
+			return runUpdate(cmd, force, image)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "rebuild the stack images without using the build cache")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"pull the stack image even when its tag is already cached")
+	imageFlag(cmd, &image)
 	return cmd
 }
 
@@ -45,38 +50,47 @@ const (
 // daemon is reachable; stackRunning is whether any stack container is running;
 // stackVer is the running stack version ("" when the stack predates version
 // stamping — pre-0.4.0 stacks carry no label); cliVer is the installed CLI
-// version. force overrides the up-to-date no-op so `--force` always rebuilds.
-// An unlabeled legacy stack never matches cliVer, so it converges.
-func decideUpdate(dockerUp, stackRunning, force bool, stackVer, cliVer string) updateAction {
+// version; stackImage is the image ref the running stack declares and wantImage
+// the one this run would give it. force overrides the up-to-date no-op so
+// `--force` always converges.
+//
+// An unlabeled legacy stack never matches cliVer, so it converges. So does a
+// stack whose image differs from the one asked for — including a stack still
+// running a sticky --image override that this run is clearing: reporting "up to
+// date" while the stack runs something else is the defect, not the shortcut.
+func decideUpdate(dockerUp, stackRunning, force bool, stackVer, cliVer, stackImage, wantImage string) updateAction {
 	switch {
 	case !dockerUp:
 		return actionDockerDown
 	case !stackRunning:
 		return actionStackDown
-	case stackVer == cliVer && !force:
+	case stackVer == cliVer && stackImage == wantImage && !force:
 		return actionUpToDate
 	default:
 		return actionConverge
 	}
 }
 
-func runUpdate(cmd *cobra.Command, force bool) error {
+func runUpdate(cmd *cobra.Command, force bool, image string) error {
 	out := cmd.OutOrStdout()
 	ctx := context.Background()
 	cliVer := version.Version
 
 	dockerUp := checkDocker() == nil
-	var stackVer string
-	var stackRunning bool
+	var stack docker.StackInfo
 	if dockerUp {
-		v, running, err := docker.StackVersion(ctx)
-		if err != nil {
+		var err error
+		if stack, err = docker.StackStatus(ctx); err != nil {
 			return err
 		}
-		stackVer, stackRunning = v, running
 	}
+	opts := docker.ConvergeOpts{Force: force, Image: image}
+	wantImage := opts.EffectiveImage()
 
-	switch decideUpdate(dockerUp, stackRunning, force, stackVer, cliVer) {
+	// An explicit --image always converges, even onto a stack already running
+	// that ref: while an override is in effect `update` must never claim the
+	// stack is up to date with the CLI, because it is not running the CLI's image.
+	switch decideUpdate(dockerUp, stack.Running, force || image != "", stack.Version, cliVer, stack.Image, wantImage) {
 	case actionDockerDown:
 		fmt.Fprintln(out, "Docker is not reachable; the update will apply on the next `proximo up`.")
 		return nil
@@ -96,8 +110,9 @@ func runUpdate(cmd *cobra.Command, force bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Converging stack %s -> %s...\n", docker.DisplayVersion(stackVer), cliVer)
-	if err := docker.Converge(cfg.TLD, certDir, docker.ConvergeOpts{Force: force}); err != nil {
+	reportImage(out, opts)
+	fmt.Fprintf(out, "Converging stack %s -> %s...\n", docker.DisplayVersion(stack.Version), cliVer)
+	if err := docker.Converge(cfg.TLD, certDir, opts); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Stack updated to %s.\n", cliVer)

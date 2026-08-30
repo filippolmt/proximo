@@ -41,8 +41,9 @@ and exits:
 
 - `install` → generate CA, configure resolver, install trust, `compose up`.
 - `up` / `down` → start / stop the stack.
-- `update` → converge the running stack to the installed CLI version (rebuild
-  the in-stack images, re-pull Traefik); a soft no-op when Docker/stack is down.
+- `update` → converge the running stack to the installed CLI version (pull the
+  stack image pinned to it, re-pull Traefik); a soft no-op when Docker/stack is
+  down.
 - `config tld` → rewrite the resolver and restart the stack.
 - `uninstall` → reverse all host changes, `compose down`.
 
@@ -53,12 +54,19 @@ substituted in.
 
 ## The stack: four services
 
-| Service | Image / build | Role |
+The three Go services share **one published image**,
+`ghcr.io/filippolmt/proximo:<cli-version>` — all three binaries in it, one
+picked per service with an `entrypoint`. Nothing is compiled on your host, and
+the tag is the CLI's own version, never `latest`, so a binary can never pull
+services speaking a label contract it has never seen
+([ADR 0002](adr/0002-stack-services-ship-as-one-published-image.md)).
+
+| Service | Image | Role |
 | --- | --- | --- |
 | **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. Its built-in **dashboard** (`api.dashboard`, read-only — `api.insecure` stays off) is served at `https://traefik.<tld>`. |
-| **dns** | built from this repo | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
-| **watcher** | built from this repo | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Mounts the Docker socket and the CA. |
-| **inspector** | built from this repo | The [Inspection](observability.md#inspection--what-the-browser-saw) hop. In the request path only for containers labelled `proximo.inspect`; idle otherwise. Publishes a loopback-only read API for `proximo errors` and holds Exchanges in memory, never on disk. |
+| **dns** | `proximo` (`dnsserver`) | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
+| **watcher** | `proximo` (`watcher`) | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Mounts the Docker socket and the CA. |
+| **inspector** | `proximo` (`inspector`) | The [Inspection](observability.md#inspection--what-the-browser-saw) hop. In the request path only for containers labelled `proximo.inspect`; idle otherwise. Publishes a loopback-only read API for `proximo errors` and holds Exchanges in memory, never on disk. |
 
 The watcher and Traefik share the host directory `~/.proximo/data/traefik`
 (**bind-mounted** into both at `/etc/traefik/dynamic`, not a Docker named volume):
@@ -169,4 +177,4 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
 | `internal/inspect/` | The Inspection hop: the injected agent (`assets/agent.js`), response injection, CSP reconciliation, report ingest, the in-memory Exchange store. |
-| `cmd/dnsserver/`, `cmd/watcher/`, `cmd/inspector/` | Entrypoints for the in-stack services. |
+| `cmd/dnsserver/`, `cmd/watcher/`, `cmd/inspector/` | Entrypoints for the in-stack services — all three built into the one published image by the root `Dockerfile`. |

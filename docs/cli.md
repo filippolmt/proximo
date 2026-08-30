@@ -61,8 +61,21 @@ proximo host. `traefik.<tld>` is **reserved** for the stack; do not assign it to
 your own containers.
 
 `up` shares the convergence path with [`update`](#proximo-update), so it also
-applies any pending update — rebuilding the in-stack images at the installed CLI
+applies any pending update — pulling the stack image pinned to the installed CLI
 version and re-pulling Traefik. See [Updating](updating.md).
+
+### --image
+
+```sh
+proximo up --image ghcr.io/filippolmt/proximo:sha-1a2b3c4
+```
+
+Run the stack from this image ref instead of the version-pinned one. Takes the
+ref **verbatim** (a tag, a digest, or a locally built image) and replaces the
+**whole stack**, never one component. It is **sticky** — written into the
+materialized `.env`, so containers restarting at boot keep it — and the next
+`up` or `update` without the flag clears it and says so. See
+[Running a different image](updating.md#running-a-different-image).
 
 ### --observability
 
@@ -102,21 +115,25 @@ proximo down --observability
 ## proximo update
 
 Converge the running stack to the **installed CLI version**: re-materialize the
-embedded assets, rebuild the `dns` / `watcher` images at the CLI version, and
-re-pull Traefik (security patches). Run it after upgrading the CLI
-(`brew upgrade` / `go install`) — it is also the safe escape hatch for any stack
-problem.
+embedded assets, pull the stack image tagged with the CLI version, and re-pull
+Traefik (security patches). Run it after upgrading the CLI (`brew upgrade` /
+`go install`) — it is also the safe escape hatch for any stack problem.
 
 ```sh
 proximo update
-proximo update --force   # rebuild images without the build cache
+proximo update --force            # pull even when the tag is already cached
+proximo update --image <ref>      # same escape hatch as `up --image`
 ```
 
 - **Idempotent**: prints "up to date" and recreates nothing when the stack
-  already matches the CLI.
+  already matches the CLI — and never says so while an `--image` override is in
+  effect, because then the stack is not running the CLI's image.
 - **Never needs sudo**: Docker operations only — no resolver or CA changes.
 - **Soft no-op**: when Docker is unreachable or no stack is running it reports
-  that the update will apply on the next `proximo up` and exits 0.
+  that the update will apply on the next `proximo up` and exits 0. This is what
+  makes it safe in the Homebrew cask's post-install hook.
+- **Prunes nothing**: superseded images stay on disk, so a downgrade is instant.
+  `uninstall` removes them.
 - Shares the convergence code path with `proximo up`, so "update now" and
   "update on next start" cannot drift.
 
@@ -198,6 +215,14 @@ read-only **skew warning** recommending `proximo update` (it never rebuilds):
 
 ```
 ⚠ stack is running 0.1.0 but the CLI is 0.2.0; run `proximo update` to converge
+```
+
+And when the stack runs an [`--image` override](#--image), `status` names the
+ref it is actually running — a stack must never run one thing and declare
+another:
+
+```
+⚠ stack image overridden: proximo:src (an `up` or `update` without --image restores ghcr.io/filippolmt/proximo:v0.2.0)
 ```
 
 ## proximo errors
@@ -292,8 +317,11 @@ Reverse everything `install` did and tear down the stack:
 proximo uninstall
 ```
 
-1. Stop the stack (this also removes the profiled observability containers) and
-   delete the generated observability secret + env files
+1. Stop the stack (this also removes the profiled observability containers)
+   **and proximo's own images**, current and superseded — the one place proximo
+   deletes them; a plain `down` keeps them cached, and Traefik and the dashboard
+   images are never touched — and delete the generated observability secret +
+   env files
    ([Dev-time observability](observability.md)). proximo uses no Docker named
    volume, so there is nothing to volume-remove here — the data goes with the
    home in step 4.

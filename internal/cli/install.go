@@ -50,7 +50,7 @@ func runInstall(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := docker.Up(cfg.TLD, certDir); err != nil {
+	if err := docker.Converge(cfg.TLD, certDir, docker.ConvergeOpts{}); err != nil {
 		return err
 	}
 

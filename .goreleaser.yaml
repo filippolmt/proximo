@@ -58,20 +58,24 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/filippolmt/proximo"
     description: "Local development reverse proxy with automatic DNS and trusted HTTPS"
-    # Nudge the user to converge the running stack to the new CLI. The cask hook
-    # deliberately runs NO Docker build or network work (Homebrew discourages it
-    # and Docker may be down): convergence stays driven by `up` / `status` /
-    # manual `update`.
+    # The stack is no longer built on the host, so the hook below converges it
+    # itself: what used to be heavy work Homebrew discourages is now a pull.
+    # The caveat covers the one case the hook cannot: Docker down at upgrade time.
     caveats: |
-      To converge the running stack with this CLI version, run:
-        proximo update
-      Safe to run any time; if Docker is not running it applies on the next
-      `proximo up`.
-    # The binary is unsigned; strip the quarantine attribute so macOS Gatekeeper
-    # does not refuse to run it with an "is damaged" alert.
+      The running stack is converged to this CLI version on install. If Docker
+      was not running, it converges on the next `proximo up` — or run
+      `proximo update` yourself; it never needs sudo.
     hooks:
       post:
         install: |
+          # The binary is unsigned; strip the quarantine attribute so macOS
+          # Gatekeeper does not refuse to run it with an "is damaged" alert.
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/proximo"]
           end
+          # `proximo update` is a soft no-op that exits 0 when Docker is
+          # unreachable or no stack is running, so it is safe in a hook. It is
+          # not allowed to fail the upgrade either way: a stack that cannot
+          # converge now converges on the next `proximo up`.
+          system_command "#{staged_path}/proximo", args: ["update"],
+                         must_succeed: false, print_stdout: true

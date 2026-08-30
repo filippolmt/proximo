@@ -14,7 +14,7 @@ import (
 // Seams for the stack teardown and observability cleanup so the uninstall wiring
 // is unit-testable without Docker or touching the host (mirrors defaultRunner).
 var (
-	teardownStack      = docker.Down
+	teardownStack      = docker.Purge
 	purgeObservability = observability.Purge
 )
 

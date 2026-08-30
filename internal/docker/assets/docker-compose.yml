@@ -31,11 +31,9 @@ services:
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   dns:
-    build:
-      context: .
-      dockerfile: dns.Dockerfile
-      args:
-        PROXIMO_REF: ${PROXIMO_REF:-latest}
+    image: ${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}
+    # One image, three services: the entrypoint picks the binary.
+    entrypoint: ["/usr/local/bin/dnsserver"]
     restart: unless-stopped
     logging: *proximo-logging
     environment:
@@ -45,14 +43,13 @@ services:
       - "127.0.0.1:__DNSPORT__:5353/udp"
     labels:
       - "proximo.role=dns"
+      - "proximo.image=${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   watcher:
-    build:
-      context: .
-      dockerfile: watcher.Dockerfile
-      args:
-        PROXIMO_REF: ${PROXIMO_REF:-latest}
+    image: ${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}
+    # One image, three services: the entrypoint picks the binary.
+    entrypoint: ["/usr/local/bin/watcher"]
     restart: unless-stopped
     logging: *proximo-logging
     environment:
@@ -66,6 +63,7 @@ services:
       - __DATADIR__/traefik:/etc/traefik/dynamic
     labels:
       - "proximo.role=watcher"
+      - "proximo.image=${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   inspector:
@@ -75,11 +73,9 @@ services:
     # path — when nothing carries the label, so it runs unconditionally rather
     # than behind a profile: labelling a container must not require restarting
     # the stack. It holds Exchanges in memory only and writes nothing to disk.
-    build:
-      context: .
-      dockerfile: inspector.Dockerfile
-      args:
-        PROXIMO_REF: ${PROXIMO_REF:-latest}
+    image: ${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}
+    # One image, three services: the entrypoint picks the binary.
+    entrypoint: ["/usr/local/bin/inspector"]
     restart: unless-stopped
     logging: *proximo-logging
     ports:
@@ -89,6 +85,7 @@ services:
       - "127.0.0.1:__INSPECTPORT__:9001"
     labels:
       - "proximo.role=inspector"
+      - "proximo.image=${PROXIMO_IMAGE:-ghcr.io/filippolmt/proximo:main}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
   # --- Opt-in dev-time observability (profile: observability) ----------------
