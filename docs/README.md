@@ -23,6 +23,18 @@ map** of it — every `##` section of every guide is linked below.
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
 | [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases. |
 
+### [The domain model](../CONTEXT.md)
+
+The project's glossary: the terms proximo uses and the ones it deliberately
+avoids. Normative — a term with no implementation is marked as a declared debt,
+not described as if it worked. Read it before naming anything new.
+
+### [Decision records](adr/)
+
+Why a design is the way it is, and what was rejected on the way.
+
+[0001 — Client reports are captured by a proximo hop that rewrites the response](adr/0001-inspection-injects-into-the-response-path.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·
@@ -40,6 +52,7 @@ map** of it — every `##` section of every guide is linked below.
 [`proximo down`](cli.md#proximo-down) ·
 [`proximo update`](cli.md#proximo-update) ·
 [`proximo status`](cli.md#proximo-status) ·
+[`proximo errors`](cli.md#proximo-errors) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
 [`proximo uninstall`](cli.md#proximo-uninstall) ·
@@ -57,7 +70,7 @@ map** of it — every `##` section of every guide is linked below.
 
 [The big picture](architecture.md#the-big-picture) ·
 [The CLI is a one-shot orchestrator](architecture.md#the-cli-is-a-one-shot-orchestrator) ·
-[The stack: three services](architecture.md#the-stack-three-services) ·
+[The stack: four services](architecture.md#the-stack-four-services) ·
 [DNS](architecture.md#dns) ·
 [TLS and trust](architecture.md#tls-and-trust) ·
 [The watcher](architecture.md#the-watcher) ·
@@ -70,6 +83,7 @@ map** of it — every `##` section of every guide is linked below.
 [`proximo.port` — usually you can omit it](routing.md#proximoport--usually-you-can-omit-it) ·
 [`proximo.enable` — temporary opt-out](routing.md#proximoenable--temporary-opt-out) ·
 [`proximo.redirect` — opt in to the HTTP→HTTPS redirect](routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) ·
+[`proximo.inspect` — see what the browser saw](routing.md#proximoinspect--see-what-the-browser-saw) ·
 [What happens behind the scenes](routing.md#what-happens-behind-the-scenes) ·
 [Native Traefik labels (backward compatible)](routing.md#native-traefik-labels-backward-compatible) ·
 [Multiple networks](routing.md#multiple-networks) ·
@@ -83,6 +97,7 @@ map** of it — every `##` section of every guide is linked below.
 [No hardcoded secret](observability.md#no-hardcoded-secret) ·
 [Tear it down](observability.md#tear-it-down) ·
 [Logs, metrics & retention](observability.md#logs-metrics--retention) ·
+[Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 
 ### [Troubleshooting](troubleshooting.md)
@@ -95,6 +110,9 @@ map** of it — every `##` section of every guide is linked below.
 [macOS Gatekeeper blocks the binary](troubleshooting.md#macos-gatekeeper-blocks-the-binary) ·
 [Where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings) ·
 [Container not routed](troubleshooting.md#container-not-routed) ·
+[An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
+[proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
+[An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·
 [Degraded stack](troubleshooting.md#degraded-stack)
 
@@ -105,6 +123,7 @@ map** of it — every `##` section of every guide is linked below.
 [Local source builds (`PROXIMO_SRC`)](development.md#local-source-builds) ·
 [Version and module ref](development.md#version-and-module-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
+[The injected agent](development.md#the-injected-agent) ·
 [Releases](development.md#releases)
 
 ## New here?

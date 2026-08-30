@@ -24,11 +24,12 @@ var assets embed.FS
 
 // Sentinels replaced with configured values when assets are materialized.
 const (
-	tldSentinel        = "__TLD__"
-	dnsPortSentinel    = "__DNSPORT__"
-	dataDirSentinel    = "__DATADIR__"
-	obsEmailSentinel   = "__OBS_USER_EMAIL__"
-	obsHubPortSentinel = "__OBS_HUBPORT__"
+	tldSentinel         = "__TLD__"
+	dnsPortSentinel     = "__DNSPORT__"
+	dataDirSentinel     = "__DATADIR__"
+	obsEmailSentinel    = "__OBS_USER_EMAIL__"
+	obsHubPortSentinel  = "__OBS_HUBPORT__"
+	inspectPortSentinel = "__INSPECTPORT__"
 )
 
 // Observability profile + service names, used to bring the opt-in services up
@@ -111,7 +112,8 @@ func Materialize(tld, certDir string) (string, error) {
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
 // __DNSPORT__, __DATADIR__ — the absolute host data-dir path, the observability
-// user email, and the observability hub port) in an embedded asset. It is pure
+// user email, the observability hub port, and the Inspection read-API port) in an
+// embedded asset. It is pure
 // so the substitution can be unit tested directly; the Materialize WalkDir
 // closure calls it per file. Data with no sentinel is returned unchanged. The
 // observability email is deterministic from the TLD (its canonical form is
@@ -124,6 +126,7 @@ func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []by
 		{dataDirSentinel, dataDir},
 		{obsEmailSentinel, observability.Email(tld)},
 		{obsHubPortSentinel, strconv.Itoa(config.ObsHubPort)},
+		{inspectPortSentinel, strconv.Itoa(config.InspectAPIPort)},
 	} {
 		// Guard the substitution so an absent sentinel skips ReplaceAll's copy.
 		if needle := []byte(s.sentinel); bytes.Contains(data, needle) {
@@ -137,7 +140,7 @@ func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []by
 const devDockerfile = "Dockerfile.dev"
 
 // writeDevOverride wires a docker-compose.override.yml that builds the dns and
-// watcher images from a local checkout when PROXIMO_SRC points at the source
+// watcher and inspector images from a local checkout when PROXIMO_SRC points at the source
 // tree. When PROXIMO_SRC is unset it removes any stale override so the published
 // images (go install <module>@<ref>) are used instead. The override is loaded
 // automatically by `docker compose` alongside the base file.
@@ -165,7 +168,8 @@ func writeDevOverride(stackDir string) error {
 `
 	content := "services:\n" +
 		fmt.Sprintf(svc, "dns", abs, devDockerfile, "dnsserver") +
-		fmt.Sprintf(svc, "watcher", abs, devDockerfile, "watcher")
+		fmt.Sprintf(svc, "watcher", abs, devDockerfile, "watcher") +
+		fmt.Sprintf(svc, "inspector", abs, devDockerfile, "inspector")
 	return os.WriteFile(overridePath, []byte(content), 0o644)
 }
 

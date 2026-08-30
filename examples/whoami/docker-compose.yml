@@ -53,3 +53,13 @@ services:
     labels:
       - "proximo.hosts=slow-optout.test"
       - "proximo.health=false"
+
+  # Inspection: nginx serves real HTML (whoami answers text/plain, which has
+  # nothing to inject into), so the hop can insert the reporting agent before
+  # </head>. Load https://inspected.test and then run `proximo errors`.
+  inspected:
+    image: nginx:alpine
+    container_name: inspected
+    labels:
+      - "proximo.hosts=inspected.test"
+      - "proximo.inspect=true"

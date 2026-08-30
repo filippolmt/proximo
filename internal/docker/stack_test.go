@@ -213,6 +213,9 @@ func TestObservabilitySentinelsInCompose(t *testing.T) {
 		"USER_EMAIL: proximo@proximo.example",
 		"AUTO_LOGIN: proximo@proximo.example",
 		fmt.Sprintf("127.0.0.1:%d:8090", config.ObsHubPort),
+		// The hop's read API is loopback-only; its proxy side is never published.
+		fmt.Sprintf("127.0.0.1:%d:9001", config.InspectAPIPort),
+		"proximo.role=inspector",
 	}
 	for _, want := range wantContains {
 		if !strings.Contains(out, want) {
@@ -224,7 +227,7 @@ func TestObservabilitySentinelsInCompose(t *testing.T) {
 	if n := strings.Count(out, "proximo.redirect=true"); n != 2 {
 		t.Errorf("want proximo.redirect=true on both observability dashboards (x2), got %d", n)
 	}
-	for _, sentinel := range []string{tldSentinel, dnsPortSentinel, obsEmailSentinel, obsHubPortSentinel} {
+	for _, sentinel := range []string{tldSentinel, dnsPortSentinel, obsEmailSentinel, obsHubPortSentinel, inspectPortSentinel} {
 		if strings.Contains(out, sentinel) {
 			t.Errorf("sentinel %q left unsubstituted", sentinel)
 		}
@@ -233,6 +236,10 @@ func TestObservabilitySentinelsInCompose(t *testing.T) {
 	// watcher would exclude them from routing.
 	if strings.Contains(out, "proximo.role=dozzle") || strings.Contains(out, "proximo.role=beszel") {
 		t.Error("observability service must not have a proximo.role label")
+	}
+	// The hop must never publish its proxy port: only Traefik reaches it.
+	if strings.Contains(out, ":9000\"") {
+		t.Error("the hop's proxy port must not be published to the host")
 	}
 }
 

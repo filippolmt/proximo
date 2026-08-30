@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 
@@ -15,6 +16,40 @@ import (
 // warnPrefix marks a warning line in `proximo status` output (skew notice and
 // per-route notes both use it).
 const warnPrefix = "⚠ "
+
+// writeInspectionNotes reports, under the route table, which routes are under
+// Inspection and anything proximo had to do to their responses to get there.
+// Relaxing a page's Content-Security-Policy is the one that must never be
+// invisible, and it belongs here rather than only in `proximo errors`: it is a
+// property of the route for as long as it carries the label, not of one request
+// that may already have been evicted from the hop's buffer.
+func writeInspectionNotes(out io.Writer, routes []docker.Route) {
+	var inspected []docker.Route
+	for _, r := range routes {
+		if r.Inspect || r.InspectNote != "" {
+			inspected = append(inspected, r)
+		}
+	}
+	if len(inspected) == 0 {
+		return
+	}
+
+	// Best-effort: the hop holds the warnings, and a stack without it (or one
+	// still starting) simply has none to report.
+	warnings := inspectRouteWarnings()
+
+	fmt.Fprintln(out)
+	for _, r := range inspected {
+		if r.InspectNote != "" {
+			fmt.Fprintf(out, "%s%s: %s\n", warnPrefix, r.Container, r.InspectNote)
+			continue
+		}
+		fmt.Fprintf(out, "%s under inspection — `proximo errors --host %s`\n", r.Host, r.Host)
+		for _, note := range warnings[r.Host] {
+			fmt.Fprintf(out, "  %s%s\n", warnPrefix, note)
+		}
+	}
+}
 
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
@@ -76,7 +111,11 @@ func newStatusCmd() *cobra.Command {
 					fmt.Fprintf(w, "%s\t%s\n", r.Container, val)
 				}
 			}
-			return w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			writeInspectionNotes(out, routes)
+			return nil
 		},
 	}
 }

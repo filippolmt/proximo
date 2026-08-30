@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# Dev image: builds a proximo stack binary (dnsserver / watcher) from the local
+# Dev image: builds a proximo stack binary (dnsserver / watcher / inspector) from the local
 # source tree. Used only when PROXIMO_SRC is set, so local changes can be tested
 # without publishing the module. Production builds use dns.Dockerfile /
-# watcher.Dockerfile (go install <module>@<ref>).
+# watcher.Dockerfile / inspector.Dockerfile (go install <module>@<ref>).
 ARG GO_VERSION=1.26
 ARG CMD
 ARG PROXIMO_REF

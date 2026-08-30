@@ -46,9 +46,11 @@ automatically so the in-stack images build from
 make install    # host setup (CA, resolver, trust) + start stack — asks for sudo
 make up         # start the stack (no host changes)
 make status     # list routed containers
+make errors     # Exchanges from inspected routes (ARGS="--host web.test")
 make down       # stop the stack
 make uninstall  # reverse host changes + tear down
 make e2e        # install + start the whoami demo + open https://whoami.test
+make e2e-inspect # prove Inspection end to end against the running stack
 make e2e-down   # stop demo + uninstall
 ```
 
@@ -77,13 +79,35 @@ source.
 
 The compose project lives in `internal/docker/assets/` and is compiled into
 the binary (`//go:embed`), then materialized to `~/.proximo/stack/` with the
-`__TLD__`, `__DNSPORT__` and `__DATADIR__` sentinels substituted. Two
+`__TLD__`, `__DNSPORT__`, `__DATADIR__`, `__OBS_HUBPORT__` and `__INSPECTPORT__`
+sentinels substituted. Two
 consequences:
 
 - **Editing an asset has no effect until the binary is rebuilt AND the stack
   re-materialized** (re-`install`/`up`/`update`).
 - Installed users only get an asset fix on the **next release** — the binary
   carries its own asset copy.
+
+## The injected agent
+
+The [Inspection](observability.md#inspection--what-the-browser-saw) hop injects
+`internal/inspect/assets/agent.js`, which is proximo's own — no bundle to build,
+no version to pin, no artifact to regenerate. Edit it like any other source file;
+`make build` embeds it.
+
+It is one half of a contract whose other half is `internal/inspect/report.go`:
+the agent posts JSON proximo defines, and the Go decodes it. Nothing compiles the
+two together, so `TestAgent` checks that every field the decoder reads is one the
+agent actually sets. Add a field to one side and that test tells you about the
+other.
+
+**Chrome is the supported browser.** The agent leans on what
+`window.onerror` hands over — the message, the file, the line, the column and the
+`Error` object, whose `stack` the browser has already formatted — plus
+`unhandledrejection` and `securitypolicyviolation`. All of it is verified on
+Chrome; other engines are likely to work and are not tested. The raw stack is
+always kept on the report, so a stack proximo cannot parse into frames is printed
+as the browser wrote it rather than dropped.
 
 ## Releases
 

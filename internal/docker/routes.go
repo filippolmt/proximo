@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,8 @@ type Route struct {
 	TCPPorts    []int    // backend ports for a TCP-over-TLS (SNI) route; empty means an HTTP route
 	TLSMode     string   // TCP TLS mode (terminate/passthrough); set only for TCP routes
 	Backends    int      // number of backend containers serving this route; >1 means round-robin balanced
+	Inspect     bool     // proximo.inspect asked for, and honoured: the route is served through the hop
+	InspectNote string   // set when proximo.inspect was asked for but could not be honoured
 }
 
 // Display renders the route's target for `proximo status`: the HTTPS URL for an
@@ -76,6 +79,10 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 
 	routes := dashboardRoutes(cs, tld)
 	var served []routedContainer
+	// Reasons a proximo.inspect label could not be honoured, keyed by container.
+	// A refusal must reach `proximo status`: one that lives only in the watcher's
+	// log is indistinguishable, from here, from Inspection simply not working.
+	refused := map[string]string{}
 	for _, c := range cs {
 		if !isRouted(c) {
 			continue
@@ -102,20 +109,27 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 			}
 			continue
 		}
+		if slices.Contains(info.tcpIgnoredHTTP, proximoInspectLabel) {
+			refused[rc.name] = "inspection off: a TCP route has no response body to inject into"
+		}
 		served = append(served, rc)
 	}
 	// Apply the same (host, prefix) conflict resolution the watcher uses so
 	// status lists only the routes actually served (status stays quiet about
 	// the dropped losers — the watcher logs them).
-	kept, _, _ := resolveRouteConflicts(served)
+	resolved := resolveRouteConflicts(served)
+	for _, name := range resolved.inspectDropped {
+		refused[name] = "inspection off: route balances across replicas"
+	}
+	kept := resolved.kept
 	for _, rc := range kept {
 		backends := len(rc.backends())
 		for _, host := range rc.hosts {
 			if rc.isTCP() {
-				routes = append(routes, Route{Container: rc.name, Host: host, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends})
+				routes = append(routes, Route{Container: rc.name, Host: host, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends, InspectNote: refused[rc.name]})
 				continue
 			}
-			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends})
+			routes = append(routes, Route{Container: rc.name, Host: host, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends, Inspect: rc.inspect, InspectNote: refused[rc.name]})
 		}
 	}
 	sort.Slice(routes, func(i, j int) bool {

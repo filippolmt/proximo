@@ -29,6 +29,11 @@ const (
 	// default 8090.
 	ObsHubPort = 48090
 
+	// InspectAPIPort is the loopback TCP host port the Inspection hop publishes
+	// its read API on, so `proximo errors` can reach it. The proxy side of the
+	// hop is never published: only Traefik talks to it, over the stack network.
+	InspectAPIPort = 48091
+
 	// appDir is the per-user directory name; the state home is $HOME/.proximo
 	// (a leading dot is prepended in HomePath).
 	appDir = "proximo"

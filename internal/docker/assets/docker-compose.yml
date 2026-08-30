@@ -68,6 +68,29 @@ services:
       - "proximo.role=watcher"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
 
+  inspector:
+    # The Inspection hop. It sits in the request path only for containers
+    # labelled proximo.inspect: the watcher points those routes at it and tells
+    # it the real backend in X-Proximo-Backend. Idle — and out of every request
+    # path — when nothing carries the label, so it runs unconditionally rather
+    # than behind a profile: labelling a container must not require restarting
+    # the stack. It holds Exchanges in memory only and writes nothing to disk.
+    build:
+      context: .
+      dockerfile: inspector.Dockerfile
+      args:
+        PROXIMO_REF: ${PROXIMO_REF:-latest}
+    restart: unless-stopped
+    logging: *proximo-logging
+    ports:
+      # Loopback-only read API, for `proximo errors`. The proxy side (:9000) is
+      # deliberately not published: only Traefik reaches it, over the stack
+      # network, and it would otherwise expose every recorded Exchange.
+      - "127.0.0.1:__INSPECTPORT__:9001"
+    labels:
+      - "proximo.role=inspector"
+      - "proximo.version=${PROXIMO_VERSION:-dev}"
+
   # --- Opt-in dev-time observability (profile: observability) ----------------
   # These services are inert unless `proximo up --observability` activates the
   # profile. They carry the plain proximo.hosts/proximo.port routing labels and
