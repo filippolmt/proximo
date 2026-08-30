@@ -69,7 +69,7 @@ jobs:
       # binary pull services speaking a contract it has never seen.
       - name: Tags and labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           flavor: latest=false
