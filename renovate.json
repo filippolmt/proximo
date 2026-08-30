@@ -14,6 +14,28 @@
       ],
       "depNameTemplate": "golang",
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG GO_VERSION=(?<currentValue>[^\\s]+)"
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^go\\.mod$/"
+      ],
+      "matchStrings": [
+        "(?m)^go (?<currentValue>\\d+\\.\\d+\\.\\d+)$"
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "golang-version"
     }
   ]
 }
