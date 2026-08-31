@@ -62,6 +62,7 @@ and it is already diagnosable — no label needed: [`transcript.md`](transcript.
 | `proximo.tcp.port` | no | — | Route the container's hosts over **TCP-over-TLS by SNI** on the given backend port (for DBs, gRPC, MQTT, HTTPS backends). Invalid values are skipped with a warning. |
 | `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port`. Note: SNI routes by host only, so several ports on one host cannot be told apart — give each TCP service its own host. |
 | `proximo.tcp.tls` | no | `terminate` | TLS mode for TCP routes: `terminate` (proxy terminates with the per-host proximo cert, forwards plaintext) or `passthrough` (proxy routes the raw TLS stream by SNI; the backend terminates). |
+| `proximo.transcript` | no | `false` | **Routes nothing.** Makes a container with no host known to proximo, so what the runtime declares about it — an exit, a restart, an OOM kill — is recorded and its output can be quoted. For workers, queue consumers and jobs. Truthy: `true`/`1`/`yes`. See [Incidents](https://filippolmt.github.io/proximo/observability.html#incidents--what-the-runtime-declared). |
 <!-- generated:end -->
 
 Full contract, with examples:

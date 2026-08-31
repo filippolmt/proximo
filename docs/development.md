@@ -60,6 +60,7 @@ make uninstall  # reverse host changes + tear down
 make e2e        # install + start the whoami demo + open https://whoami.test
 make e2e-inspect    # prove Inspection end to end against the running stack
 make e2e-transcript # prove the Transcript end to end (real access log, real log stream)
+make e2e-incident   # prove Incidents end to end (real Docker event stream, routeless worker)
 make e2e-down   # stop demo + uninstall
 ```
 
@@ -141,6 +142,20 @@ resolve to nothing.
 The Skill's version is the CLI's version. There is no independent release
 cadence to reason about — and no way to ship a Skill fix without shipping a
 binary.
+
+## The docs section map
+
+[docs/README.md](README.md) is the canonical section-level map: every `##`
+section of every guide is linked from it. That is a **test**, not a convention —
+`internal/skill/docsindex_test.go` fails the build when a guide grows a `##`
+section the map does not link, and when the map links a heading that no longer
+exists. It lives in the skill package because that package already reads `docs/`
+and already knows how a heading becomes a GitHub anchor.
+
+A map nobody enforces drifts, and a drifted map is worse than none: a reader who
+finds four of five sections listed concludes the fifth does not exist. `make
+check-links` is the other half — it validates every link and anchor offline, the
+way CI does.
 
 ## The injected agent
 

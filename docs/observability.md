@@ -120,11 +120,14 @@ no time-based "keep N days" option) and restart Docker:
 
 ## Transcripts — what the container said
 
-An Exchange has three parts: the **Access record** (what the stack saw), the
-**Transcript** (what the container that served it wrote while it was live) and,
-on inspected routes, the **Client reports** (what the browser saw). Every route
-produces the first two — Traefik records an access log, so a route needs no
-label and no browser to be diagnosable.
+A **Transcript** is what a container wrote in a window, quoted verbatim. What
+fixes the window is never a reading of the text: an **Exchange** fixes it most
+precisely — the Access record (what the stack saw), the Transcript, and on
+inspected routes the Client reports (what the browser saw) — an
+[Incident](#incidents--what-the-runtime-declared) fixes it for a container no
+request ever reaches, and `--since` fixes it when neither exists. Every route
+produces an Exchange: Traefik records an access log, so a route needs no label
+and no browser to be diagnosable.
 
 ```console
 $ curl -sS -o /dev/null https://web.test/checkout
@@ -156,10 +159,10 @@ overlap, proximo reports the overlap rather than attributing a line — see
 gone](troubleshooting.md#a-transcript-is-empty-or-says-the-container-is-gone)
 for that and the three silences it tells apart.
 
-A Transcript is quoted inline only beside an Exchange with something to say — a
-failing status, a Client report, or a warning proximo raised — and tightly
-capped, keeping both ends and declaring what it elided in between. `proximo errors transcript <id>` prints the whole of
-it.
+A Transcript is quoted inline only beside a row with something to say — a
+failing status, a Client report, a warning proximo raised, or an Incident — and
+tightly capped, keeping both ends and declaring what it elided in between.
+`proximo errors transcript <id>` prints the whole of it.
 
 ### Credentials
 
@@ -170,6 +173,192 @@ unrecognised format slips through. What proximo owes instead is to say so, which
 it does in the CLI and in the [agent Skill](skill.md). Transcripts are handed to
 agents, and an agent sends its context to a model API: check one before pasting
 it anywhere.
+
+## Incidents — what the runtime declared
+
+A worker, a queue consumer, a migration job: no host, no request, therefore no
+Exchange — and until something fixes a window there is nothing to quote. What
+fixes it is an **Incident**: a fact the runtime declares about a container, and
+never a line proximo read.
+
+```yaml
+services:
+  worker:
+    build: .
+    command: ./worker
+    labels:
+      # Observe me. This routes nothing: no host, no certificate, no DNS name.
+      - "proximo.transcript=true"
+```
+
+`proximo.transcript` is listed with proximo's other labels in
+[the label table](routing.md#the-proximo-labels), where it is the one entry that
+publishes no route: `proximo.hosts` says how a container is reached, this says it
+can be quoted. Two independent axes.
+
+Four things are Incidents, and that is the whole list:
+
+| Incident | Where it comes from | In the default listing |
+| --- | --- | --- |
+| `exited <code>` | the container's main process exited non-zero | yes |
+| `exited <code> (OOM-killed)` | the same exit, with the kernel's `oom` event folded into it | yes |
+| `restarted` | the container was restarted | yes |
+| `turned unhealthy` | the Docker healthcheck went from healthy to unhealthy | only under `--service` |
+
+Unhealthy is out of the default listing on purpose: a worker waiting on postgres
+is unhealthy for twenty seconds on every `compose up`, and a listing full of that
+noise stops being read exactly when it is needed.
+
+Nothing here reads the text. An exit code, a restart and an OOM kill are
+statements *Docker* makes about the container; deciding that a line looks like an
+error would mean interpreting the output a Transcript exists to quote. **No
+Incident does not mean no problem** — a worker that is alive and blocked on a
+slow query produces none. What proximo answers with in that case is
+[the readings](#readings--what-the-runtime-says-right-now), not silence.
+
+### Reading them
+
+Incidents appear in `proximo errors`, interleaved with Exchanges in one time
+order — because time order is the only thing tying the 14:05:09 checkout to the
+worker that died seven seconds earlier.
+
+```console
+$ proximo errors --since 15m
+```
+
+```
+14:05:09  1f0c9a2b3d4e5f60  POST /checkout  →  502  3ms
+  (no client report — the failure is the backend's)
+14:05:02  9b3e1a7c5d2f8e04  shop/worker  exited 137 (OOM-killed)
+  container shop-worker-1
+  transcript of shop-worker-1:
+      picked up job 41871
+      … 96 line(s) elided …
+      allocating 2.1 GiB for the import batch
+      whole transcript — `proximo errors transcript 9b3e1a7c5d2f8e04`
+
+A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere.
+```
+
+The window a Transcript is cut to runs from the **previous Incident of the same
+service** to this one — for a restart loop that is exactly one container
+lifetime, which no fixed duration could be: a fixed one truncates the worker that
+wrote the useful line five minutes before dying and drowns the one that restarts
+every three seconds.
+
+`--service` narrows the listing to one service, qualified (`shop/worker`) or bare
+when nothing contests it (`worker`); a contested bare name has its candidates
+reported rather than one of them chosen. See
+[`proximo errors`](cli.md#proximo-errors).
+
+### What proximo remembers, and what it does not
+
+proximo remembers **Incidents and only Incidents**: tens of bytes of runtime
+metadata per container, held in the watcher's memory, capped per service (the
+last few) and by age. A Transcript is still never stored — it is quoted from the
+container's own output at the moment it prints.
+
+That is a declared price, not an oversight: proximo will tell you the worker was
+OOM-killed at 14:02 **and that it can no longer show what it wrote**, because the
+container is gone or its log has rotated past that window. It says so in those
+words rather than printing an empty quote, and it never substitutes the output of
+whatever container answers to that name now.
+
+Incidents are held in memory, so `proximo up` discards them along with the
+Exchange buffer.
+
+## Readings — what the runtime says right now
+
+An Incident is dated history. A **Reading** is the present tense: what the
+runtime says about a container at the moment you ask. It is what
+`proximo errors --service <svc>` answers with when there is nothing else to
+show — because a container that is alive and stuck declares no Incident, and
+silence is the one answer that gets misread as *all fine*.
+
+```console
+$ proximo errors --service worker
+```
+
+```
+Nothing for shop/worker in this window: no Exchange it served, and no Incident the runtime declared about it.
+Widen the window with --since. A container that is alive and stuck declares no Incident, so an empty listing means proximo saw nothing happen — not that nothing is wrong.
+What proximo can see of shop-worker-1 right now: running for 3h12m4s, its healthcheck says healthy, restarted 2 times, and it last wrote 14m2s ago.
+Whether that is wrong is not proximo's to say: a consumer with nothing to do and one blocked on a slow query look the same from outside the container, and only the project knows whether work was waiting.
+```
+
+Each reading is a fact the runtime declares, and nothing else is one:
+
+| Reading | Where it comes from |
+| --- | --- |
+| running, and for how long | the container's state and the instant it last *started* — not when it was created, which would overstate a worker that has been restarted |
+| what the healthcheck says | Docker's healthcheck, if the image declares one |
+| how many times it restarted | Docker's own restart count |
+| how many replicas are running | the containers of that service, when there is more than one |
+| when its output last moved | the timestamp Docker stamps on the last line — **the instant, never the line**: when a stream moved is the runtime's to declare, what it said is the project's |
+
+A reading that could not be taken is *named*, never reported as a zero: a
+container whose log driver Docker cannot replay is told exactly that, rather than
+that it wrote nothing. Those are different facts about different things, and the
+second sends a developer to fix a logger that is fine.
+
+**The last step is deliberately not taken.** proximo does not say "this worker is
+stuck". A consumer waiting on an empty queue and one blocked on a slow query
+produce the same readings — running, healthy, quiet for a while — and telling them
+apart means knowing whether there was work waiting, which is the project's own
+business. Reporting without concluding is the same stance a Check takes: it
+reports, and never repairs. `--json` carries them under `"reading"` so an agent
+gets the facts without the prose.
+
+### Making "not progressing" an Incident
+
+The project can answer the question proximo cannot, and there is a way to say it
+that costs proximo nothing and your code nothing: **a Docker healthcheck**. Have
+the worker touch a marker whenever it advances, and let the healthcheck fail once
+the marker goes stale.
+
+```yaml
+services:
+  worker:
+    healthcheck:
+      # Healthy while the marker is younger than two minutes — "am I still
+      # advancing?", which is the one question only the project can answer.
+      # `$$` because Compose interpolates a single `$`; start_period because a
+      # missing marker fails the check, so the first job needs time to land.
+      test: ["CMD-SHELL", "[ $$(( $$(date +%s) - $$(stat -c %Y /tmp/progress) )) -lt 120 ]"]
+      interval: 30s
+      start_period: 60s
+    labels:
+      - "proximo.transcript=true"
+```
+
+Docker then declares the container **unhealthy**, and an unhealthy transition *is*
+an [Incident](#incidents--what-the-runtime-declared) — so the window it fixes
+quotes exactly what the worker wrote before it stopped:
+
+```console
+$ proximo errors --service worker
+```
+
+```
+12:28:52  5417e9d05379cb21  shop/worker  turned unhealthy
+  container shop-worker-1
+  transcript of shop-worker-1:
+      worker: finished job 41871
+      worker: waiting on a lock that will never come
+      whole transcript — `proximo errors transcript 5417e9d05379cb21`
+
+A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere.
+```
+
+Nothing about that makes proximo a dependency of your code: the healthcheck is a
+Docker feature, the marker is a file the worker already knows how to touch, and
+proximo neither defines the contract nor reads the marker. It only reports what
+the runtime declared.
+
+One thing to keep in mind, or the healthcheck will look broken: `turned unhealthy`
+is the one Incident kind held back from the default listing, so `proximo errors`
+alone will not show it. Ask by service, as above. See `stalling` in
+`examples/whoami/docker-compose.yml` for a runnable version.
 
 ## Inspection — what the browser saw
 

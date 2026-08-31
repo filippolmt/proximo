@@ -31,6 +31,7 @@ const (
 	obsEmailSentinel    = "__OBS_USER_EMAIL__"
 	obsHubPortSentinel  = "__OBS_HUBPORT__"
 	inspectPortSentinel = "__INSPECTPORT__"
+	watcherPortSentinel = "__WATCHERPORT__"
 	imageSentinel       = "__IMAGE__"
 )
 
@@ -114,8 +115,9 @@ func Materialize(tld, certDir, image string) (string, error) {
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
 // __DNSPORT__, __DATADIR__ — the absolute host data-dir path, the observability
-// user email, the observability hub port, the Inspection read-API port, and the
-// canonical stack image) in an embedded asset. It is deterministic
+// user email, the observability hub port, the Inspection read-API port, the
+// watcher's Incident read-API port, and the canonical stack image) in an
+// embedded asset. It is deterministic
 // so the substitution can be unit tested directly; the Materialize WalkDir
 // closure calls it per file. Data with no sentinel is returned unchanged. The
 // observability email is deterministic from the TLD (its canonical form is
@@ -131,6 +133,7 @@ func replaceSentinels(data []byte, tld string, dnsPort int, dataDir string) []by
 		{obsEmailSentinel, observability.Email(tld)},
 		{obsHubPortSentinel, strconv.Itoa(config.ObsHubPort)},
 		{inspectPortSentinel, strconv.Itoa(config.InspectAPIPort)},
+		{watcherPortSentinel, strconv.Itoa(config.WatcherAPIPort)},
 		{imageSentinel, CanonicalImage()},
 	} {
 		// Guard the substitution so an absent sentinel skips ReplaceAll's copy.

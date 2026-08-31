@@ -39,6 +39,12 @@ type Route struct {
 	Backends    int      // number of backend containers serving this route; >1 means round-robin balanced
 	Inspect     bool     // proximo.inspect asked for, and honoured: the route is served through the hop
 	InspectNote string   // set when proximo.inspect was asked for but could not be honoured
+	// Observed marks a container proximo knows about but does not route: it
+	// carries proximo.transcript and no host. It is inventory, not a warning —
+	// the only other way to learn the label took effect would be to wait for
+	// something to go wrong, and a label that cannot be verified is one that
+	// gets written wrong unnoticed.
+	Observed bool
 	// Collision marks the row as a host another container claimed. It is said
 	// structurally rather than read back out of Note, so a Check can route a
 	// collision to its own explanation without pattern-matching prose that is
@@ -131,18 +137,50 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	}
 	// Apply the same host-by-host resolution the watcher uses, so status lists
 	// exactly what is served — and, unlike before, what is not.
+	routes = append(routes, observedRoutes(cs)...)
 	resolved := resolveRoutes(served)
 	for _, name := range resolved.inspectDropped {
 		refused[name] = "inspection off: route balances across replicas"
 	}
 	routes = append(routes, servedRoutes(resolved, refused)...)
 	sort.Slice(routes, func(i, j int) bool {
+		// A row with no host is a container that is observed and not routed. It
+		// sorts last: the table is a listing of names proximo answers for, and
+		// these are the ones it does not.
+		if (routes[i].Host == "") != (routes[j].Host == "") {
+			return routes[j].Host == ""
+		}
 		if routes[i].Host != routes[j].Host {
 			return routes[i].Host < routes[j].Host
 		}
-		return routes[i].Path < routes[j].Path
+		if routes[i].Path != routes[j].Path {
+			return routes[i].Path < routes[j].Path
+		}
+		return routes[i].Container < routes[j].Container
 	})
 	return routes, nil
+}
+
+// observedRoutes lists the containers proximo observes without routing: the ones
+// carrying proximo.transcript and no host. They belong in the inventory because
+// otherwise the only way to learn the label took effect is to wait for something
+// to go wrong — and showing them only once they have an Incident is the same trap
+// in disguise.
+func observedRoutes(cs []container.Summary) []Route {
+	var out []Route
+	for _, c := range cs {
+		if isRouted(c) || !isObserved(c.Labels) {
+			continue
+		}
+		// No command in the note: `status` is an inventory, and a command in it
+		// reads as a Remedy — which this command never prints.
+		out = append(out, Route{
+			Container: primaryName(c),
+			Observed:  true,
+			Note:      fmt.Sprintf("no route — observed for Incidents (%s), service %s", TranscriptLabel, ServiceKey(c)),
+		})
+	}
+	return out
 }
 
 // servedRoutes renders a resolution as status rows: one row per declared host of
@@ -178,7 +216,7 @@ func servedRoutes(resolved routeResolution, refused map[string]string) []Route {
 // instead of classifying the role-labeled container (which never routes).
 func dashboardRoutes(cs []container.Summary, tld string) []Route {
 	for _, c := range cs {
-		if c.Labels[roleLabel] == "traefik" {
+		if c.Labels[RoleLabel] == "traefik" {
 			host := dashboardHost(tld)
 			return []Route{{Container: primaryName(c), Host: host, URL: "https://" + host}}
 		}
@@ -255,13 +293,13 @@ func StackStatus(ctx context.Context) (StackInfo, error) {
 	}
 	var info StackInfo
 	for _, c := range res.Items {
-		if _, isStack := c.Labels[roleLabel]; !isStack {
+		if _, isStack := c.Labels[RoleLabel]; !isStack {
 			continue
 		}
 		if !info.Running {
 			info.Running, info.Version = true, c.Labels[versionLabel]
 		}
-		if role := c.Labels[roleLabel]; role != "" && !slices.Contains(info.Roles, role) {
+		if role := c.Labels[RoleLabel]; role != "" && !slices.Contains(info.Roles, role) {
 			info.Roles = append(info.Roles, role)
 		}
 		// Only the image-backed services carry the ref; traefik may well be the
@@ -308,7 +346,7 @@ func StackRecordsAccessLog(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, c := range res.Items {
-		if c.Labels[roleLabel] != "traefik" {
+		if c.Labels[RoleLabel] != "traefik" {
 			continue
 		}
 		got, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})

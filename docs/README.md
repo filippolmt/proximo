@@ -10,7 +10,9 @@ map** of it — every `##` section of every guide is linked below.
 
 > **Editors:** GitHub anchors are generated from headings, so **renaming a
 > heading breaks links** — and when you add a `##` section to a guide, add it
-> to this map. CI link-checks every anchor.
+> to this map. Both directions are a test, not a habit:
+> `internal/skill/docsindex_test.go` fails when a section is missing from this
+> map or this map links a heading that is gone. CI link-checks every anchor too.
 
 | Guide | Type | What it covers |
 | --- | --- | --- |
@@ -44,6 +46,10 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0005 — The agent skill ships in the CLI, and the CLI keeps it current](adr/0005-the-agent-skill-ships-in-the-cli.md)
 
+[0006 — The Transcript is quoted, never stored](adr/0006-the-transcript-is-quoted-never-stored.md)
+
+[0007 — proximo remembers what the runtime declares, never what the project wrote](adr/0007-proximo-remembers-what-the-runtime-declares.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·
@@ -60,6 +66,7 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo up`](cli.md#proximo-up) ·
 [`proximo down`](cli.md#proximo-down) ·
 [`proximo update`](cli.md#proximo-update) ·
+[`proximo trust`](cli.md#proximo-trust) ·
 [`proximo status`](cli.md#proximo-status) ·
 [`proximo doctor`](cli.md#proximo-doctor) ·
 [`proximo errors`](cli.md#proximo-errors) ·
@@ -98,7 +105,12 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo.port` — usually you can omit it](routing.md#proximoport--usually-you-can-omit-it) ·
 [`proximo.enable` — temporary opt-out](routing.md#proximoenable--temporary-opt-out) ·
 [`proximo.redirect` — opt in to the HTTP→HTTPS redirect](routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) ·
+[`proximo.health` — wait for the container to be healthy](routing.md#proximohealth--wait-for-the-container-to-be-healthy) ·
+[`proximo.path` — split one host across containers](routing.md#proximopath--split-one-host-across-containers) ·
+[proximo middlewares — auth, CORS, custom headers](routing.md#proximo-middlewares--auth-cors-custom-headers) ·
 [`proximo.inspect` — see what the browser saw](routing.md#proximoinspect--see-what-the-browser-saw) ·
+[`proximo.tcp.port` — route TCP services by name (SNI)](routing.md#proximotcpport--route-tcp-services-by-name-sni) ·
+[Round-robin across replicas](routing.md#round-robin-across-replicas) ·
 [What happens behind the scenes](routing.md#what-happens-behind-the-scenes) ·
 [Native Traefik labels (backward compatible)](routing.md#native-traefik-labels-backward-compatible) ·
 [Multiple networks](routing.md#multiple-networks) ·
@@ -113,6 +125,8 @@ Why a design is the way it is, and what was rejected on the way.
 [Tear it down](observability.md#tear-it-down) ·
 [Logs, metrics & retention](observability.md#logs-metrics--retention) ·
 [Transcripts — what the container said](observability.md#transcripts--what-the-container-said) ·
+[Incidents — what the runtime declared](observability.md#incidents--what-the-runtime-declared) ·
+[Readings — what the runtime says right now](observability.md#readings--what-the-runtime-says-right-now) ·
 [Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 
@@ -132,12 +146,15 @@ Why a design is the way it is, and what was rejected on the way.
 [Port 443 or 80 already in use](troubleshooting.md#port-443-or-80-already-in-use) ·
 [macOS UDP forwarding](troubleshooting.md#macos-udp-forwarding) ·
 [Certificate warnings in Firefox or Chrome](troubleshooting.md#certificate-warnings-in-firefox-or-chrome) ·
+[Traefik logs failed to find any PEM data](troubleshooting.md#traefik-logs-failed-to-find-any-pem-data) ·
 [macOS Gatekeeper blocks the binary](troubleshooting.md#macos-gatekeeper-blocks-the-binary) ·
 [Where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings) ·
 [Container not routed](troubleshooting.md#container-not-routed) ·
 [A host collision is reported](troubleshooting.md#a-host-collision-is-reported) ·
+[502/503 right after a container restarts](troubleshooting.md#502503-right-after-a-container-restarts) ·
 [An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
 [proximo errors shows nothing at all](troubleshooting.md#proximo-errors-shows-nothing-at-all) ·
+[proximo errors reports no Incident](troubleshooting.md#proximo-errors-reports-no-incident) ·
 [A transcript is empty or says the container is gone](troubleshooting.md#a-transcript-is-empty-or-says-the-container-is-gone) ·
 [proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
@@ -155,6 +172,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Version and image ref](development.md#version-and-image-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
 [The published skill (`skills/`)](development.md#the-published-skill-skills) ·
+[The docs section map](development.md#the-docs-section-map) ·
 [The injected agent](development.md#the-injected-agent) ·
 [Releases](development.md#releases)
 

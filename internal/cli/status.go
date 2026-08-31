@@ -98,7 +98,12 @@ func newStatusCmd() *cobra.Command {
 			}
 			for _, r := range routes {
 				val := r.Display()
-				if r.Note != "" {
+				// An observed container's row is a fact about the inventory, not
+				// a warning: nothing is wrong with a worker that has no route.
+				switch {
+				case r.Observed:
+					val = r.Note
+				case r.Note != "":
 					val = warnPrefix + r.Note
 				}
 				if anyMW {

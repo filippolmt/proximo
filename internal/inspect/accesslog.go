@@ -59,9 +59,18 @@ func DecodeAccessLine(line []byte) (Exchange, bool) {
 // rather than drawn at random: two CLI invocations must name the same Exchange
 // the same way, which is the only property an agent needs to say "that one".
 func DeriveID(e Exchange) string {
+	return DeriveIDParts(e.Host, e.At.UTC().Format(time.RFC3339Nano), e.Backend)
+}
+
+// DeriveIDParts hashes the fields that make one thing unique into the short,
+// stable id proximo names it by. It is shared rather than repeated: an Incident
+// is identified the same way an Exchange is — derived from what it is, so the id
+// survives the restart that discards the thing it names, and stays computable
+// from what is on screen.
+func DeriveIDParts(parts ...string) string {
 	h := sha256.New()
 	// Length-prefixed so no pair of fields can be shifted into another pair.
-	for _, part := range []string{e.Host, e.At.UTC().Format(time.RFC3339Nano), e.Backend} {
+	for _, part := range parts {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}

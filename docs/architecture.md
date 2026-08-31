@@ -65,7 +65,7 @@ services speaking a label contract it has never seen
 | --- | --- | --- |
 | **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. Its built-in **dashboard** (`api.dashboard`, read-only — `api.insecure` stays off) is served at `https://traefik.<tld>`. |
 | **dns** | `proximo` (`dnsserver`) | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
-| **watcher** | `proximo` (`watcher`) | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Mounts the Docker socket and the CA. |
+| **watcher** | `proximo` (`watcher`) | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Records [Incidents](observability.md#incidents--what-the-runtime-declared) from the Docker event stream and publishes them on a loopback-only read API for `proximo errors`. Mounts the Docker socket and the CA. |
 | **inspector** | `proximo` (`inspector`) | The [Inspection](observability.md#inspection--what-the-browser-saw) hop. In the request path only for containers labelled `proximo.inspect`; idle otherwise. Publishes a loopback-only read API for `proximo errors` and holds Exchanges in memory, never on disk. |
 
 The watcher and Traefik share the host directory `~/.proximo/data/traefik`
@@ -130,7 +130,10 @@ start, then on Docker events, with a 30s safety resync. Each reconcile:
 1. **Finds Traefik** (the container labeled `proximo.role=traefik`).
 2. **Selects routed containers** — opted in via `proximo.hosts` (and not
    `proximo.enable=false`), or via native `traefik.enable=true`. Stack
-   containers (`proximo.role`) are never routed.
+   containers (`proximo.role`) are never routed. Every rule about what a
+   container's labels *declare* lives in `internal/docker/labels.go`, so the
+   watcher, `proximo status` and the Incident store cannot disagree about whether
+   a container is proximo's and what it asked for.
 3. **Resolves the backend port** — `proximo.port` if set; otherwise the single
    exposed TCP port (auto-detected via `ContainerInspect`); ambiguous cases are
    skipped with a warning.
@@ -145,6 +148,16 @@ start, then on Docker events, with a 30s safety resync. Each reconcile:
 The backend URL uses the **container name**, not its IP: once Traefik is on the
 container's network, Docker's embedded DNS resolves the name, and names survive
 restarts whereas IPs change.
+
+The same event stream feeds one more thing. Every message is offered to the
+**Incident** store before the reconcile runs: an exit, a restart, an OOM kill or
+a transition to unhealthy, for any container proximo knows — routed, or carrying
+`proximo.transcript`. The store is here rather than in the inspector because the
+watcher is the only stack service holding both the Docker socket and the
+subscription, and the inspector deliberately has neither: it sits in the request
+path. It is memory only, capped per service and by age, and published on a
+loopback port for `proximo errors`. See
+[ADR 0007](adr/0007-proximo-remembers-what-the-runtime-declares.md).
 
 ### The dashboard self-route
 
@@ -173,9 +186,10 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/config/` | Persisted config (TLD), per-user paths. |
 | `internal/dns/` | The wildcard DNS server + host-resolver wiring. |
 | `internal/tls/` | Local CA, leaf issuance, system + NSS trust. |
-| `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher. |
+| `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher, what a container's labels declare (`labels.go`), the Incident store and its loopback read API. |
 | `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
 | `internal/checks/` | The Check registry, the Report, and the host readings behind them (`proximo doctor`, and the pre-install subset `install`/`up` gate on). |
+| `internal/transcript/` | Reading a Transcript back: the window an Exchange or an Incident fixes, the cut, and the silences it tells apart. |
 | `internal/inspect/` | The Inspection hop: the injected agent (`assets/agent.js`), response injection, CSP reconciliation, report ingest, the in-memory Exchange store. |
 | `cmd/dnsserver/`, `cmd/watcher/`, `cmd/inspector/` | Entrypoints for the in-stack services — all three built into the one published image by the root `Dockerfile`. |

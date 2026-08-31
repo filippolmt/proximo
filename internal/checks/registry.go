@@ -29,6 +29,7 @@ const (
 	IDDNSServer    = "dns-server"
 	IDDNSResolver  = "dns-resolver"
 	IDAccessLog    = "access-log"
+	IDIncidents    = "incidents"
 	IDRoutes       = "routes"
 	IDAgentSkill   = "agent-skill"
 )
@@ -158,6 +159,25 @@ func All(env Env) []Check {
 					return Failed("proximo update", "the running Traefik writes no access log, so no route produces an Exchange")
 				}
 				return Passed("every route produces an Exchange")
+			},
+		},
+		Check{
+			ID:    IDIncidents,
+			Name:  "The running stack records Incidents",
+			Doc:   "proximo-errors-reports-no-incident",
+			Needs: []string{IDStack},
+			Run: func(ctx context.Context) Result {
+				on, err := env.Incidents(ctx)
+				switch {
+				case err != nil:
+					return Failed("proximo update", "could not read whether the running watcher records Incidents: %v", err)
+				case !on:
+					// Deliberately its own Check rather than leaning on version
+					// skew: "your stack is old" does not answer "why is this
+					// command silent about a worker that keeps dying".
+					return Failed("proximo update", "the running watcher publishes no Incident API, so nothing reports that a container exited, restarted or was OOM-killed")
+				}
+				return Passed("what the runtime declares about a container is recorded")
 			},
 		},
 		Check{

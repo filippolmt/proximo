@@ -172,7 +172,7 @@ func TestPortOwnersNamesTheContainerAndWhetherItIsTheStack(t *testing.T) {
 	cs := []container.Summary{
 		{
 			Names:  []string{"/proximo-traefik-1"},
-			Labels: map[string]string{roleLabel: "traefik"},
+			Labels: map[string]string{RoleLabel: "traefik"},
 			Ports: []container.PortSummary{
 				{PublicPort: 80, PrivatePort: 80, Type: "tcp"},
 				{PublicPort: 443, PrivatePort: 443, Type: "tcp"},
@@ -201,5 +201,43 @@ func TestPortOwnersNamesTheContainerAndWhetherItIsTheStack(t *testing.T) {
 	}
 	if _, ok := owners[PortKey(443, "udp")]; ok {
 		t.Error(":443/tcp answered for :443/udp")
+	}
+}
+
+// A container that carries proximo.transcript and no host is inventory: it is
+// listed, marked as having no route, and it is not a warning. Without the row
+// the only way to learn the label took effect is to wait for something to go
+// wrong.
+func TestObservedRoutesListTheContainersProximoWatchesWithoutRouting(t *testing.T) {
+	worker := container.Summary{
+		Names:  []string{"/shop-worker-1"},
+		Labels: map[string]string{TranscriptLabel: "true", composeProjectLabel: "shop", ComposeServiceLabel: "worker"},
+	}
+	routed := container.Summary{
+		Names:  []string{"/shop-web-1"},
+		Labels: map[string]string{proximoHostsLabel: "app.test", TranscriptLabel: "true"},
+	}
+	plain := container.Summary{Names: []string{"/postgres"}}
+	stack := container.Summary{
+		Names:  []string{"/proximo-watcher-1"},
+		Labels: map[string]string{RoleLabel: "watcher", TranscriptLabel: "true"},
+	}
+
+	got := observedRoutes([]container.Summary{worker, routed, plain, stack})
+	if len(got) != 1 {
+		t.Fatalf("observed rows = %+v, want only the routeless worker", got)
+	}
+	row := got[0]
+	switch {
+	case row.Container != "shop-worker-1":
+		t.Errorf("row names %q, want shop-worker-1", row.Container)
+	case !row.Observed:
+		t.Error("the row must be marked observed, so status prints it as inventory rather than as a warning")
+	case row.Host != "" || row.URL != "":
+		t.Errorf("row = %+v, want no host and no URL", row)
+	case !strings.Contains(row.Note, "no route") || !strings.Contains(row.Note, "shop/worker"):
+		t.Errorf("note = %q, want it to say there is no route and name the service to ask about", row.Note)
+	case strings.Contains(row.Note, "`"):
+		t.Errorf("note = %q, want no command: `status` is an inventory and never prints a Remedy", row.Note)
 	}
 }

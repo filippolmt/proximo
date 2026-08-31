@@ -34,6 +34,13 @@ const (
 	// hop is never published: only Traefik talks to it, over the stack network.
 	InspectAPIPort = 48091
 
+	// WatcherAPIPort is the loopback TCP host port the watcher publishes its
+	// Incident read API on, so `proximo errors` can ask what the runtime declared
+	// about a container. The watcher has no other listener: it is the one stack
+	// service holding both the Docker socket and the event subscription, and this
+	// is the only way anything on the host reads what it observed.
+	WatcherAPIPort = 48092
+
 	// appDir is the per-user directory name; the state home is $HOME/.proximo
 	// (a leading dot is prepended in HomePath).
 	appDir = "proximo"

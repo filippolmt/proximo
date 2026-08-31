@@ -233,6 +233,21 @@ CONTAINER  URL
 multi      ⚠ set proximo.port (exposes 2 TCP ports)
 ```
 
+A container that carries
+[`proximo.transcript`](routing.md#the-proximo-labels) and no host is in the
+inventory too, marked as having no route. It is not a warning — nothing is wrong
+with a worker that is not reachable — and it is listed so the label can be
+verified at all: the only other way to learn it took effect would be to wait for
+something to go wrong. The row names the service to pass to
+[`proximo errors --service`](#proximo-errors) and carries no command of its own:
+`status` is an inventory, and a command in it would read as a Remedy.
+
+```
+CONTAINER       URL
+shop-web-1      https://app.test  + app.shop.test
+shop-worker-1   no route — observed for Incidents (proximo.transcript), service shop/worker
+```
+
 Prints `No routed containers.` when nothing is exposed — which implies the
 stack is down, since a running stack always serves the dashboard route.
 
@@ -335,29 +350,64 @@ the browser reported.
 Every route produces an Exchange, labelled or not: a developer learns they need
 a diagnosis only after the request they needed it for is over.
 
+Interleaved with the Exchanges, in one time order, are the
+[Incidents](observability.md#incidents--what-the-runtime-declared) the runtime
+declared about the containers proximo knows — an exit, a restart, an OOM kill.
+There is one listing rather than two sections: the question is never "was it the
+request or the worker", and time order is the only thing tying the 14:05:09
+checkout to the worker that died seven seconds earlier.
+
 ```sh
 proximo errors                       # what went wrong in the last 15 minutes
 proximo errors --host web.test       # one host
+proximo errors --service worker      # one service: its Exchanges and its Incidents
+proximo errors --service shop/worker # qualified, when two projects both have one
 proximo errors --since 1h --limit 50
 proximo errors --since 2026-08-31T10:30:00Z   # an absolute instant
 proximo errors --all                 # the clean Exchanges too, and quiet breadcrumbs
 proximo errors --json                # structured, for tooling
 ```
 
-By default it lists only the Exchanges with something to say: a client report, a
-warning, or a failing status. The clean ones are hidden because otherwise the one
-page that broke is buried under every request that did not — and `--limit` then
-cuts the interesting one first. Ordering follows the **most recent activity**, not
-the page load: a page served ten minutes ago that threw a moment ago sorts above a
-request served since, and `--since` follows the report rather than the load.
+By default it lists only the rows with something to say: a client report, a
+warning, a failing status, an Incident. The clean ones are hidden because
+otherwise the one page that broke is buried under every request that did not —
+and `--limit` then cuts the interesting one first. Ordering follows the **most
+recent activity**, not the page load: a page served ten minutes ago that threw a
+moment ago sorts above a request served since, and `--since` follows the report
+rather than the load. An Incident sorts by the instant the runtime declared it.
+
+An Incident row carries the same instant and id as an Exchange row, then the
+service and what the runtime declared where the method, path and status would be.
+The request columns are not padded out with blanks: a hole in a column is a
+question, not information.
+
+```
+14:05:02  9b3e1a7c5d2f8e04  shop/worker  exited 137 (OOM-killed)
+```
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--host` | all | Only this host, e.g. `web.test`. |
+| `--host` | all | Only this host, e.g. `web.test`. An Incident carries no host, so this keeps the Incidents of the services that served that host's requests rather than dropping every one. |
+| `--service` | all | Only this Compose service: its Exchanges **and** its Incidents. Qualified (`shop/worker`) or bare when nothing contests it (`worker`); a contested bare name has its candidates reported rather than one of them chosen. Under an explicit `--service` nothing is held back, so `turned unhealthy` becomes visible too. |
 | `--since` | `15m` | A duration back from now (`15m`, `2h`) **or** an absolute RFC 3339 instant (`2026-08-31T10:30:00Z`). There is no cursor and no persisted state: an agent knows when it last looked, proximo does not. |
-| `--limit` | `20` | Most recent N. |
+| `--limit` | `20` | Most recent N Exchanges, and N Incidents. |
 | `--all` | `false` | Hold nothing back: the Exchanges with nothing wrong, and the `debug`/`info`/`log` breadcrumbs hidden by default so framework chatter does not bury the report. |
-| `--json` | `false` | Emit `{"exchanges": [...], "transcripts": {"<id>": {...}}}` instead of the reading layout — the Transcripts keyed by the Exchange they belong to. |
+| `--json` | `false` | Emit `{"exchanges": [...], "incidents": [...], "transcripts": {"<id>": {...}}}` instead of the reading layout — the Transcripts keyed by the Exchange **or Incident** they belong to. Under a `--service` that found nothing it also carries `"reading"`: the [readings](observability.md#readings--what-the-runtime-says-right-now) for that service's container, with anything that could not be read named under `"unread"`. |
+
+When a `--service` produced neither an Exchange nor an Incident, the listing does
+not stop at saying so: it prints the
+[readings](observability.md#readings--what-the-runtime-says-right-now) for that
+service's container — running since when, what its healthcheck says, how many
+restarts, when its output last moved — and states that the conclusion is not
+proximo's to draw. A container that is alive and stuck declares no Incident, and
+an unexplained silence is the answer most likely to be read as *all fine*.
+
+The command reads two sources — the Inspection hop, for what browsers reported,
+and the watcher, for Incidents — so either can fail on its own. When the Incident
+store cannot be asked, the listing says so and hands over the Remedy on the spot
+(`proximo update`) rather than looking like a quiet machine: an absent Incident
+and an unreachable Incident store are indistinguishable from the output, and one
+of them means a restart-looping worker is going unreported.
 
 `proximo status` lists which routes are under Inspection, and anything proximo had
 to relax on them to get there — that belongs with the route, which is why it is
@@ -374,25 +424,41 @@ or personal data. The listing says so once.
 
 ### proximo errors transcript
 
-Print the whole of what the serving container wrote for one Exchange. Unlike
-`dom`, it goes to **stdout**: a transcript is text to read and pipe, not
-hundreds of kilobytes to grep.
+Print the whole of what a container wrote in one window. Unlike `dom`, it goes to
+**stdout**: a transcript is text to read and pipe, not hundreds of kilobytes to
+grep.
+
+The window comes from whatever fixed it, and the id from the listing decides
+which: an Exchange id quotes what the container wrote while that request was
+live, an Incident id quotes from the previous Incident of that service up to this
+one. With `--service` and no id there is no anchor at all, and the window is
+plainly the one `--since` names — the fallback for a service the runtime has
+declared nothing about.
 
 ```sh
-proximo errors transcript 1f0c9a2b3d4e5f60
-proximo errors transcript 1f0c9a2b3d4e5f60 --since 2h
+proximo errors transcript 1f0c9a2b3d4e5f60             # an Exchange's window
+proximo errors transcript 9b3e1a7c5d2f8e04             # an Incident's window
+proximo errors transcript --service worker --since 30m # no anchor: a plain window
 proximo errors transcript 1f0c9a2b3d4e5f60 -o /tmp/web-1.transcript.txt
 ```
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--since` | `15m` | The window the Exchange is looked for in, same forms as `proximo errors --since`. |
+| `--service` | — | Quote this service's plain `--since` window, when no id is given. Same resolution as `proximo errors --service`. |
+| `--since` | `15m` | The window the Exchange or Incident is looked for in, same forms as `proximo errors --since`. With `--service` and no id, it *is* the window. |
 | `--limit` | `1048576` | Cap the transcript at this many bytes. An elision is always declared. |
 | `-o`, `--out` | stdout | Write to this path instead. |
 
-Identities are derived from host, instant and backend rather than minted, so the
-same Exchange has the same id in two invocations — which is what lets an agent
-say "that one".
+Identities are derived rather than minted — an Exchange from host, instant and
+backend; an Incident from service, instant and kind — so the same thing has the
+same id in two invocations, which is what lets an agent say "that one". An
+Incident id stays computable from what is on screen even after proximo has
+forgotten the Incident.
+
+An Incident can outlive what it would quote. proximo then says it remembers the
+Incident and cannot show what was written — the container is gone, or the one
+answering to that name now started after it — rather than quoting whichever
+container holds the name today.
 
 ### proximo errors dom
 

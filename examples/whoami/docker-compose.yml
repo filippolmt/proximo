@@ -70,6 +70,63 @@ services:
     labels:
       - "proximo.hosts=failing.test"
 
+  # Incidents: no host, no route, no browser — a worker. `proximo.transcript`
+  # makes it *known* to proximo without routing it, so what the runtime declares
+  # about it is recorded: this one writes a few lines, exits 1, and is restarted
+  # twice, which is three Incidents and a Transcript window per container
+  # lifetime. `proximo errors --service worker` reads them.
+  worker:
+    image: alpine:3
+    container_name: worker
+    restart: on-failure:2
+    command:
+      - sh
+      - -c
+      - |
+        echo "worker: picked up job 41871"
+        echo "worker: connecting to the queue"
+        echo "worker: panic: assignment to entry in nil map" >&2
+        exit 1
+    labels:
+      - "proximo.transcript=true"
+
+  # The stuck worker. proximo cannot tell an idle consumer from a blocked one by
+  # looking — that needs to know whether work was waiting, which only the project
+  # knows. A Docker healthcheck is how the project says it: this one advances for
+  # three jobs, touching a marker each time, then blocks forever on a lock that
+  # never comes. Once the marker goes stale the healthcheck fails, Docker declares
+  # the container unhealthy, and an unhealthy transition IS an Incident — so a
+  # container that is alive and stuck becomes visible without proximo guessing.
+  # Unhealthy stays out of the default listing (a worker waiting on postgres is
+  # unhealthy on every `compose up`): ask for it with
+  # `proximo errors --service stalling`.
+  stalling:
+    image: alpine:3
+    container_name: stalling
+    command:
+      - sh
+      - -c
+      - |
+        i=1
+        while [ $$i -le 3 ]; do
+          touch /tmp/progress
+          echo "stalling: finished job $$i"
+          i=$$((i+1))
+          sleep 1
+        done
+        echo "stalling: waiting on a lock that will never come"
+        sleep 3600
+    healthcheck:
+      # Healthy while the marker is younger than 5s — "am I still advancing?",
+      # which is the one question the project can answer and proximo cannot.
+      test: ["CMD-SHELL", "[ $$(( $$(date +%s) - $$(stat -c %Y /tmp/progress) )) -lt 5 ]"]
+      interval: 3s
+      timeout: 2s
+      retries: 2
+      start_period: 3s
+    labels:
+      - "proximo.transcript=true"
+
   # Inspection: nginx serves real HTML (whoami answers text/plain, which has
   # nothing to inject into), so the hop can insert the reporting agent before
   # </head>. Load https://inspected.test and then run `proximo errors`.

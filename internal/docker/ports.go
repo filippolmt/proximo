@@ -49,7 +49,7 @@ func PortKey(port int, proto string) string {
 func portOwners(cs []container.Summary) map[string]PortOwner {
 	owners := make(map[string]PortOwner)
 	for _, c := range cs {
-		_, isStack := c.Labels[roleLabel]
+		_, isStack := c.Labels[RoleLabel]
 		for _, p := range c.Ports {
 			if p.PublicPort == 0 {
 				continue

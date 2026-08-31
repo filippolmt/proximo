@@ -25,6 +25,17 @@ A developer's own set of containers, the things proximo routes *to*. Never part
 of the stack. Identified by its Docker Compose project name.
 _Avoid_: stack, app, deployment
 
+**Service**:
+One named part of a Project — a Compose service — and the thing a developer
+actually asks about: "what did the worker say" is a question about the service,
+where "what did worker-2 say" is one you can only ask after seeing all three.
+Its qualified form carries the Namespace, `shop/worker`, and a qualified service
+and a Namespace are the same concept rather than two: a bare service name is
+accepted when nothing contests it and reported with its candidates when
+something does, exactly as a Bare host is. A container outside a Compose project
+belongs to no service and names itself.
+_Avoid_: container, replica, app, process
+
 **Route**:
 The binding of one host name to the backends serving it, live only while their
 containers are running. Routes are derived from container labels, never declared
@@ -128,25 +139,69 @@ request they needed it for is over.
 _Avoid_: trace, transaction, log entry
 
 **Transcript**:
-What a Project's own container wrote while an Exchange was live, quoted verbatim
-and never interpreted — the third part of an Exchange, and the only one the
-project itself authored rather than proximo observed. proximo never holds one: it
-is read back on demand and cut to the Exchange's window, because the container's
-output already exists somewhere that keeps it. The cut is therefore temporal, not
-causal, and says only *what the container wrote in this window* — never *what
-this request caused*: where two Exchanges of one container overlap, proximo
-reports the overlap rather than attributing a line, the same way it reports a
-Collision rather than resolving one. A Transcript is bounded, and an elision is
-always declared: a truncation nobody is told about is the one after which a
-reader stops looking. It is raw application output, so it may carry credentials
-and personal data; proximo redacts nothing, because redacting is interpreting,
-and a redaction that misses is worse than none.
+What a Project's own container wrote in a window, quoted verbatim and never
+interpreted — the only thing proximo hands over that the project itself authored
+rather than proximo observed. The window is always fixed from outside the text,
+by something that is not a reading of it: an Exchange fixes it most precisely
+when there is one, an Incident fixes it for a container no request ever reaches,
+and `--since` fixes it when neither exists. proximo never holds a Transcript: it
+is read back on demand, because the container's output already exists somewhere
+that keeps it. The cut is therefore temporal, not causal, and says only *what the
+container wrote in this window* — never *what this request caused*: where two
+Exchanges of one container overlap, proximo reports the overlap rather than
+attributing a line, the same way it reports a Collision rather than resolving
+one. A Transcript is bounded, and an elision is always declared: a truncation
+nobody is told about is the one after which a reader stops looking. It is raw
+application output, so it may carry credentials and personal data; proximo
+redacts nothing, because redacting is interpreting, and a redaction that misses
+is worse than none.
 _Avoid_: log, logs, stderr, output, stack trace, server error
-_Debt_: a container with no Route — a worker, a queue consumer, a migration job
-— produces no Access record, therefore no Exchange, therefore no Transcript. The
-gap is declared rather than filled: an Exchange without an Access record would
-hollow out the term, and deciding which lines of a routeless container look like
-errors would mean interpreting the text a Transcript exists to quote.
+
+**Incident**:
+A fact the runtime declares about a container: a non-zero exit, a restart, an
+OOM kill, a transition to unhealthy. Never a line that was read — the boundary is
+the term, because proximo may remember what the runtime declares and never what
+the project wrote, and the first matcher for `panic:` breaks nothing else that is
+written down. An Incident is dated history, which is what separates it from a
+Check: a check is present-tense and repeatable, an Incident happened once, at an
+instant, and fixes the window of a Transcript around itself. proximo remembers
+Incidents and only Incidents: tens of bytes of runtime metadata per container,
+capped per Service so a container restarting every three seconds cannot evict
+another's only one. Every container proximo knows about produces them, routed or
+not; a container with no Route becomes known by asking to be, and being observed
+is a separate thing from being reachable.
+_Avoid_: error, event, crash, failure, fault
+_Debt_: proximo never deduces that a container is stuck. A worker blocked on a
+slow query is running, healthy and silent; an idle consumer is the same picture,
+and telling them apart needs to know whether work was waiting, which only the
+project knows. So proximo answers with the **Reading** it can take and refuses
+the conclusion. The project can still declare it — a healthcheck that fails when
+the worker stops advancing makes Docker say *unhealthy*, which is an Incident,
+though the one kind a listing holds back until it is asked for by Service — but
+the judgement is the project's, made in the project's own terms, and proximo
+neither defines that contract nor infers one. What stays
+declared rather than filled is the inference itself: it would need proximo to
+become a dependency of the code it observes, which
+[ADR 0006](docs/adr/0006-the-transcript-is-quoted-never-stored.md) rejected with
+its strongest reason. The gap is written down because the failure mode of leaving
+it implicit is a developer reading proximo's silence as *all fine* when it means
+*I have nothing to say*.
+
+**Reading**:
+What the runtime says about a container *right now*, as opposed to a dated
+Incident: whether it is running and since when, what its healthcheck says, how
+many times it has been restarted, and the instant its output last moved. A
+reading is measured, never interpreted — the instant a stream last moved is the
+runtime's to declare, while what the line said is the project's — and proximo
+states it without drawing the conclusion, the same way a Check reports and never
+repairs. A reading that could not be taken is named as such and never reported as
+a zero, because a measurement nobody could take is not a measurement of nothing.
+It is what proximo has to offer about a container that is alive and may not be
+progressing, and its limit is declared with it: no reading proximo can take by
+itself distinguishes a consumer with nothing to do from one that is stuck. A
+healthcheck changes that answer — but that is the project declaring it, in the
+project's own terms, and the reading only repeats what the runtime was told.
+_Avoid_: metric, status, health, probe, sample
 
 **Inspection**:
 The collection of Exchanges for one route, live only while its container carries
@@ -189,7 +244,10 @@ _Avoid_: dump, capture, replay
 **Exchange**:
 One Access record, the Transcript of the container that served it, and the
 Client reports that arose while the page it served was live. The unit proximo
-hands to a developer or an agent, and the reason all three parts are collected:
+hands to a developer or an agent for one request, and the most precise of the
+windows a Transcript can be cut to rather than the owner of the Transcript: it
+fixes a window when there is a request, and a container no request reaches still
+has output to quote. The reason all three parts are collected:
 no one of them says on its own whether a broken page is the backend's fault or
 the front-end's. The parts are joined, never merged: a Client report about a
 request the page made carries the identity of the Exchange that request

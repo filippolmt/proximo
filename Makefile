@@ -32,7 +32,7 @@ OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
 .PHONY: build build-all test vet tidy check-links skill-refs \
 	install up down status doctor errors uninstall \
-	demo demo-down e2e e2e-inspect e2e-transcript e2e-down clean
+	demo demo-down e2e e2e-inspect e2e-transcript e2e-incident e2e-down clean
 
 # ---- Build (Go runs in Docker) ------------------------------------------------
 
@@ -73,7 +73,7 @@ skill-refs:
 ## check-links: validate Markdown links + anchors (lychee, offline — same as CI)
 check-links:
 	docker run --rm -w /input -v "$(CURDIR)":/input $(LYCHEE_IMAGE) \
-		--offline --include-fragments --no-progress README.md CLAUDE.md CONTEXT.md TRANSCRIPT-PLAN.md docs
+		--offline --include-fragments --no-progress README.md CLAUDE.md CONTEXT.md docs
 
 # ---- Lifecycle (host binary; build first so the arch always matches) ----------
 
@@ -174,6 +174,41 @@ e2e-transcript: build
 		|| { echo "FAIL: \`errors transcript\` printed no transcript for $$id"; exit 1; }
 	@echo "OK: every route produces an Exchange, and its Transcript is quoted back"
 	$(BIN) errors --host failing.test
+
+## e2e-incident: prove Incidents end to end (stack must be installed/up)
+# The one thing unit tests cannot reach: Docker's real event stream. The `worker`
+# service has no host and no route — it is known to proximo only because it
+# carries proximo.transcript — so a missing Incident here means the watcher never
+# saw the container die, and a missing Transcript means the window the Incident
+# fixed did not reach the container's own output.
+e2e-incident: build
+	docker compose -f $(DEMO_COMPOSE) up -d
+	@echo "==> waiting for the worker to exit and be restarted"
+	@for i in $$(seq 1 30); do \
+		$(BIN) errors --json --service worker 2>/dev/null | grep -q '"kind": "exited"' && break || sleep 2; \
+	done
+	@$(BIN) errors --json --service worker | grep -q '"exit_code": 1' \
+		|| { echo "FAIL: no Incident for the worker - the watcher did not record the exit"; exit 1; }
+	# 'nil map' is the worker's own panic line in $(DEMO_COMPOSE): if the window
+	# quotes it, the Incident reached the container's output.
+	@echo "==> the Incident's window quotes what the worker wrote"
+	@$(BIN) errors --json --service worker | grep -q 'nil map' \
+		|| { echo "FAIL: the Incident's Transcript does not quote the worker's own line"; exit 1; }
+	@id=$$($(BIN) errors --json --service worker | sed -n 's/.*"id": "\([0-9a-f]*\)".*/\1/p' | head -1); \
+	if [ -z "$$id" ]; then echo "FAIL: no Incident id in the listing"; exit 1; fi; \
+	echo "    Incident $$id"; \
+	$(BIN) errors transcript "$$id" | grep -q 'nil map' \
+		|| { echo "FAIL: \`errors transcript\` printed no transcript for Incident $$id"; exit 1; }
+	@echo "==> a worker that stops advancing turns unhealthy, and that is an Incident"
+	@for i in $$(seq 1 30); do \
+		$(BIN) errors --json --service stalling 2>/dev/null | grep -q '"kind": "unhealthy"' && break || sleep 2; \
+	done
+	@$(BIN) errors --json --service stalling | grep -q '"kind": "unhealthy"' \
+		|| { echo "FAIL: the stalled worker produced no unhealthy Incident - a healthcheck is how a stuck container becomes visible"; exit 1; }
+	@$(BIN) errors --json | grep -q '"kind": "unhealthy"' \
+		&& { echo "FAIL: unhealthy must stay out of the default listing"; exit 1; } || true
+	@echo "OK: a container with no route produced an Incident, and its window quoted the container's output"
+	$(BIN) errors --service worker
 
 ## e2e-down: stop demo and uninstall (restore the host)
 e2e-down: build

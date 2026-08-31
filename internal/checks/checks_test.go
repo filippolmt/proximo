@@ -47,6 +47,7 @@ func healthyEnv() Env {
 			return []docker.Route{{Container: "web", Host: "web.test"}}, nil
 		},
 		AccessLog: func(context.Context) (bool, error) { return true, nil },
+		Incidents: func(context.Context) (bool, error) { return true, nil },
 		AgentSkill: func() ([]skill.Copy, error) {
 			return []skill.Copy{{Dest: skill.Dest{Dir: "/home/dev/.claude/skills/proximo"}, State: skill.Current}}, nil
 		},
@@ -65,6 +66,8 @@ func brokenEnv() Env {
 	env.CertutilInstallable = func() bool { return false }
 	env.NSSTrusted = func(context.Context) (int, int, error) { return 0, 3, nil }
 	env.Docker = func(context.Context) error { return errors.New("daemon down") }
+	env.AccessLog = func(context.Context) (bool, error) { return false, nil }
+	env.Incidents = func(context.Context) (bool, error) { return false, nil }
 	env.Stack = func(context.Context) (docker.StackInfo, error) { return docker.StackInfo{}, nil }
 	env.Routes = func(context.Context) ([]docker.Route, error) {
 		return []docker.Route{{Container: "web", Note: "api.test is served by shop-api-1"}}, nil

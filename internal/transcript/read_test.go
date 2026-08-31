@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/inspect"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -32,6 +33,13 @@ type fakeDocker struct {
 	logs   map[string]string // container ID -> what it wrote
 	tty    map[string]bool
 	logErr map[string]error
+	// state and restarts are what an inspect answers beyond the TTY flag: the
+	// readings a Reading takes from the runtime rather than from the log stream.
+	state    map[string]*container.State
+	restarts map[string]int
+	// inspectErr fails the inspect, so a Reading has to say what it could not read
+	// instead of reporting an absent measurement as zero.
+	inspectErr map[string]error
 	// anyOutput is what an unwindowed read returns: the reader asks a second
 	// time, with no window, to tell "quiet in this window" from "quiet always".
 	anyOutput map[string]string
@@ -47,7 +55,12 @@ func (f *fakeDocker) ContainerList(context.Context, client.ContainerListOptions)
 
 func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	var r client.ContainerInspectResult
+	if err := f.inspectErr[id]; err != nil {
+		return r, err
+	}
 	r.Container.Config = &container.Config{Tty: f.tty[id]}
+	r.Container.State = f.state[id]
+	r.Container.RestartCount = f.restarts[id]
 	return r, nil
 }
 
@@ -75,7 +88,17 @@ func (f *fakeDocker) ContainerLogs(_ context.Context, id string, o client.Contai
 func summary(id, name string, born time.Time, labels map[string]string) container.Summary {
 	return container.Summary{
 		ID: id, Names: []string{"/" + name}, Created: born.Unix(), Labels: labels,
+		State: container.StateRunning,
 	}
+}
+
+// exited is a container that ran and stopped without being removed — the state a
+// worker sits in between restarts, and one Docker still answers `docker logs`
+// for.
+func exited(id, name string, born time.Time, labels map[string]string) container.Summary {
+	c := summary(id, name, born, labels)
+	c.State = container.StateExited
+	return c
 }
 
 const (
@@ -359,5 +382,334 @@ func TestAFailedTailReadIsNotEvidenceOfLoggingElsewhere(t *testing.T) {
 	}
 	if !strings.Contains(got, "this request") {
 		t.Errorf("Silence = %q, want the one thing that was observed: it was quiet in this window", got)
+	}
+}
+
+// The window an Incident fixes: from the previous Incident of the same service
+// to the Incident itself. For a restart loop that is one container lifetime.
+func TestQuoteIncidentWindowsFromThePreviousIncident(t *testing.T) {
+	born := requestAt.Add(-time.Hour)
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", born, map[string]string{
+			project: "shop", service: "worker", "proximo.transcript": "true",
+		})},
+		logs: map[string]string{"w1": "picked up job 41\npanic: nil map\n"},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := docker.Incident{ID: "p", Service: "shop/worker", Container: "shop-worker-1", At: requestAt.Add(-10 * time.Minute), Kind: docker.IncidentExited, ExitCode: 1}
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 137, OOM: true}
+
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc, prev}, DefaultLimit)
+	if tr.Silence != "" {
+		t.Fatalf("silence %q, want the quoted lines", tr.Silence)
+	}
+	if len(tr.Head) != 2 || tr.Head[1] != "panic: nil map" {
+		t.Errorf("quoted %q, want both lines", tr.Head)
+	}
+	asked := f.asked["w1"]
+	if asked.Since != prev.At.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read from %q, want the previous Incident at %s", asked.Since, prev.At)
+	}
+	if asked.Until != inc.At.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read to %q, want the Incident's own instant with no grace", asked.Until)
+	}
+}
+
+// A worker that dies three times in one second is the case an Incident-anchored
+// window exists for: each window must hold one container lifetime, so it ends at
+// its own Incident rather than reaching into the next lifetime's output.
+func TestQuoteIncidentWindowsDoNotOverlapInARestartLoop(t *testing.T) {
+	born := requestAt.Add(-time.Hour)
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", born, map[string]string{
+			project: "shop", service: "worker",
+		})},
+		logs: map[string]string{"w1": "attempt\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	first := docker.Incident{ID: "a", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+	second := docker.Incident{ID: "b", Service: "shop/worker", Container: "shop-worker-1", At: requestAt.Add(200 * time.Millisecond), Kind: docker.IncidentExited, ExitCode: 1}
+	other := docker.Incident{ID: "c", Service: "shop/db", Container: "shop-db-1", At: requestAt.Add(50 * time.Millisecond), Kind: docker.IncidentRestarted}
+
+	all := []docker.Incident{first, second, other}
+
+	r.QuoteIncident(context.Background(), first, all, DefaultLimit)
+	if got, want := f.asked["w1"].Until, first.At.UTC().Format(time.RFC3339Nano); got != want {
+		t.Errorf("read to %q, want %q — 200ms later the next lifetime is already writing", got, want)
+	}
+	// And the next window starts where this one ended, so the two are disjoint.
+	r.QuoteIncident(context.Background(), second, all, DefaultLimit)
+	asked := f.asked["w1"]
+	if asked.Since != first.At.UTC().Format(time.RFC3339Nano) || asked.Until != second.At.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read %s → %s, want %s → %s", asked.Since, asked.Until, first.At, second.At)
+	}
+}
+
+// The first Incident of a service has no left edge: reading from the container's
+// creation second can cut the first lines it ever wrote, and the byte cap already
+// bounds the quote and declares its own elision.
+func TestQuoteIncidentReadsFromTheStartWhenItIsTheFirst(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", requestAt.Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker",
+		})},
+		logs: map[string]string{"w1": "boot\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentRestarted}
+
+	if tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit); tr.Silence != "" {
+		t.Fatalf("silence %q, want the quoted line", tr.Silence)
+	}
+	if since := f.asked["w1"].Since; since != "" {
+		t.Errorf("read from %q, want no left bound", since)
+	}
+}
+
+// The fourth silence: proximo kept the Incident and cannot show what was written
+// around it. Both ways it happens say so, and neither quotes another container.
+func TestQuoteIncidentSaysWhenItOutlivedTheOutput(t *testing.T) {
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 137}
+
+	gone := &fakeDocker{}
+	r, _ := NewReader(context.Background(), gone)
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if !strings.Contains(tr.Silence, "proximo remembers this Incident") || !strings.Contains(tr.Silence, "the container was removed") {
+		t.Errorf("silence = %q, want the fourth silence for a container that was removed", tr.Silence)
+	}
+
+	replaced := &fakeDocker{items: []container.Summary{
+		summary("w2", "shop-worker-1", requestAt.Add(time.Minute), map[string]string{project: "shop", service: "worker"}),
+	}}
+	r2, _ := NewReader(context.Background(), replaced)
+	tr2 := r2.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if !strings.Contains(tr2.Silence, "proximo remembers this Incident") || !strings.Contains(tr2.Silence, "1m0s after it") {
+		t.Errorf("silence = %q, want the fourth silence for a container recreated since", tr2.Silence)
+	}
+	if len(tr2.Head) != 0 {
+		t.Error("the replacement container's output must not be quoted as this Incident's")
+	}
+}
+
+func TestQuoteIncidentNamesTheSilenceOfAQuietWindow(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", requestAt.Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker",
+		})},
+		logs:      map[string]string{"w1": ""},
+		anyOutput: map[string]string{"w1": "something, once\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if want := "shop-worker-1 wrote nothing in the window this Incident closes"; tr.Silence != want {
+		t.Errorf("silence = %q, want %q", tr.Silence, want)
+	}
+}
+
+// The driving case: a worker that exited and was left in place. Docker still
+// answers `docker logs` for it, so the window the Incident closes is quotable —
+// reporting it as gone would call the output lost while it sits right there.
+func TestQuoteIncidentReadsAContainerThatExitedAndStayed(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{exited("w1", "shop-worker-1", requestAt.Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker", "proximo.transcript": "true",
+		})},
+		logs: map[string]string{"w1": "worker: panic: nil map\n"},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if tr.Silence != "" {
+		t.Fatalf("silence %q, want the quoted line — the container is stopped, not removed", tr.Silence)
+	}
+	if len(tr.Head) != 1 || tr.Head[0] != "worker: panic: nil map" {
+		t.Errorf("quoted %q, want the worker's own line", tr.Head)
+	}
+	// Stopped is not a replica: "1 of N replicas" is about what is serving now.
+	if tr.Replicas != 0 {
+		t.Errorf("Replicas = %d, want a stopped container counted as none", tr.Replicas)
+	}
+}
+
+// A dead backend must still resolve to its service, or a --host listing drops
+// the Incident that explains the 502 it is showing.
+func TestServiceOfBackendResolvesAContainerThatStopped(t *testing.T) {
+	f := &fakeDocker{items: []container.Summary{
+		exited("w1", "web-1", requestAt.Add(-time.Hour), map[string]string{project: "shop", service: "web"}),
+	}}
+	r, _ := NewReader(context.Background(), f)
+	if got := r.ServiceOfBackend("web-1:8080"); got != "shop/web" {
+		t.Errorf("ServiceOfBackend = %q, want shop/web even though the container is stopped", got)
+	}
+	// It is not a candidate for a bare --service, though: nothing is running.
+	if len(r.Services()) != 0 {
+		t.Errorf("Services() = %v, want none — a stopped service is named by its Incident, not by the listing", r.Services())
+	}
+}
+
+// A Reading is what the runtime declares plus the instant a stream last moved —
+// never the line it moved with.
+func TestReadingOfTakesEveryReadingWithoutReadingTheLine(t *testing.T) {
+	started := time.Now().Add(-3 * time.Hour)
+	wrote := time.Now().Add(-14 * time.Minute)
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", started, map[string]string{
+			project: "shop", service: "worker", "proximo.transcript": "true",
+		})},
+		state: map[string]*container.State{"w1": {
+			StartedAt: started.Format(time.RFC3339Nano),
+			Health:    &container.Health{Status: container.Healthy},
+		}},
+		restarts: map[string]int{"w1": 2},
+		// Docker stamps the instant on the line when asked; the reader takes the
+		// stamp and leaves the text alone.
+		anyOutput: map[string]string{"w1": wrote.Format(time.RFC3339Nano) + " worker: picked up job 41871\n"},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd := r.ReadingOf(context.Background(), "shop/worker")
+
+	switch {
+	case rd.Container != "shop-worker-1" || !rd.Running:
+		t.Errorf("reading = %+v, want the running container named", rd)
+	case !rd.Since.Equal(started.Truncate(0)) && rd.Since.Unix() != started.Unix():
+		t.Errorf("Since = %s, want %s — the instant it last started", rd.Since, started)
+	case rd.Healthcheck != string(container.Healthy):
+		t.Errorf("Healthcheck = %q, want healthy", rd.Healthcheck)
+	case rd.Restarts != 2:
+		t.Errorf("Restarts = %d, want 2", rd.Restarts)
+	case !rd.LastWrote.Equal(wrote.Truncate(0)) && rd.LastWrote.Unix() != wrote.Unix():
+		t.Errorf("LastWrote = %s, want %s", rd.LastWrote, wrote)
+	case len(rd.Unread) != 0:
+		t.Errorf("Unread = %v, want nothing: every reading was taken", rd.Unread)
+	}
+	if !f.asked["w1"].Timestamps || f.asked["w1"].Tail != "1" {
+		t.Errorf("read %+v, want one line with its timestamp", f.asked["w1"])
+	}
+	got := rd.Describe()
+	for _, want := range []string{"running for 3h0m0s", "healthcheck says healthy", "restarted 2 times", "and it last wrote 14m0s ago"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Describe() = %q, missing %q", got, want)
+		}
+	}
+	// The line itself is never carried into a Reading.
+	if strings.Contains(got, "41871") {
+		t.Errorf("Describe() = %q, want no part of what the container wrote", got)
+	}
+}
+
+// The three answers a stream can give are never collapsed: they send a developer
+// to three different places.
+func TestReadingOfTellsTheStreamsSilencesApart(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "worker"}
+	born := time.Now().Add(-time.Hour)
+
+	wroteNothing := &fakeDocker{
+		items:     []container.Summary{summary("w1", "shop-worker-1", born, labels)},
+		anyOutput: map[string]string{"w1": ""},
+	}
+	r, _ := NewReader(context.Background(), wroteNothing)
+	rd := r.ReadingOf(context.Background(), "shop/worker")
+	if !rd.WroteNothing || !rd.LastWrote.IsZero() || len(rd.Unread) != 0 {
+		t.Errorf("reading = %+v, want a stream that was read and had nothing in it", rd)
+	}
+	if !strings.Contains(rd.Describe(), "and it has written nothing at all") {
+		t.Errorf("Describe() = %q, want it to say nothing was ever written", rd.Describe())
+	}
+
+	// The bug this closes: a log driver Docker cannot replay is not a container
+	// that wrote nothing, and saying so would send a developer to fix a logger
+	// that is fine.
+	unreadable := &fakeDocker{
+		items:   []container.Summary{summary("w1", "shop-worker-1", born, labels)},
+		tailErr: map[string]error{"w1": errors.New("configured logging driver does not support reading")},
+	}
+	r2, _ := NewReader(context.Background(), unreadable)
+	rd2 := r2.ReadingOf(context.Background(), "shop/worker")
+	if rd2.WroteNothing {
+		t.Error("a stream that cannot be read back must not be reported as one that said nothing")
+	}
+	if len(rd2.Unread) != 1 || !strings.Contains(rd2.Unread[0], "when it last wrote could not be read") {
+		t.Errorf("Unread = %v, want the unreadable stream named", rd2.Unread)
+	}
+	got := rd2.Describe()
+	if strings.Contains(got, "written nothing") {
+		t.Errorf("Describe() = %q, want no claim about what it wrote", got)
+	}
+	if !strings.Contains(got, "could not be read") {
+		t.Errorf("Describe() = %q, want the absence named rather than left as a gap", got)
+	}
+}
+
+// Three of the four readings come from the inspect. When it fails, the Reading
+// says so rather than reporting them as zero.
+func TestReadingOfNamesWhatTheInspectCouldNotAnswer(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", time.Now().Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker",
+		})},
+		inspectErr: map[string]error{"w1": errors.New("no such container")},
+		anyOutput:  map[string]string{"w1": time.Now().Format(time.RFC3339Nano) + " still here\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	rd := r.ReadingOf(context.Background(), "shop/worker")
+
+	if rd.Since.IsZero() != true || rd.Healthcheck != "" || rd.Restarts != 0 {
+		t.Errorf("reading = %+v, want no measurements from a failed inspect", rd)
+	}
+	if len(rd.Unread) != 1 || !strings.Contains(rd.Unread[0], "what else the runtime says could not be read") {
+		t.Errorf("Unread = %v, want the failed inspect named", rd.Unread)
+	}
+	if !strings.Contains(rd.Describe(), "could not be read") {
+		t.Errorf("Describe() = %q, want the absence named", rd.Describe())
+	}
+}
+
+func TestReadingOfIsEmptyForAServiceProximoCannotSee(t *testing.T) {
+	r, _ := NewReader(context.Background(), &fakeDocker{})
+	if rd := r.ReadingOf(context.Background(), "shop/ghost"); !rd.Empty() {
+		t.Errorf("reading = %+v, want nothing for a service with no container", rd)
+	}
+}
+
+// A container that has written before is quiet in this window, not silent
+// forever — and one whose stream cannot be read must not be told it logs
+// elsewhere, which is the third silence wearing the second one's words.
+func TestExplainSilenceKeepsTheThreeSilencesApart(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "web"}
+	c := summary("w1", "web-1", requestAt.Add(-time.Hour), labels)
+	e := inspect.Exchange{ID: "x", At: requestAt, Backend: "web-1:8080", Status: 500}
+
+	never := &fakeDocker{items: []container.Summary{c}, logs: map[string]string{"w1": ""}, anyOutput: map[string]string{"w1": ""}}
+	r, _ := NewReader(context.Background(), never)
+	if got := r.JoinOne(context.Background(), e, nil, DefaultLimit).Silence; !strings.Contains(got, "logs elsewhere") {
+		t.Errorf("silence = %q, want the container that never wrote sent to its logger", got)
+	}
+
+	quiet := &fakeDocker{items: []container.Summary{c}, logs: map[string]string{"w1": ""}, anyOutput: map[string]string{"w1": "something, once\n"}}
+	r2, _ := NewReader(context.Background(), quiet)
+	got := r2.JoinOne(context.Background(), e, nil, DefaultLimit).Silence
+	if strings.Contains(got, "logs elsewhere") || !strings.Contains(got, "wrote nothing while this request was live") {
+		t.Errorf("silence = %q, want quiet-in-this-window", got)
+	}
+
+	unreadable := &fakeDocker{
+		items: []container.Summary{c}, logs: map[string]string{"w1": ""},
+		tailErr: map[string]error{"w1": errors.New("driver cannot be read")},
+	}
+	r3, _ := NewReader(context.Background(), unreadable)
+	if got := r3.JoinOne(context.Background(), e, nil, DefaultLimit).Silence; strings.Contains(got, "logs elsewhere") {
+		t.Errorf("silence = %q, want no claim about the logger when nothing was learned", got)
 	}
 }

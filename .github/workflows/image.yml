@@ -150,6 +150,23 @@ jobs:
           docker logs "$(docker ps -q --filter label=proximo.role=watcher)" 2>&1 | grep -q "proximo watcher: started" \
             || { echo "FAIL: the watcher never started"; exit 1; }
 
+      # The Incident read API is published by the compose asset (a __WATCHERPORT__
+      # sentinel) and served by the in-image watcher. Nothing but a real stack
+      # exercises the substitution, the port publication and the handler
+      # together — a unit test can reach none of the three. The port is
+      # config.WatcherAPIPort; if that constant moves, this fails loudly, which
+      # is what it is for.
+      - name: The watcher publishes its Incident read API
+        run: |
+          for i in $(seq 1 15); do
+            curl -fsS http://127.0.0.1:48092/incidents >/dev/null 2>&1 && break || sleep 2
+          done
+          body=$(curl -fsS http://127.0.0.1:48092/incidents) \
+            || { echo "FAIL: the watcher's Incident API did not answer on 127.0.0.1:48092"; exit 1; }
+          echo "$body"
+          echo "$body" | grep -q '"started"' \
+            || { echo "FAIL: the listing carries no start instant, so an empty one cannot explain itself"; exit 1; }
+
       # The only place a Report is produced against a real host: the stack is
       # up but nothing was ever installed, so `doctor` must fail on the install
       # gate, carry its Remedy, and exit non-zero.
@@ -166,6 +183,8 @@ jobs:
             || { echo "FAIL: the install gate failed without its Remedy"; exit 1; }
           echo "$out" | grep -q "waiting on: proximo is installed on this host" \
             || { echo "FAIL: nothing was skipped behind the install gate"; exit 1; }
+          echo "$out" | grep -q "✔ The running stack records Incidents" \
+            || { echo "FAIL: the published stack does not record Incidents"; exit 1; }
 
       # A plain `up` clears the sticky override and resolves the ref the CLI
       # computes for itself. Pinning the expected tag here means a broken
