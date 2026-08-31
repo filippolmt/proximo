@@ -620,3 +620,29 @@ func TestConvergeRemedyOnFailedPull(t *testing.T) {
 		})
 	}
 }
+
+// TestTraefikRecordsAccessLogs asserts every route produces an Access record,
+// not only the routes already under Inspection: JSON on stdout, where the
+// compose logging anchor already bounds and rotates it. See
+// docs/adr/0006-the-transcript-is-quoted-never-stored.md.
+func TestTraefikRecordsAccessLogs(t *testing.T) {
+	raw, err := assets.ReadFile("assets/traefik/traefik.yml")
+	if err != nil {
+		t.Fatalf("read embedded traefik.yml: %v", err)
+	}
+	cfg := string(raw)
+
+	if !strings.Contains(cfg, "accessLog:") {
+		t.Fatalf("traefik records no access log, so routes outside Inspection produce no Exchange:\n%s", cfg)
+	}
+	// JSON is how the CLI tells access lines apart from Traefik's own
+	// operational lines: they share one stream.
+	if !strings.Contains(cfg, "format: json") {
+		t.Error("the access log is not JSON, so it cannot be told apart from Traefik's operational log")
+	}
+	// stdout, never a file: the container's log driver already bounds and
+	// rotates the stream, and proximo persists nothing of its own.
+	if strings.Contains(cfg, "filePath:") {
+		t.Error("the access log is written to a file; it must go to stdout, which the compose logging anchor bounds")
+	}
+}

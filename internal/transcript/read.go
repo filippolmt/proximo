@@ -1,0 +1,235 @@
+package transcript
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/filippolmt/proximo/internal/inspect"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+)
+
+const (
+	// The compose labels a container's replicas are recognised by. A developer
+	// asking "how many replicas" means the containers of one compose service.
+	composeProjectLabel = "com.docker.compose.project"
+	composeServiceLabel = "com.docker.compose.service"
+
+	// roleLabel names a stack service. Traefik's is where Access records are read
+	// from.
+	roleLabel = "proximo.role"
+
+	// grace widens the window at both ends. A framework writes the line that
+	// matters as it is returning, and Traefik's instant and the container's clock
+	// are not the same clock. Widening trades precision for not missing the one
+	// line asked about — and what it costs is reported as an Overlap rather than
+	// hidden.
+	grace = time.Second
+)
+
+// Docker is the narrow slice of the Docker client this package depends on —
+// exactly the three calls a join makes. *client.Client satisfies it unchanged,
+// so production passes the real client and tests pass a fake. It mirrors the
+// watcher's dockerAPI seam.
+type Docker interface {
+	ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error)
+	ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+	ContainerLogs(context.Context, string, client.ContainerLogsOptions) (client.ContainerLogsResult, error)
+}
+
+// Reader quotes Transcripts. It holds one container listing for the life of a
+// CLI invocation: a backend address is resolved against the containers alive
+// now, which is the only listing that can be checked against a request's instant.
+type Reader struct {
+	d      Docker
+	byName map[string]container.Summary
+	// replicas counts the containers of each compose service, keyed the way
+	// serviceKey keys them.
+	replicas map[string]int
+}
+
+// NewReader lists the containers a join resolves against.
+func NewReader(ctx context.Context, d Docker) (*Reader, error) {
+	res, err := d.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	r := &Reader{d: d, byName: map[string]container.Summary{}, replicas: map[string]int{}}
+	for _, c := range res.Items {
+		for _, n := range c.Names {
+			r.byName[strings.TrimPrefix(n, "/")] = c
+		}
+		if key := serviceKey(c); key != "" {
+			r.replicas[key]++
+		}
+	}
+	return r, nil
+}
+
+func serviceKey(c container.Summary) string {
+	svc := c.Labels[composeServiceLabel]
+	if svc == "" {
+		return ""
+	}
+	return c.Labels[composeProjectLabel] + "/" + svc
+}
+
+// Access reads the Access records Traefik logged since t. Traefik's operational
+// log shares the stream, so lines that are not JSON describing a request are
+// skipped: that is the whole of the filter, and DecodeAccessLine owns it.
+func (r *Reader) Access(ctx context.Context, since time.Time) ([]inspect.Exchange, error) {
+	traefik, ok := r.stackContainer("traefik")
+	if !ok {
+		return nil, fmt.Errorf("the stack's Traefik is not running, so no Access record can be read (`proximo up`)")
+	}
+	raw, err := r.readLogs(ctx, traefik, since, time.Time{})
+	if err != nil {
+		return nil, fmt.Errorf("reading Traefik's log: %w", err)
+	}
+	var out []inspect.Exchange
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		if e, ok := inspect.DecodeAccessLine(line); ok {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (r *Reader) stackContainer(role string) (container.Summary, bool) {
+	for _, c := range r.byName {
+		if c.Labels[roleLabel] == role {
+			return c, true
+		}
+	}
+	return container.Summary{}, false
+}
+
+// Join returns the Transcript of each Exchange, keyed by Exchange id. It is one
+// call rather than one per Exchange because the overlaps can only be seen across
+// the whole set: two Exchanges of one container whose windows meet interleave
+// their lines, and nothing after the fact can tell them apart.
+func (r *Reader) Join(ctx context.Context, exchanges []inspect.Exchange, limit int) map[string]Transcript {
+	out := make(map[string]Transcript, len(exchanges))
+	for _, e := range exchanges {
+		tr := r.quote(ctx, e, limit)
+		tr.Overlap = countOverlaps(e, exchanges)
+		out[e.ID] = tr
+	}
+	return out
+}
+
+// countOverlaps counts the other Exchanges served by the same container whose
+// windows meet this one's.
+func countOverlaps(e inspect.Exchange, all []inspect.Exchange) int {
+	if e.Backend == "" {
+		return 0
+	}
+	from, to := window(e)
+	n := 0
+	for _, other := range all {
+		if other.ID == e.ID || other.Backend != e.Backend {
+			continue
+		}
+		otherFrom, otherTo := window(other)
+		if otherFrom.Before(to) && from.Before(otherTo) {
+			n++
+		}
+	}
+	return n
+}
+
+// window is the span of one Exchange, widened by grace at both ends.
+func window(e inspect.Exchange) (from, to time.Time) {
+	return e.At.Add(-grace), e.At.Add(e.Duration + grace)
+}
+
+// quote reads back what the container that served e wrote while it was live. It
+// never guesses: an address it cannot resolve to the container that actually
+// served yields a named silence rather than another container's output.
+func (r *Reader) quote(ctx context.Context, e inspect.Exchange, limit int) Transcript {
+	if e.Backend == "" {
+		return Transcript{Silence: "this Exchange records no backend, so there is nothing to read it back from — the stack that served it predates Transcripts (`proximo update`)"}
+	}
+	name, _, _ := strings.Cut(e.Backend, ":")
+	c, ok := r.byName[name]
+	if !ok {
+		return Transcript{Container: name, Silence: fmt.Sprintf(
+			"the container that served this request (%s) is gone — it was stopped or replaced since", name)}
+	}
+	// Second granularity is all a container listing carries, and all this needs:
+	// the case it closes is an address reused by a container started after the
+	// request, which is a restart apart, not a second.
+	if born := time.Unix(c.Created, 0); born.After(e.At) {
+		return Transcript{Container: name, Silence: fmt.Sprintf(
+			"the container that served this request (%s) is gone — the one answering to that address now started %s after it, so its output is not this request's",
+			name, born.Sub(e.At).Round(time.Second))}
+	}
+
+	tr := Transcript{Container: name, Replicas: r.replicas[serviceKey(c)]}
+	from, to := window(e)
+	raw, err := r.readLogs(ctx, c, from, to)
+	if err != nil {
+		tr.Silence = fmt.Sprintf("%s's log driver cannot be read back: %v", name, err)
+		return tr
+	}
+
+	cutTr := cut(raw, limit)
+	tr.Head, tr.Tail, tr.Dropped = cutTr.Head, cutTr.Tail, cutTr.Dropped
+	if tr.Empty() {
+		tr.Silence = r.explainSilence(ctx, c, name)
+	}
+	return tr
+}
+
+// explainSilence tells apart a container that had nothing to say in this window
+// from one that has said nothing at all — the second is a fact about the
+// project, and a fixable one.
+func (r *Reader) explainSilence(ctx context.Context, c container.Summary, name string) string {
+	raw, err := r.readLogs(ctx, c, time.Time{}, time.Time{})
+	if err != nil || len(splitLines(raw)) == 0 {
+		return name + " has written nothing at all since it started, so it probably logs elsewhere — to a file inside the container, or to a collector. Only what a container writes to stdout or stderr can be quoted here."
+	}
+	return name + " wrote nothing while this request was live"
+}
+
+// readLogs returns what a container wrote between from and to, either bound
+// left zero for unbounded. Both streams are read: a stack trace goes to stderr
+// and a request log to stdout, and the one being looked for is whichever the
+// project chose.
+func (r *Reader) readLogs(ctx context.Context, c container.Summary, from, to time.Time) ([]byte, error) {
+	opts := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}
+	if !from.IsZero() {
+		opts.Since = from.UTC().Format(time.RFC3339Nano)
+	}
+	if !to.IsZero() {
+		opts.Until = to.UTC().Format(time.RFC3339Nano)
+	}
+	stream, err := r.d.ContainerLogs(ctx, c.ID, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	// A container with a TTY writes one unmultiplexed stream; every other
+	// container's is framed. Which it is comes from the container itself rather
+	// than from sniffing the bytes: quoting frame headers as output would corrupt
+	// every line, and a guess is not something to hand to whoever is about to
+	// edit code.
+	tty := false
+	if res, err := r.d.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{}); err == nil && res.Container.Config != nil {
+		tty = res.Container.Config.Tty
+	}
+	if tty {
+		return io.ReadAll(stream)
+	}
+	var out bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &out, stream); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
