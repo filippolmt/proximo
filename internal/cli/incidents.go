@@ -4,95 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/filippolmt/proximo/internal/docker"
-	"github.com/filippolmt/proximo/internal/inspect"
 	"github.com/filippolmt/proximo/internal/transcript"
 )
 
-// row is one line of the listing: an Exchange, or an Incident. There is one
-// listing and one time order, because time order is the only thing tying the
-// 14:05:09 checkout to the worker that died seven seconds earlier — and a
-// developer's question is never "was it the request or the worker".
-//
-// Which of the two it holds is asked in exactly one place, render: a listing that
-// dispatched on it twice would be two listings wearing one order.
-type row struct {
-	exchange *inspect.Exchange
-	incident *docker.Incident
-}
-
-// at is the instant a row sorts by. An Exchange follows its Activity — a page
-// served ten minutes ago that threw just now is fresher news — and an Incident
-// is the instant the runtime declared it.
-func (r row) at() time.Time {
-	if r.incident != nil {
-		return r.incident.At
-	}
-	return r.exchange.Activity()
-}
-
-// render writes the row, and reports whether it quoted a Transcript — which is
-// what the listing owes its credential notice for.
-func (r row) render(w io.Writer, quoted map[string]transcript.Transcript, show detail) (didQuote bool) {
-	if r.incident != nil {
-		tr := quoted[r.incident.ID]
-		writeIncident(w, *r.incident, tr)
-		return !tr.Empty()
-	}
-	e := *r.exchange
-	tr := quoted[e.ID]
-	writeExchange(w, e, tr, show)
-	return e.Interesting() && !tr.Empty()
-}
-
-// mergeRows folds the two halves of a listing into one, most recent first.
-func mergeRows(exchanges []inspect.Exchange, incidents []docker.Incident) []row {
-	rows := make([]row, 0, len(exchanges)+len(incidents))
-	for i := range exchanges {
-		rows = append(rows, row{exchange: &exchanges[i]})
-	}
-	for i := range incidents {
-		rows = append(rows, row{incident: &incidents[i]})
-	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].at().After(rows[j].at()) })
-	return rows
-}
-
-// servicesServing is the set of services that served the Exchanges in a listing.
-// It is how a --host reaches the Incidents of the container behind that host:
-// the page 502s, the Exchange says the backend was unreachable, and the reason —
-// the container was OOM-killed three seconds earlier — is one row above it.
-//
-// A backend whose container has been *removed* resolves to nothing, and the set
-// is then empty: under a --host, proximo would rather show no Incident than one
-// it cannot attribute to that host. Drop the --host to see them all.
-func servicesServing(r *transcript.Reader, exchanges []inspect.Exchange) map[docker.Service]bool {
-	out := map[docker.Service]bool{}
-	for _, e := range exchanges {
-		if svc := r.ServiceOfBackend(e.Backend); svc != "" {
-			out[svc] = true
-		}
-	}
-	return out
-}
-
-// onlyService keeps the Exchanges served by one service. A routed service is
-// asked about the same way a routeless one is: --service names the service, and
-// what it narrows is the whole listing rather than half of it.
-func onlyService(r *transcript.Reader, exchanges []inspect.Exchange, service docker.Service) []inspect.Exchange {
-	out := make([]inspect.Exchange, 0, len(exchanges))
-	for _, e := range exchanges {
-		if r.ServiceOfBackend(e.Backend) == service {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
+// What proximo says about an Incident and a Reading: how a --service is resolved
+// to a qualified name, how an Incident's row and its quoted window are rendered,
+// and what a listing owes when the Incident store could not be read or has just
+// been emptied. The listing's own shape is listing.go.
 // resolveService turns what a developer typed into --service into the qualified
 // Service proximo prints. A bare name is accepted when nothing contests it; a
 // contested one has its candidates reported rather than one of them chosen, the

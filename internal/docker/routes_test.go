@@ -172,7 +172,7 @@ func TestPortOwnersNamesTheContainerAndWhetherItIsTheStack(t *testing.T) {
 	cs := []container.Summary{
 		{
 			Names:  []string{"/proximo-traefik-1"},
-			Labels: map[string]string{roleLabel: "traefik"},
+			Labels: map[string]string{RoleLabel: "traefik"},
 			Ports: []container.PortSummary{
 				{PublicPort: 80, PrivatePort: 80, Type: "tcp"},
 				{PublicPort: 443, PrivatePort: 443, Type: "tcp"},
@@ -211,7 +211,7 @@ func TestPortOwnersNamesTheContainerAndWhetherItIsTheStack(t *testing.T) {
 func TestObservedRoutesListTheContainersProximoWatchesWithoutRouting(t *testing.T) {
 	worker := container.Summary{
 		Names:  []string{"/shop-worker-1"},
-		Labels: map[string]string{TranscriptLabel: "true", composeProjectLabel: "shop", composeServiceLabel: "worker"},
+		Labels: map[string]string{TranscriptLabel: "true", composeProjectLabel: "shop", ComposeServiceLabel: "worker"},
 	}
 	routed := container.Summary{
 		Names:  []string{"/shop-web-1"},
@@ -220,7 +220,7 @@ func TestObservedRoutesListTheContainersProximoWatchesWithoutRouting(t *testing.
 	plain := container.Summary{Names: []string{"/postgres"}}
 	stack := container.Summary{
 		Names:  []string{"/proximo-watcher-1"},
-		Labels: map[string]string{roleLabel: "watcher", TranscriptLabel: "true"},
+		Labels: map[string]string{RoleLabel: "watcher", TranscriptLabel: "true"},
 	}
 
 	got := observedRoutes([]container.Summary{worker, routed, plain, stack})

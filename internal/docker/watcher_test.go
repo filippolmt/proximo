@@ -102,7 +102,7 @@ func TestIsRoutedProximo(t *testing.T) {
 	if isRouted(makeSummary(map[string]string{proximoHostsLabel: "web.test", proximoEnableLabel: "false"})) {
 		t.Error("proximo.enable=false should park the container")
 	}
-	if isRouted(makeSummary(map[string]string{roleLabel: "traefik", proximoHostsLabel: "web.test"})) {
+	if isRouted(makeSummary(map[string]string{RoleLabel: "traefik", proximoHostsLabel: "web.test"})) {
 		t.Error("stack container must never route even with proximo.hosts")
 	}
 	if isRouted(makeSummary(map[string]string{proximoEnableLabel: "true"})) {
@@ -130,7 +130,7 @@ func TestClassifyHosts(t *testing.T) {
 		t.Errorf("host rule without traefik.enable should not route, got %v", hosts)
 	}
 	// Stack containers are never routed.
-	if hosts, _, _ := classifyHosts(map[string]string{roleLabel: "traefik", proximoHostsLabel: "x.test"}); len(hosts) != 0 {
+	if hosts, _, _ := classifyHosts(map[string]string{RoleLabel: "traefik", proximoHostsLabel: "x.test"}); len(hosts) != 0 {
 		t.Errorf("stack container should not route, got %v", hosts)
 	}
 	// Invalid proximo hosts are surfaced for logging.
@@ -515,7 +515,7 @@ func TestReconcileAttachesAndDetaches(t *testing.T) {
 	f.containers = []container.Summary{
 		{
 			ID:     "traefikcid",
-			Labels: map[string]string{roleLabel: "traefik"},
+			Labels: map[string]string{RoleLabel: "traefik"},
 			NetworkSettings: netSummary(map[string]string{
 				"proximo_default": "stacknet", // stack network: must be kept
 				"oldnet":          "oldid",    // stale: must be disconnected
@@ -700,7 +700,7 @@ func dashboardCertSANs(t *testing.T, certsDir string) []string {
 func TestReconcileDashboardSelfRoute(t *testing.T) {
 	f := newFakeDocker()
 	f.containers = []container.Summary{
-		{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}},
+		{ID: "traefikcid", Labels: map[string]string{RoleLabel: "traefik"}},
 	}
 	w := testWatcher(t)
 	w.cli = f
@@ -733,7 +733,7 @@ func TestReconcileDashboardSelfRoute(t *testing.T) {
 // TestReconcileDashboardSurvivesStaleCleanup: adding then removing a routed user
 // container garbage-collects the user route/cert but never the dashboard's (4.4).
 func TestReconcileDashboardSurvivesStaleCleanup(t *testing.T) {
-	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}}
+	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{RoleLabel: "traefik"}}
 	app := container.Summary{
 		ID:     "appcid",
 		Names:  []string{"/app"},
@@ -777,7 +777,7 @@ func TestReconcileDashboardSurvivesStaleCleanup(t *testing.T) {
 // turns unhealthy — driven by the Health status the watcher reads each reconcile
 // (the same status a `health_status` event delivers).
 func TestReconcileHealthGating(t *testing.T) {
-	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}}
+	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{RoleLabel: "traefik"}}
 	app := container.Summary{
 		ID:     "appcid",
 		Names:  []string{"/app"},
@@ -822,7 +822,7 @@ func TestReconcileHealthGating(t *testing.T) {
 // running regardless of (missing) health — the change stays additive for the
 // common no-healthcheck case.
 func TestReconcileHealthGatingExemptions(t *testing.T) {
-	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}}
+	traefik := container.Summary{ID: "traefikcid", Labels: map[string]string{RoleLabel: "traefik"}}
 	noHealth := container.Summary{
 		ID:     "nohealthcid",
 		Names:  []string{"/nohealth"},
@@ -887,7 +887,7 @@ func TestReconcileTraefikRoleNeverContainerRouted(t *testing.T) {
 	f := newFakeDocker()
 	f.containers = []container.Summary{
 		{ID: "traefikcid", Names: []string{"/traefik"}, Labels: map[string]string{
-			roleLabel:         "traefik",
+			RoleLabel:         "traefik",
 			proximoHostsLabel: "evil.test",
 			proximoPortLabel:  "8080",
 		}},
@@ -1665,7 +1665,7 @@ func TestClassifyQualifiesHosts(t *testing.T) {
 		proximoHostsLabel:   "api.test,api.example.com",
 		proximoPortLabel:    "80",
 		composeProjectLabel: "shop",
-		composeServiceLabel: "api",
+		ComposeServiceLabel: "api",
 	})
 	rc, ok, _ := classify(context.Background(), failInspect(t), c, "test")
 	if !ok {
@@ -1840,7 +1840,7 @@ func TestAssignSafeNamesFromNamespace(t *testing.T) {
 func TestReconcileServesQualifiedHost(t *testing.T) {
 	f := newFakeDocker()
 	f.containers = []container.Summary{
-		{ID: "traefikcid", Labels: map[string]string{roleLabel: "traefik"}},
+		{ID: "traefikcid", Labels: map[string]string{RoleLabel: "traefik"}},
 		{
 			ID:    "apicid",
 			Names: []string{"/shop-api-1"},
@@ -1848,7 +1848,7 @@ func TestReconcileServesQualifiedHost(t *testing.T) {
 				proximoHostsLabel:   "api.test",
 				proximoPortLabel:    "8080",
 				composeProjectLabel: "shop",
-				composeServiceLabel: "api",
+				ComposeServiceLabel: "api",
 			},
 		},
 	}

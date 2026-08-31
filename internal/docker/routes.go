@@ -216,7 +216,7 @@ func servedRoutes(resolved routeResolution, refused map[string]string) []Route {
 // instead of classifying the role-labeled container (which never routes).
 func dashboardRoutes(cs []container.Summary, tld string) []Route {
 	for _, c := range cs {
-		if c.Labels[roleLabel] == "traefik" {
+		if c.Labels[RoleLabel] == "traefik" {
 			host := dashboardHost(tld)
 			return []Route{{Container: primaryName(c), Host: host, URL: "https://" + host}}
 		}
@@ -293,13 +293,13 @@ func StackStatus(ctx context.Context) (StackInfo, error) {
 	}
 	var info StackInfo
 	for _, c := range res.Items {
-		if _, isStack := c.Labels[roleLabel]; !isStack {
+		if _, isStack := c.Labels[RoleLabel]; !isStack {
 			continue
 		}
 		if !info.Running {
 			info.Running, info.Version = true, c.Labels[versionLabel]
 		}
-		if role := c.Labels[roleLabel]; role != "" && !slices.Contains(info.Roles, role) {
+		if role := c.Labels[RoleLabel]; role != "" && !slices.Contains(info.Roles, role) {
 			info.Roles = append(info.Roles, role)
 		}
 		// Only the image-backed services carry the ref; traefik may well be the
@@ -346,7 +346,7 @@ func StackRecordsAccessLog(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, c := range res.Items {
-		if c.Labels[roleLabel] != "traefik" {
+		if c.Labels[RoleLabel] != "traefik" {
 			continue
 		}
 		got, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})

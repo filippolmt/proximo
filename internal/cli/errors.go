@@ -100,14 +100,15 @@ func newErrorsCmd() *cobra.Command {
 			}
 
 			exchanges := inspect.Select(window, host, cutoff, limit, !all)
+			grouped := byService(r, exchanges)
 			if service != "" {
-				exchanges = onlyService(r, exchanges, service)
+				exchanges = grouped[service]
 			}
 			// An Incident carries no host, so a --host narrows it by the service
 			// that served that host's requests rather than dropping every one.
 			var narrowed map[docker.Service]bool
 			if host != "" {
-				narrowed = servicesServing(r, exchanges)
+				narrowed = servicesServing(grouped)
 			}
 			incidents := docker.SelectIncidents(listing.Incidents, docker.IncidentQuery{
 				Service: service, Services: narrowed, Since: cutoff, Limit: limit, OnlyProblems: !all,

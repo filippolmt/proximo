@@ -130,7 +130,10 @@ start, then on Docker events, with a 30s safety resync. Each reconcile:
 1. **Finds Traefik** (the container labeled `proximo.role=traefik`).
 2. **Selects routed containers** — opted in via `proximo.hosts` (and not
    `proximo.enable=false`), or via native `traefik.enable=true`. Stack
-   containers (`proximo.role`) are never routed.
+   containers (`proximo.role`) are never routed. Every rule about what a
+   container's labels *declare* lives in `internal/docker/labels.go`, so the
+   watcher, `proximo status` and the Incident store cannot disagree about whether
+   a container is proximo's and what it asked for.
 3. **Resolves the backend port** — `proximo.port` if set; otherwise the single
    exposed TCP port (auto-detected via `ContainerInspect`); ambiguous cases are
    skipped with a warning.
@@ -183,7 +186,7 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/config/` | Persisted config (TLD), per-user paths. |
 | `internal/dns/` | The wildcard DNS server + host-resolver wiring. |
 | `internal/tls/` | Local CA, leaf issuance, system + NSS trust. |
-| `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher, the Incident store and its loopback read API. |
+| `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher, what a container's labels declare (`labels.go`), the Incident store and its loopback read API. |
 | `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
 | `internal/checks/` | The Check registry, the Report, and the host readings behind them (`proximo doctor`, and the pre-install subset `install`/`up` gate on). |

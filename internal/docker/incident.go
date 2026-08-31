@@ -451,7 +451,7 @@ func MatchService(want string, known []Service) (match Service, candidates []Ser
 // service and a Namespace are one concept, not two. A container outside a
 // Compose project has neither, so it names itself.
 func ServiceOf(labels map[string]string, containerName string) Service {
-	svc := strings.TrimSpace(labels[composeServiceLabel])
+	svc := strings.TrimSpace(labels[ComposeServiceLabel])
 	switch ns := namespaceOf(labels); {
 	case svc == "":
 		return Service(containerName)
@@ -475,10 +475,10 @@ func ServiceKey(c container.Summary) Service {
 // container known, and the case that matters most is a routed container whose
 // 502 is explained by the OOM kill three seconds earlier.
 func isObserved(labels map[string]string) bool {
-	if _, isStack := labels[roleLabel]; isStack {
+	if _, isStack := labels[RoleLabel]; isStack {
 		return false
 	}
-	return isRoutedLabels(labels) || isTruthyLabel(labels, proximoTranscriptLabel)
+	return isRoutedLabels(labels) || isTruthyLabel(labels, TranscriptLabel)
 }
 
 // eventTime is the instant an event carries. TimeNano is what Docker sets;

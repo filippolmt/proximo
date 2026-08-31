@@ -25,9 +25,9 @@ func dieEvent(name string, code string, at time.Time, labels map[string]string) 
 // nothing.
 func workerLabels(project, service string) map[string]string {
 	return map[string]string{
-		proximoTranscriptLabel: "true",
-		composeProjectLabel:    project,
-		composeServiceLabel:    service,
+		TranscriptLabel:     "true",
+		composeProjectLabel: project,
+		ComposeServiceLabel: service,
 	}
 }
 
@@ -52,21 +52,21 @@ func TestObserveRecordsWhatTheRuntimeDeclares(t *testing.T) {
 		},
 		{
 			name: "a container proximo knows nothing about",
-			msg:  dieEvent("postgres", "1", at, map[string]string{composeProjectLabel: "shop", composeServiceLabel: "db"}),
+			msg:  dieEvent("postgres", "1", at, map[string]string{composeProjectLabel: "shop", ComposeServiceLabel: "db"}),
 		},
 		{
 			name: "a routed container needs no proximo.transcript",
-			msg:  dieEvent("shop-web-1", "2", at, map[string]string{proximoHostsLabel: "shop.test", composeProjectLabel: "shop", composeServiceLabel: "web"}),
+			msg:  dieEvent("shop-web-1", "2", at, map[string]string{proximoHostsLabel: "shop.test", composeProjectLabel: "shop", ComposeServiceLabel: "web"}),
 			want: Incident{At: at, Service: "shop/web", Container: "shop-web-1", Kind: IncidentExited, ExitCode: 2},
 			ok:   true,
 		},
 		{
 			name: "the stack's own containers are not Projects",
-			msg:  dieEvent("proximo-watcher-1", "1", at, map[string]string{roleLabel: "watcher", proximoTranscriptLabel: "true"}),
+			msg:  dieEvent("proximo-watcher-1", "1", at, map[string]string{RoleLabel: "watcher", TranscriptLabel: "true"}),
 		},
 		{
 			name: "outside a Compose project the container names itself",
-			msg:  dieEvent("lonely", "1", at, map[string]string{proximoTranscriptLabel: "true"}),
+			msg:  dieEvent("lonely", "1", at, map[string]string{TranscriptLabel: "true"}),
 			want: Incident{At: at, Service: "lonely", Container: "lonely", Kind: IncidentExited, ExitCode: 1},
 			ok:   true,
 		},
