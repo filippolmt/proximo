@@ -47,7 +47,7 @@ Architecture lives in `docs/`, never here. Whole picture:
 | What proximo remembers about a container with no route (Incidents), and the label that makes one known | [docs/observability.md — Incidents](docs/observability.md#incidents--what-the-runtime-declared), [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md) |
 | A container that keeps dying but reports no Incident | [docs/troubleshooting.md — proximo errors reports no Incident](docs/troubleshooting.md#proximo-errors-reports-no-incident) |
 | What proximo answers about a live container that may be stuck, and the conclusion it refuses to draw | [docs/observability.md — Readings](docs/observability.md#readings--what-the-runtime-says-right-now) |
-| How a project makes "not progressing" an Incident without proximo inferring anything | [docs/observability.md — Making "not progressing" an Incident](docs/observability.md#making-not-progressing-an-incident) |
+| How a project makes "not progressing" an Incident without proximo inferring anything | [docs/observability.md — Making "not progressing" an Incident](docs/observability.md#making-not-progressing-an-incident), [docs/adr/0008](docs/adr/0008-proximo-measures-the-project-concludes.md) |
 | Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
 | The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
 | Reading a whole Transcript, the window an Incident fixes, and the `--since` instant | [docs/cli.md — proximo errors transcript](docs/cli.md#proximo-errors-transcript) |
@@ -65,6 +65,11 @@ compiler will not enforce:
   read; the per-service retention and the derived id):
   [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md),
   `internal/docker/incident.go`
+- The healthcheck Incident is a check that was *passing and stopped*, never one
+  that merely reports unhealthy — and a Reading is a fact about one container, so
+  a Service produces one per running replica:
+  [docs/adr/0008](docs/adr/0008-proximo-measures-the-project-concludes.md),
+  `internal/docker/incident.go`, `internal/transcript/read.go`
 - Adding a `##` section to a guide in `docs/`: add its row to
   [docs/README.md](docs/README.md), the canonical section map —
   `internal/skill/docsindex_test.go` asserts both directions and fails the build

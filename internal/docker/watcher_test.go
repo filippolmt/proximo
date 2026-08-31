@@ -364,6 +364,7 @@ func testWatcher(t *testing.T) *Watcher {
 		t.Fatalf("LoadCA: %v", err)
 	}
 	return &Watcher{
+		incidents:  NewIncidentStore(0, 0),
 		caCert:     caCert,
 		caKey:      caKey,
 		dynamicDir: t.TempDir(),
@@ -531,7 +532,7 @@ func TestReconcileAttachesAndDetaches(t *testing.T) {
 		},
 	}
 
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := &Watcher{incidents: NewIncidentStore(0, 0), cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 	if err := w.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -552,7 +553,7 @@ func TestReconcileNoTraefik(t *testing.T) {
 		{ID: "appcid", Names: []string{"/app"}, Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
 			NetworkSettings: netSummary(map[string]string{"appnet": "appid"})},
 	}
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := &Watcher{incidents: NewIncidentStore(0, 0), cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 	if err := w.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -565,7 +566,7 @@ func TestReconcileNoTraefik(t *testing.T) {
 // Docker event, and returns ctx.Err() when the context is cancelled.
 func TestRunReconcilesOnEventAndStops(t *testing.T) {
 	f := newFakeDocker()
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := &Watcher{incidents: NewIncidentStore(0, 0), cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -588,7 +589,7 @@ func TestRunReconcilesOnEventAndStops(t *testing.T) {
 // ctx cancel.
 func TestRunReconnectsAfterEventError(t *testing.T) {
 	f := newFakeDocker()
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := &Watcher{incidents: NewIncidentStore(0, 0), cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -612,7 +613,7 @@ func TestRunReconnectsAfterEventError(t *testing.T) {
 }
 
 func TestSyncDynamicWritesAndCleans(t *testing.T) {
-	w := &Watcher{dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	w := &Watcher{incidents: NewIncidentStore(0, 0), dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
 	rc := routedContainer{name: "whoami", safe: "whoami", hosts: []string{"whoami.test"}, port: 80, proximo: true}
 
 	w.syncDynamic([]routedContainer{rc})

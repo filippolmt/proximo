@@ -95,11 +95,10 @@ services:
   # knows. A Docker healthcheck is how the project says it: this one advances for
   # three jobs, touching a marker each time, then blocks forever on a lock that
   # never comes. Once the marker goes stale the healthcheck fails, Docker declares
-  # the container unhealthy, and an unhealthy transition IS an Incident — so a
-  # container that is alive and stuck becomes visible without proximo guessing.
-  # Unhealthy stays out of the default listing (a worker waiting on postgres is
-  # unhealthy on every `compose up`): ask for it with
-  # `proximo errors --service stalling`.
+  # the container unhealthy, and a healthcheck that was passing and stopped IS an
+  # Incident — so a container that is alive and stuck becomes visible without
+  # proximo guessing. The check has to pass once first, which is what start_period
+  # below buys: a check that never passed declares nothing when it fails.
   stalling:
     image: alpine:3
     container_name: stalling

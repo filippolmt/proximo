@@ -199,14 +199,23 @@ e2e-incident: build
 	echo "    Incident $$id"; \
 	$(BIN) errors transcript "$$id" | grep -q 'nil map' \
 		|| { echo "FAIL: \`errors transcript\` printed no transcript for Incident $$id"; exit 1; }
-	@echo "==> a worker that stops advancing turns unhealthy, and that is an Incident"
+	@echo "==> a worker that stops advancing loses a healthcheck that was passing, and that is an Incident"
 	@for i in $$(seq 1 30); do \
 		$(BIN) errors --json --service stalling 2>/dev/null | grep -q '"kind": "unhealthy"' && break || sleep 2; \
 	done
 	@$(BIN) errors --json --service stalling | grep -q '"kind": "unhealthy"' \
 		|| { echo "FAIL: the stalled worker produced no unhealthy Incident - a healthcheck is how a stuck container becomes visible"; exit 1; }
+	# Nothing is held back: the Incident is a check that was passing and stopped,
+	# so the boot-time noise the old exclusion existed for never reaches the store.
 	@$(BIN) errors --json | grep -q '"kind": "unhealthy"' \
-		&& { echo "FAIL: unhealthy must stay out of the default listing"; exit 1; } || true
+		|| { echo "FAIL: the unhealthy Incident must be in the default listing too"; exit 1; }
+	# The readings are taken on every --service, Incident or no Incident, and a
+	# scaled service produces one per running container.
+	@echo "==> --service ends with the readings"
+	@$(BIN) errors --json --service stalling | grep -q '"readings"' \
+		|| { echo "FAIL: a --service listing carries no readings"; exit 1; }
+	@$(BIN) errors --service stalling | grep -q "What proximo can see of stalling right now" \
+		|| { echo "FAIL: the readings did not print after the listing"; exit 1; }
 	@echo "OK: a container with no route produced an Incident, and its window quoted the container's output"
 	$(BIN) errors --service worker
 

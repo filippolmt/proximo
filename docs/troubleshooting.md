@@ -318,8 +318,9 @@ work through these in order:
    it as *no route — observed for Incidents* once the label takes effect, which
    is how you verify the label at all.
 2. **Did the runtime actually declare anything?** A clean exit (code 0) is not an
-   Incident, and `turned unhealthy` is held back from the default listing —
-   `proximo errors --service <service>` holds nothing back.
+   Incident, and neither is a healthcheck that went to unhealthy without ever
+   having passed — a container that never reached *healthy* declares nothing when
+   it fails.
 3. **Is it still in the window?** `--since` defaults to 15 minutes, and the
    watcher keeps a bounded number of Incidents per service. `proximo up` discards
    them all: they are held in memory.
@@ -335,8 +336,10 @@ work through these in order:
    - To make it visible *next time*, give the container a healthcheck that fails
      when it stops advancing:
      [making "not progressing" an Incident](observability.md#making-not-progressing-an-incident).
-     Docker then declares it unhealthy, and an unhealthy transition is an
-     Incident whose window quotes exactly what the worker wrote before it stalled.
+     Docker then declares it unhealthy, and a healthcheck that was passing and
+     stopped is an Incident whose window quotes exactly what the worker wrote
+     before it stalled. The container has to reach *healthy* once for that to
+     work, which is what `start_period` is for.
 
 ## A transcript is empty or says the container is gone
 

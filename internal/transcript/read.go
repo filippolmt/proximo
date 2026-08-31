@@ -340,8 +340,8 @@ func (r *Reader) QuoteService(ctx context.Context, service docker.Service, from,
 // count rides the Transcript, so which one it is stays visible.
 //
 // ponytail: one replica of a scaled service, ever. A service running three
-// containers has two whose output nothing here reaches, and the Reading counts
-// them without reading them. Quote every replica only if that turns out to be
+// containers has two whose output nothing here reaches — unlike the readings,
+// which are taken per replica. Quote every replica only if that turns out to be
 // what a developer asks for, and declare which is which when it does.
 func (r *Reader) containerOfService(service docker.Service) (container.Summary, string, bool) {
 	var pick, stopped string
@@ -390,22 +390,34 @@ func (r *Reader) hasTTY(ctx context.Context, id string) bool {
 	return tty
 }
 
-// ReadingOf takes the readings for one Service: two bounded questions — one
-// inspect, one one-line log read — asked only when a listing has nothing else to
-// show, so the cost lands where the silence is. The type is docker.Reading
-// because a reading is what the runtime declares, the same as an Incident; taking
-// it lives here because this is where the container listing and the log stream
-// already are.
-func (r *Reader) ReadingOf(ctx context.Context, service docker.Service) docker.Reading {
-	c, name, ok := r.containerOfService(service)
-	if !ok {
-		return docker.Reading{}
+// ReadingsOf takes the readings for one Service: one per running container of
+// it, in name order so two invocations list the same replicas in the same places.
+// A container that is not running produces none — it has already declared an
+// Incident, and dated history and the present tense are kept apart rather than
+// said twice.
+//
+// Each is two bounded questions, one inspect and one one-line log read. The type
+// is docker.Reading because a reading is what the runtime declares, the same as
+// an Incident; taking it lives here because this is where the container listing
+// and the log stream already are.
+func (r *Reader) ReadingsOf(ctx context.Context, service docker.Service) []docker.Reading {
+	var names []string
+	for name, c := range r.byName {
+		if docker.ServiceKey(c) == service && c.State == container.StateRunning {
+			names = append(names, name)
+		}
 	}
-	rd := docker.Reading{
-		Container: name,
-		Running:   c.State == container.StateRunning,
-		Replicas:  r.replicas[service],
+	slices.Sort(names)
+	out := make([]docker.Reading, 0, len(names))
+	for _, name := range names {
+		out = append(out, r.readingOf(ctx, r.byName[name], name))
 	}
+	return out
+}
+
+// readingOf takes the readings for one running container.
+func (r *Reader) readingOf(ctx context.Context, c container.Summary, name string) docker.Reading {
+	rd := docker.Reading{Container: name, Running: true}
 	if res, err := r.d.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{}); err != nil {
 		// Named rather than left as a gap: three of the four readings come from
 		// here, and absent ones presented as measurements are how a working
