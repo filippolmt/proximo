@@ -161,8 +161,8 @@ func newErrorsCmd() *cobra.Command {
 			}
 			if len(rows) == 0 {
 				writeNothingFound(out, all, host, service)
-				// refuse only here: see writeReadings.
-				writeReadings(out, readings, true)
+				writeReadings(out, readings)
+				writeRefusal(out, readings)
 				return nil
 			}
 			show := warnAndAbove
@@ -170,7 +170,9 @@ func newErrorsCmd() *cobra.Command {
 				show = everything
 			}
 			writeListing(out, rows, quoted, show)
-			writeReadings(out, readings, false)
+			// No writeRefusal: this listing found something, so there is no
+			// silence here to be misread as *all fine*.
+			writeReadings(out, readings)
 			return nil
 		},
 	}

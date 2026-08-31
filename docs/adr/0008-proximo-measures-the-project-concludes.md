@@ -89,9 +89,12 @@ that moment.
   container id survives a restart and its healthcheck does not. The noise the
   definition excludes therefore never enters the store, rather than entering it
   and being filtered out of the listing.
-- **`Interesting()` loses its only exclusion,** and with it the advice that
-  existed to compensate for it: a developer following the healthcheck route no
-  longer has to know that `proximo errors` alone will not show the result.
+- **`Interesting()` loses its only exclusion,** and with nothing left to exclude
+  it goes entirely, along with the `OnlyProblems` flag that asked it the question
+  — and with the advice that existed to compensate for it: a developer following
+  the healthcheck route no longer has to know that `proximo errors` alone will not
+  show the result. `--all` stops reaching Incidents, which is what holding nothing
+  back means.
 - **A flapping healthcheck produces several Incidents.** That is meaningful
   rather than noisy — flapping is the fact — and the volume is already bounded by
   the per-service cap from

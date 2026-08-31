@@ -204,7 +204,10 @@ e2e-incident: build
 		$(BIN) errors --json --service stalling 2>/dev/null | grep -q '"kind": "unhealthy"' && break || sleep 2; \
 	done
 	@$(BIN) errors --json --service stalling | grep -q '"kind": "unhealthy"' \
-		|| { echo "FAIL: the stalled worker produced no unhealthy Incident - a healthcheck is how a stuck container becomes visible"; exit 1; }
+		|| { echo "FAIL: the stalled worker produced no unhealthy Incident - a healthcheck is how a stuck container becomes visible"; \
+		     echo "      the Incident is a check that was PASSING and stopped, so the likely cause is a check that never reached healthy:"; \
+		     docker inspect --format '      stalling health: {{.State.Health.Status}}, {{len .State.Health.Log}} probes, failing {{.State.Health.FailingStreak}}' stalling 2>/dev/null; \
+		     exit 1; }
 	# Nothing is held back: the Incident is a check that was passing and stopped,
 	# so the boot-time noise the old exclusion existed for never reaches the store.
 	@$(BIN) errors --json | grep -q '"kind": "unhealthy"' \

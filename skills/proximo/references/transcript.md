@@ -101,9 +101,10 @@ Two rules before you report anything:
   Docker then says *unhealthy*, and a check that was passing and stopped is an
   Incident whose window quotes exactly what the worker wrote before it stalled. It
   is the developer's code to change, so propose it and let them decide; proximo
-  neither defines the contract nor reads the marker. Propose a `start_period` with
-  it: the check has to pass once, or the stall it is there to catch declares
-  nothing.
+  neither defines the contract nor reads the marker. The check has to pass once,
+  or the stall it is there to catch declares nothing; propose a `start_period`
+  with it, which keeps a slow first job from being reported unhealthy on the way
+  there.
 
 ## When there is nothing to quote
 

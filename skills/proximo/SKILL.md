@@ -71,8 +71,9 @@ output for the window before concluding anything:
 `proximo errors transcript --service <service> --since 30m`. To make a stuck
 worker visible next time, propose a healthcheck that fails when it stops
 advancing — Docker then says *unhealthy*, and a healthcheck that was passing and
-stopped is an Incident. It has to pass once first, so propose a `start_period`
-with it: a check that never passed declares nothing when it fails.
+stopped is an Incident. It has to pass once first — a check that never passed
+declares nothing when it fails — so propose a `start_period` with it, which keeps
+a slow first job from being reported unhealthy on the way there.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another

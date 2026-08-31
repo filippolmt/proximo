@@ -110,8 +110,10 @@ func (i Incident) Describe() string {
 // replica: with three workers up and one of them wedged, a single reading is a
 // coin toss that comes up "healthy, wrote 3s ago" twice out of three.
 type Reading struct {
+	// Container is the one measured. There is no "running" alongside it: a Reading
+	// is the present tense of something alive, so being alive is what qualified
+	// the container for one rather than something the Reading reports.
 	Container string `json:"container"`
-	Running   bool   `json:"running"`
 	// Since is when the container last started (not when it was created): for a
 	// worker that has been restarted, the second would overstate its uptime.
 	Since       time.Time `json:"since,omitzero"`
@@ -136,12 +138,11 @@ type Reading struct {
 // checks them. What could not be read is named rather than left as a gap.
 func (rd Reading) Describe() string {
 	var parts []string
-	switch {
-	case !rd.Running:
-		parts = append(parts, "not running")
-	case rd.Since.IsZero():
+	if rd.Since.IsZero() {
+		// The inspect that carries it failed; the container is running either way,
+		// which is why it has a Reading at all.
 		parts = append(parts, "running")
-	default:
+	} else {
 		parts = append(parts, "running for "+time.Since(rd.Since).Round(time.Second).String())
 	}
 	if rd.Healthcheck != "" && rd.Healthcheck != string(container.NoHealthcheck) {

@@ -1,5 +1,9 @@
 # proximo remembers what the runtime declares, never what the project wrote
 
+> Amended by [ADR 0008](0008-proximo-measures-the-project-concludes.md), which
+> settles what this one left as a `_Debt_` in CONTEXT.md — that notation is gone,
+> and the two references to it below are the record of when it was still there.
+
 [ADR 0006](0006-the-transcript-is-quoted-never-stored.md) gave every route a
 Transcript and left a hole it named out loud: a container with no Route — a
 worker, a queue consumer, a migration job — produces no Access record, therefore

@@ -93,12 +93,13 @@ services:
   # The stuck worker. proximo cannot tell an idle consumer from a blocked one by
   # looking — that needs to know whether work was waiting, which only the project
   # knows. A Docker healthcheck is how the project says it: this one advances for
-  # three jobs, touching a marker each time, then blocks forever on a lock that
+  # ten jobs, touching a marker each time, then blocks forever on a lock that
   # never comes. Once the marker goes stale the healthcheck fails, Docker declares
   # the container unhealthy, and a healthcheck that was passing and stopped IS an
   # Incident — so a container that is alive and stuck becomes visible without
-  # proximo guessing. The check has to pass once first, which is what start_period
-  # below buys: a check that never passed declares nothing when it fails.
+  # proximo guessing. The check has to pass once first — one that never passed
+  # declares nothing when it fails — and start_period below is what keeps the
+  # first job's window from being reported unhealthy on the way there.
   stalling:
     image: alpine:3
     container_name: stalling
@@ -107,7 +108,7 @@ services:
       - -c
       - |
         i=1
-        while [ $$i -le 3 ]; do
+        while [ $$i -le 10 ]; do
           touch /tmp/progress
           echo "stalling: finished job $$i"
           i=$$((i+1))
@@ -117,7 +118,10 @@ services:
         sleep 3600
     healthcheck:
       # Healthy while the marker is younger than 5s — "am I still advancing?",
-      # which is the one question the project can answer and proximo cannot.
+      # which is the one question the project can answer and proximo cannot. The
+      # advancing phase runs long enough for several probes to land inside that
+      # window: the check reaching healthy *once* is what makes the stall an
+      # Incident, so a single slow first probe must not be able to miss it.
       test: ["CMD-SHELL", "[ $$(( $$(date +%s) - $$(stat -c %Y /tmp/progress) )) -lt 5 ]"]
       interval: 3s
       timeout: 2s

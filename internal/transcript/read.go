@@ -333,6 +333,34 @@ func (r *Reader) QuoteService(ctx context.Context, service docker.Service, from,
 		c, from, to, limit, "in this window")
 }
 
+// namesOfService is the containers of one Service, running and stopped apart,
+// each by its first name and in name order. One entry per *container*: byName is
+// keyed per name and Docker reports a container once per name it answers to, so
+// the same container would otherwise be walked — and read, and reported — twice.
+func (r *Reader) namesOfService(service docker.Service) (running, stopped []string) {
+	// The lowest name wins so a container with two of them is always the same one
+	// here, and stays the replica an earlier invocation picked.
+	byID := map[string]string{}
+	for name, c := range r.byName {
+		if docker.ServiceKey(c) != service {
+			continue
+		}
+		if held, seen := byID[c.ID]; !seen || name < held {
+			byID[c.ID] = name
+		}
+	}
+	for _, name := range byID {
+		if r.byName[name].State == container.StateRunning {
+			running = append(running, name)
+		} else {
+			stopped = append(stopped, name)
+		}
+	}
+	slices.Sort(running)
+	slices.Sort(stopped)
+	return running, stopped
+}
+
 // containerOfService picks the container a service is quoted from: a running one
 // before a stopped one — a plain window asks what the service is writing, and a
 // container that exited is not — then the first by name, so two invocations quote
@@ -344,28 +372,12 @@ func (r *Reader) QuoteService(ctx context.Context, service docker.Service, from,
 // which are taken per replica. Quote every replica only if that turns out to be
 // what a developer asks for, and declare which is which when it does.
 func (r *Reader) containerOfService(service docker.Service) (container.Summary, string, bool) {
-	var pick, stopped string
-	for name, c := range r.byName {
-		if docker.ServiceKey(c) != service {
-			continue
-		}
-		if c.State != container.StateRunning {
-			if stopped == "" || name < stopped {
-				stopped = name
-			}
-			continue
-		}
-		if pick == "" || name < pick {
-			pick = name
-		}
-	}
-	if pick == "" {
-		pick = stopped
-	}
-	if pick == "" {
+	running, stopped := r.namesOfService(service)
+	pick := append(running, stopped...)
+	if len(pick) == 0 {
 		return container.Summary{}, "", false
 	}
-	return r.byName[pick], pick, true
+	return r.byName[pick[0]], pick[0], true
 }
 
 // incidentOutlived is the fourth silence, alongside the three explainSilence
@@ -401,15 +413,9 @@ func (r *Reader) hasTTY(ctx context.Context, id string) bool {
 // an Incident; taking it lives here because this is where the container listing
 // and the log stream already are.
 func (r *Reader) ReadingsOf(ctx context.Context, service docker.Service) []docker.Reading {
-	var names []string
-	for name, c := range r.byName {
-		if docker.ServiceKey(c) == service && c.State == container.StateRunning {
-			names = append(names, name)
-		}
-	}
-	slices.Sort(names)
-	out := make([]docker.Reading, 0, len(names))
-	for _, name := range names {
+	running, _ := r.namesOfService(service)
+	out := make([]docker.Reading, 0, len(running))
+	for _, name := range running {
 		out = append(out, r.readingOf(ctx, r.byName[name], name))
 	}
 	return out
@@ -417,7 +423,7 @@ func (r *Reader) ReadingsOf(ctx context.Context, service docker.Service) []docke
 
 // readingOf takes the readings for one running container.
 func (r *Reader) readingOf(ctx context.Context, c container.Summary, name string) docker.Reading {
-	rd := docker.Reading{Container: name, Running: true}
+	rd := docker.Reading{Container: name}
 	if res, err := r.d.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{}); err != nil {
 		// Named rather than left as a gap: three of the four readings come from
 		// here, and absent ones presented as measurements are how a working

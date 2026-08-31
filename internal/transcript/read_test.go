@@ -585,7 +585,7 @@ func TestReadingsOfTakeEveryReadingWithoutReadingTheLine(t *testing.T) {
 	rd := readings[0]
 
 	switch {
-	case rd.Container != "shop-worker-1" || !rd.Running:
+	case rd.Container != "shop-worker-1":
 		t.Errorf("reading = %+v, want the running container named", rd)
 	case !rd.Since.Equal(started.Truncate(0)) && rd.Since.Unix() != started.Unix():
 		t.Errorf("Since = %s, want %s — the instant it last started", rd.Since, started)
@@ -710,10 +710,25 @@ func TestReadingsOfAreOnePerRunningReplica(t *testing.T) {
 	if got[0].Container != "shop-worker-1" || got[1].Container != "shop-worker-2" {
 		t.Errorf("readings = %s, %s, want them in name order", got[0].Container, got[1].Container)
 	}
-	for _, rd := range got {
-		if !rd.Running {
-			t.Errorf("reading %+v, want every reading to be of a running container", rd)
-		}
+}
+
+// A container Docker reports under more than one name is still one container: the
+// name-keyed listing would otherwise walk it twice and report it twice, each read
+// costing an inspect and a log read.
+func TestReadingsOfAreOnePerContainerNotPerName(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "worker"}
+	c := summary("w1", "shop-worker-1", time.Now().Add(-time.Hour), labels)
+	c.Names = append(c.Names, "/shop_worker_1_alias")
+	f := &fakeDocker{items: []container.Summary{c}, anyOutput: map[string]string{"w1": ""}}
+
+	r, _ := NewReader(context.Background(), f)
+	got := r.ReadingsOf(context.Background(), "shop/worker")
+	if len(got) != 1 {
+		t.Fatalf("readings = %+v, want one for the one container behind the two names", got)
+	}
+	// The lowest name, so an earlier invocation's replica stays this one.
+	if got[0].Container != "shop-worker-1" {
+		t.Errorf("reading of %q, want shop-worker-1 — the first of its names in order", got[0].Container)
 	}
 }
 

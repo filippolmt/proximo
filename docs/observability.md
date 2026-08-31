@@ -298,7 +298,7 @@ Each reading is a fact the runtime declares, and nothing else is one:
 
 | Reading | Where it comes from |
 | --- | --- |
-| running, and for how long | the container's state and the instant it last *started* — not when it was created, which would overstate a worker that has been restarted |
+| how long it has been running | the instant it last *started* — not when it was created, which would overstate a worker that has been restarted. That it *is* running is not among the readings: being alive is what qualified the container for one |
 | what the healthcheck says | Docker's healthcheck, if the image declares one |
 | how many times it restarted | Docker's own restart count |
 | when its output last moved | the timestamp Docker stamps on the last line — **the instant, never the line**: when a stream moved is the runtime's to declare, what it said is the project's |
@@ -376,10 +376,12 @@ the runtime declared.
 
 One thing to get right, or the healthcheck reports nothing at all: the container
 has to reach **healthy** once. The Incident is a healthcheck that was passing and
-stopped, so a worker whose marker never appears goes straight from `starting` to
-unhealthy, was never healthy, and declares nothing — which is why `start_period`
-is in the example and not decoration. Give the first job time to land. See
-`stalling` in `examples/whoami/docker-compose.yml` for a runnable version.
+stopped, so a check that has never passed declares nothing when it fails — a
+worker whose marker never appears goes straight from `starting` to unhealthy and
+stays a container that never worked. `start_period` is not what makes it pass:
+it is what keeps a *slow* first job from being reported unhealthy on the way
+there, which is why it is in the example and not decoration. See `stalling` in
+`examples/whoami/docker-compose.yml` for a runnable version.
 
 ## Inspection — what the browser saw
 

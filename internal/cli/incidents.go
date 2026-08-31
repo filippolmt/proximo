@@ -118,7 +118,7 @@ func watcherRestartNote(listing docker.IncidentListing, empty bool) string {
 // member cannot say which absence it is — without it, a --service with nothing
 // running is byte-identical to an invocation that named no service.
 func noReadingNote(service docker.Service) string {
-	return fmt.Sprintf("No container of %s is running, so there is no reading to take — what the runtime last declared about it is in the listing, and the present tense has no answer.", service)
+	return fmt.Sprintf("No container of %s is running, so there is no reading to take: the present tense has no answer, and whether the runtime declared anything on the way out is whatever the listing shows.", service)
 }
 
 // writeReadings prints what proximo can see of a Service's containers right now,
@@ -126,23 +126,27 @@ func noReadingNote(service docker.Service) string {
 // no service has no readings to print, and a service with nothing running says so
 // in a note instead (noReadingNote): the present tense of something that is not
 // alive is not a reading of zero.
-//
-// refuse adds the sentence that declines the conclusion, and the caller sets it
-// only when the listing was empty — the misreading it exists to stop is silence
-// read as *all fine*, and a screen full of Incidents has no silence in it. That
-// sentence is the whole of what can honestly be said about a live container that
-// is not progressing: an idle consumer and a stuck one are identical from out
-// here, and telling them apart means knowing whether there is work queued, which
-// is the project's own business and the dependency ADR 0006 refused. So proximo
-// reports and does not judge, the way a Check reports and never repairs. See
-// docs/adr/0008-proximo-measures-the-project-concludes.md.
-func writeReadings(w io.Writer, readings []docker.Reading, refuse bool) {
+func writeReadings(w io.Writer, readings []docker.Reading) {
 	for _, rd := range readings {
 		fmt.Fprintf(w, "What proximo can see of %s right now: %s.\n", rd.Container, rd.Describe())
 	}
+}
+
+// writeRefusal declines the conclusion the readings invite. The caller prints it
+// only under an empty listing — the misreading it exists to stop is silence read
+// as *all fine*, and a screen full of Incidents has no silence in it.
+//
+// It is the whole of what can honestly be said about a live container that is not
+// progressing: an idle consumer and a stuck one are identical from out here, and
+// telling them apart means knowing whether there is work queued, which is the
+// project's own business and the dependency ADR 0006 refused. So proximo reports
+// and does not judge, the way a Check reports and never repairs. See
+// docs/adr/0008-proximo-measures-the-project-concludes.md.
+func writeRefusal(w io.Writer, readings []docker.Reading) {
 	// Nothing running is nothing to refuse a conclusion about: the sentence is
 	// about a container that is alive and may not be progressing.
-	if refuse && len(readings) > 0 {
-		fmt.Fprintln(w, "Whether that is wrong is not proximo's to say: a consumer with nothing to do and one blocked on a slow query look the same from outside the container, and only the project knows whether work was waiting.")
+	if len(readings) == 0 {
+		return
 	}
+	fmt.Fprintln(w, "Whether that is wrong is not proximo's to say: a consumer with nothing to do and one blocked on a slow query look the same from outside the container, and only the project knows whether work was waiting.")
 }

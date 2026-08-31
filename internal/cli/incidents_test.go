@@ -125,13 +125,15 @@ func TestNothingFoundForAServiceSaysWhatSilenceMeans(t *testing.T) {
 // at all was the thing that let "I have nothing to say" be read as "all fine".
 func TestReadingsReportAndRefuseToJudge(t *testing.T) {
 	var b strings.Builder
-	writeReadings(&b, []docker.Reading{{
-		Container: "shop-worker-1", Running: true,
+	readings := []docker.Reading{{
+		Container:   "shop-worker-1",
 		Since:       time.Now().Add(-3 * time.Hour),
 		Healthcheck: "healthy",
 		Restarts:    2,
 		LastWrote:   time.Now().Add(-14 * time.Minute),
-	}}, true)
+	}}
+	writeReadings(&b, readings)
+	writeRefusal(&b, readings)
 	out := b.String()
 	for _, want := range []string{"shop-worker-1", "running for 3h0m0s", "healthy", "restarted 2 times", "and it last wrote 14m0s ago"} {
 		if !strings.Contains(out, want) {
@@ -151,11 +153,11 @@ func TestReadingsReportAndRefuseToJudge(t *testing.T) {
 // otherwise be read as "all fine".
 func TestReadingsAreOnePerContainerAndRefuseOnlyOnSilence(t *testing.T) {
 	readings := []docker.Reading{
-		{Container: "shop-worker-1", Running: true, LastWrote: time.Now().Add(-time.Second)},
-		{Container: "shop-worker-2", Running: true, WroteNothing: true},
+		{Container: "shop-worker-1", LastWrote: time.Now().Add(-time.Second)},
+		{Container: "shop-worker-2", WroteNothing: true},
 	}
 	var b strings.Builder
-	writeReadings(&b, readings, false)
+	writeReadings(&b, readings)
 	out := b.String()
 	for _, want := range []string{"shop-worker-1", "shop-worker-2"} {
 		if !strings.Contains(out, want) {
@@ -174,9 +176,10 @@ func TestReadingsAreOnePerContainerAndRefuseOnlyOnSilence(t *testing.T) {
 // --json is told too — asserted in TestNothingRunningIsSaidInANote.
 func TestReadingsSayNothingWhenThereIsNothingToRead(t *testing.T) {
 	var b strings.Builder
-	writeReadings(&b, nil, true)
+	writeReadings(&b, nil)
+	writeRefusal(&b, nil)
 	if b.Len() != 0 {
-		t.Errorf("readings with none taken = %q, want nothing", b.String())
+		t.Errorf("readings with none taken = %q, want nothing — not even the refusal, which is about a container that is alive", b.String())
 	}
 }
 
@@ -197,7 +200,7 @@ func TestNothingRunningIsSaidInANote(t *testing.T) {
 // The clause a developer reads for goes last, whatever else the Reading carries.
 func TestReadingEndsOnTheStreamClause(t *testing.T) {
 	rd := docker.Reading{
-		Container: "shop-worker-1", Running: true, Restarts: 1,
+		Container: "shop-worker-1", Restarts: 1,
 		Since: time.Now().Add(-time.Minute), LastWrote: time.Now().Add(-time.Second),
 	}
 	got := rd.Describe()

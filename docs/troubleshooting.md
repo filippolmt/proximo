@@ -339,7 +339,9 @@ work through these in order:
      Docker then declares it unhealthy, and a healthcheck that was passing and
      stopped is an Incident whose window quotes exactly what the worker wrote
      before it stalled. The container has to reach *healthy* once for that to
-     work, which is what `start_period` is for.
+     work — a check that has never passed declares nothing when it fails — and
+     `start_period` is what keeps a slow first job from being reported unhealthy
+     on the way there.
 
 ## A transcript is empty or says the container is gone
 
