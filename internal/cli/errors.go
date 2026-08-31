@@ -76,7 +76,7 @@ func newErrorsCmd() *cobra.Command {
 				return enc.Encode(struct {
 					Exchanges   []inspect.Exchange               `json:"exchanges"`
 					Transcripts map[string]transcript.Transcript `json:"transcripts"`
-				}{exchanges, r.Join(cmd.Context(), exchanges, transcript.DefaultLimit)})
+				}{exchanges, r.Join(cmd.Context(), quotable(exchanges), exchanges, transcript.DefaultLimit)})
 			}
 			if len(exchanges) == 0 {
 				// Asked only here, and only when there is nothing to show: it is a
@@ -99,7 +99,8 @@ func newErrorsCmd() *cobra.Command {
 			if all {
 				show = everything
 			}
-			writeListing(out, exchanges, r.Join(cmd.Context(), exchanges, transcript.DefaultLimit), show)
+			writeListing(out, exchanges,
+				r.Join(cmd.Context(), quotable(exchanges), exchanges, transcript.DefaultLimit), show)
 			return nil
 		},
 	}
@@ -274,6 +275,19 @@ func writeExchange(w io.Writer, e inspect.Exchange, tr transcript.Transcript, sh
 	}
 	writeTranscript(w, e, tr)
 	fmt.Fprintln(w)
+}
+
+// quotable is the subset of a listing whose Transcripts will actually be shown.
+// Reading a container's output back is a round trip to Docker, and doing it for
+// a clean request nobody will look at buys nothing.
+func quotable(exchanges []inspect.Exchange) []inspect.Exchange {
+	out := make([]inspect.Exchange, 0, len(exchanges))
+	for _, e := range exchanges {
+		if hasSomethingToSay(e) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // hasSomethingToSay gates the Transcript. Quoting a healthy container's chatter
@@ -524,7 +538,7 @@ func newErrorsTranscriptCmd() *cobra.Command {
 					args[0], since)
 			}
 
-			tr := r.Join(cmd.Context(), all, limit)[found.ID]
+			tr := r.JoinOne(cmd.Context(), *found, all, limit)
 			var b strings.Builder
 			writeWholeTranscript(&b, *found, tr)
 			if out != "" {

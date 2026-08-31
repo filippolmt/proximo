@@ -98,7 +98,7 @@ func quote(t *testing.T, f *fakeDocker, e inspect.Exchange) Transcript {
 	if err != nil {
 		t.Fatalf("NewReader: %v", err)
 	}
-	return r.Join(t.Context(), []inspect.Exchange{e}, DefaultLimit)[e.ID]
+	return r.JoinOne(t.Context(), e, []inspect.Exchange{e}, DefaultLimit)
 }
 
 // The happy path: the address names a live container born before the request,
@@ -238,7 +238,8 @@ func TestJoinReportsOverlappingExchanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReader: %v", err)
 	}
-	got := r.Join(t.Context(), []inspect.Exchange{a, b, apart}, DefaultLimit)
+	all := []inspect.Exchange{a, b, apart}
+	got := r.Join(t.Context(), all, all, DefaultLimit)
 
 	if got[a.ID].Overlap != 1 || got[b.ID].Overlap != 1 {
 		t.Errorf("overlapping Exchanges reported %d and %d overlaps, want 1 each",

@@ -357,7 +357,7 @@ request served since, and `--since` follows the report rather than the load.
 | `--since` | `15m` | A duration back from now (`15m`, `2h`) **or** an absolute RFC 3339 instant (`2026-08-31T10:30:00Z`). There is no cursor and no persisted state: an agent knows when it last looked, proximo does not. |
 | `--limit` | `20` | Most recent N. |
 | `--all` | `false` | Hold nothing back: the Exchanges with nothing wrong, and the `debug`/`info`/`log` breadcrumbs hidden by default so framework chatter does not bury the report. |
-| `--json` | `false` | Emit the raw Exchanges instead of the reading layout. |
+| `--json` | `false` | Emit `{"exchanges": [...], "transcripts": {"<id>": {...}}}` instead of the reading layout — the Transcripts keyed by the Exchange they belong to. |
 
 `proximo status` lists which routes are under Inspection, and anything proximo had
 to relax on them to get there — that belongs with the route, which is why it is

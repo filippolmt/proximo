@@ -49,6 +49,10 @@ type Docker interface {
 type Reader struct {
 	d      Docker
 	byName map[string]container.Summary
+	// tty caches whether a container's log stream is multiplexed. It is asked
+	// once per container rather than once per read: it cannot change while the
+	// container is running.
+	tty map[string]bool
 	// replicas counts the containers of each compose service, keyed the way
 	// serviceKey keys them.
 	replicas map[string]int
@@ -60,7 +64,7 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Reader{d: d, byName: map[string]container.Summary{}, replicas: map[string]int{}}
+	r := &Reader{d: d, byName: map[string]container.Summary{}, replicas: map[string]int{}, tty: map[string]bool{}}
 	for _, c := range res.Items {
 		for _, n := range c.Names {
 			r.byName[strings.TrimPrefix(n, "/")] = c
@@ -110,18 +114,29 @@ func (r *Reader) stackContainer(role string) (container.Summary, bool) {
 	return container.Summary{}, false
 }
 
-// Join returns the Transcript of each Exchange, keyed by Exchange id. It is one
-// call rather than one per Exchange because the overlaps can only be seen across
-// the whole set: two Exchanges of one container whose windows meet interleave
-// their lines, and nothing after the fact can tell them apart.
-func (r *Reader) Join(ctx context.Context, exchanges []inspect.Exchange, limit int) map[string]Transcript {
-	out := make(map[string]Transcript, len(exchanges))
-	for _, e := range exchanges {
-		tr := r.quote(ctx, e, limit)
-		tr.Overlap = countOverlaps(e, exchanges)
-		out[e.ID] = tr
+// Join returns the Transcript of each Exchange in quote, keyed by Exchange id.
+//
+// The two lists are separate because they answer different questions: an
+// Exchange is quoted only if the caller will show it — reading a container's log
+// back is a round trip to Docker, and doing it for a clean request nobody will
+// look at is pure waste — while the overlaps can only be seen across every
+// Exchange in the window, shown or not. Two Exchanges of one container whose
+// windows meet interleave their lines, and nothing after the fact can tell them
+// apart.
+func (r *Reader) Join(ctx context.Context, quote, window []inspect.Exchange, limit int) map[string]Transcript {
+	out := make(map[string]Transcript, len(quote))
+	for _, e := range quote {
+		out[e.ID] = r.JoinOne(ctx, e, window, limit)
 	}
 	return out
+}
+
+// JoinOne is Join for a single Exchange, with the same window to count overlaps
+// against.
+func (r *Reader) JoinOne(ctx context.Context, e inspect.Exchange, window []inspect.Exchange, limit int) Transcript {
+	tr := r.quote(ctx, e, limit)
+	tr.Overlap = countOverlaps(e, window)
+	return tr
 }
 
 // countOverlaps counts the other Exchanges served by the same container whose
@@ -198,6 +213,19 @@ func (r *Reader) explainSilence(ctx context.Context, c container.Summary, name s
 	return name + " wrote nothing while this request was live"
 }
 
+// hasTTY reports whether a container's log stream comes back unmultiplexed.
+func (r *Reader) hasTTY(ctx context.Context, id string) bool {
+	if got, asked := r.tty[id]; asked {
+		return got
+	}
+	tty := false
+	if res, err := r.d.ContainerInspect(ctx, id, client.ContainerInspectOptions{}); err == nil && res.Container.Config != nil {
+		tty = res.Container.Config.Tty
+	}
+	r.tty[id] = tty
+	return tty
+}
+
 // readLogs returns what a container wrote between from and to, either bound
 // left zero for unbounded. Both streams are read: a stack trace goes to stderr
 // and a request log to stdout, and the one being looked for is whichever the
@@ -221,11 +249,7 @@ func (r *Reader) readLogs(ctx context.Context, c container.Summary, from, to tim
 	// than from sniffing the bytes: quoting frame headers as output would corrupt
 	// every line, and a guess is not something to hand to whoever is about to
 	// edit code.
-	tty := false
-	if res, err := r.d.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{}); err == nil && res.Container.Config != nil {
-		tty = res.Container.Config.Tty
-	}
-	if tty {
+	if r.hasTTY(ctx, c.ID) {
 		return io.ReadAll(stream)
 	}
 	var out bytes.Buffer
