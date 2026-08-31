@@ -70,6 +70,26 @@ services:
     labels:
       - "proximo.hosts=failing.test"
 
+  # Incidents: no host, no route, no browser — a worker. `proximo.transcript`
+  # makes it *known* to proximo without routing it, so what the runtime declares
+  # about it is recorded: this one writes a few lines, exits 1, and is restarted
+  # twice, which is three Incidents and a Transcript window per container
+  # lifetime. `proximo errors --service worker` reads them.
+  worker:
+    image: alpine:3
+    container_name: worker
+    restart: on-failure:2
+    command:
+      - sh
+      - -c
+      - |
+        echo "worker: picked up job 41871"
+        echo "worker: connecting to the queue"
+        echo "worker: panic: assignment to entry in nil map" >&2
+        exit 1
+    labels:
+      - "proximo.transcript=true"
+
   # Inspection: nginx serves real HTML (whoami answers text/plain, which has
   # nothing to inject into), so the hop can insert the reporting agent before
   # </head>. Load https://inspected.test and then run `proximo errors`.

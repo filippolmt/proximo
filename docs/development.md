@@ -60,6 +60,7 @@ make uninstall  # reverse host changes + tear down
 make e2e        # install + start the whoami demo + open https://whoami.test
 make e2e-inspect    # prove Inspection end to end against the running stack
 make e2e-transcript # prove the Transcript end to end (real access log, real log stream)
+make e2e-incident   # prove Incidents end to end (real Docker event stream, routeless worker)
 make e2e-down   # stop demo + uninstall
 ```
 

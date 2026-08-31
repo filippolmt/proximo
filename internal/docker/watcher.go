@@ -44,7 +44,10 @@ const (
 	// files. Compose sets both, and a container started outside a project
 	// carries neither — it gets no qualified host.
 	composeProjectLabel = "com.docker.compose.project"
-	composeServiceLabel = "com.docker.compose.service"
+	// ComposeServiceLabel is exported for the same reason RoleLabel is: a
+	// host-side reader recognises a stack service by its compose name too.
+	ComposeServiceLabel = "com.docker.compose.service"
+	composeServiceLabel = ComposeServiceLabel
 	// stackProject is the Compose project name of proximo's own stack. It is a
 	// Stack, not a Project, so its services (the observability ones carry plain
 	// routing labels and no proximo.role) get no Namespace and no qualified host.
@@ -79,6 +82,16 @@ const (
 	// routed only while healthy. Setting it to a falsy value (false/0/no) opts
 	// out — the container routes as soon as it is running, regardless of health.
 	proximoHealthLabel = "proximo.health"
+	// proximoTranscriptLabel opts a container in to being observed without being
+	// routed: "you can be quoted", where proximo.hosts says "this is how you are
+	// reached". A worker or a queue consumer has no host, so nothing else in the
+	// label set can make it known to proximo. It routes nothing, and on an
+	// already-routed container (which is observed anyway) it is redundant and
+	// accepted in silence. See docs/observability.md.
+	// TranscriptLabel is exported because the CLI names it when it says how a
+	// container with no route becomes one proximo knows about.
+	TranscriptLabel        = "proximo.transcript"
+	proximoTranscriptLabel = TranscriptLabel
 
 	// proximoTCPPortLabel opts a container's hosts into TCP-over-TLS routing on
 	// the given backend port; the connection's TLS SNI (the host) is the routing
@@ -306,6 +319,10 @@ type Watcher struct {
 	// every pass, rewriting the router file and thrashing Traefik's file-provider
 	// reload on every reconcile.
 	authHashes map[string]string
+	// incidents is what the runtime declared about the containers proximo knows.
+	// It lives here because the watcher is the one stack service holding both the
+	// Docker socket and the event subscription — the hop has neither, by design.
+	incidents *IncidentStore
 }
 
 // NewWatcher creates a Watcher from the Docker environment and loads the CA (for
@@ -321,6 +338,7 @@ func NewWatcher() (*Watcher, error) {
 		tld:        getenv("PROXIMO_TLD", config.DefaultTLD),
 		lastHosts:  map[string]string{},
 		authHashes: map[string]string{},
+		incidents:  NewIncidentStore(0, 0),
 	}
 
 	caCert, caKey, err := tls.LoadCA(
@@ -334,6 +352,10 @@ func NewWatcher() (*Watcher, error) {
 	}
 	return w, nil
 }
+
+// Incidents is the store the watcher records into, for the loopback read API the
+// CLI asks for Incidents on.
+func (w *Watcher) Incidents() *IncidentStore { return w.incidents }
 
 // Run reconciles once, then reacts to Docker events with a periodic resync.
 func (w *Watcher) Run(ctx context.Context) error {
@@ -363,7 +385,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			w.reconcileLogged(ctx)
-		case <-msgs:
+		case msg := <-msgs:
+			// The same subscription answers both questions: what the routing
+			// state should be now, and what the runtime just declared about a
+			// container. An Incident is recorded before the reconcile because it
+			// is a dated fact — the reconcile may well find the container gone.
+			w.noteIncident(msg)
 			w.reconcileLogged(ctx)
 		case err := <-errs:
 			if ctx.Err() != nil {
@@ -375,6 +402,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 			msgs, errs = res.Messages, res.Err
 		}
 	}
+}
+
+// noteIncident records what one Docker event declared, and says so in the log:
+// the watcher's log is where a developer reads what proximo saw happen, and an
+// Incident nobody is told about is one they only find by asking the right
+// question first.
+func (w *Watcher) noteIncident(msg events.Message) {
+	inc, ok := w.incidents.Observe(msg)
+	if !ok {
+		return
+	}
+	// "Incident" is in the line so the watcher's log can be grepped for them —
+	// a container named after the thing that happened to it is not a filter.
+	log.Printf("proximo watcher: Incident: %s (%s) %s — `proximo errors --service %s`",
+		inc.Container, inc.Service, inc.Describe(), inc.Service)
 }
 
 func (w *Watcher) reconcileLogged(ctx context.Context) {
@@ -1219,13 +1261,20 @@ func networksOf(c container.Summary) map[string]string {
 // (non-empty proximo.hosts and not proximo.enable=false) or the native Traefik
 // label (traefik.enable=true) — and is not part of the proximo stack.
 func isRouted(c container.Summary) bool {
-	if _, isStack := c.Labels[roleLabel]; isStack {
+	return isRoutedLabels(c.Labels)
+}
+
+// isRoutedLabels is isRouted on the labels alone, so a Docker event — which
+// carries a container's labels and nothing else — is judged by the same rule as
+// a container listing.
+func isRoutedLabels(labels map[string]string) bool {
+	if _, isStack := labels[roleLabel]; isStack {
 		return false
 	}
-	if isProximoRoute(c.Labels) {
+	if isProximoRoute(labels) {
 		return true
 	}
-	return strings.EqualFold(c.Labels[enableLabel], "true")
+	return strings.EqualFold(labels[enableLabel], "true")
 }
 
 // isProximoRoute reports whether a container opts in via a non-empty, enabled

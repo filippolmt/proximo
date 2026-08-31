@@ -30,6 +30,7 @@ func inspectAPI(path string) string {
 func newErrorsCmd() *cobra.Command {
 	var (
 		host        string
+		service     string
 		since       string
 		limit       int
 		asJSON, all bool
@@ -41,9 +42,15 @@ func newErrorsCmd() *cobra.Command {
 		Long: "Lists recent Exchanges: what the stack served, what the container that " +
 			"served it wrote while the request was live, and — on routes labelled " +
 			"proximo.inspect — what the browser reported.\n\n" +
-			"By default it shows only what went wrong — a client report, a warning, or a " +
-			"failing status — because the alternative buries the one broken page under every " +
-			"request that worked. --all shows the rest.\n\n" +
+			"Interleaved with them, in one time order, are the Incidents the runtime " +
+			"declared about the containers proximo knows: a non-zero exit, a restart, an " +
+			"OOM kill. A container with no route becomes known by carrying " +
+			"proximo.transcript=true, which is how a worker or a queue consumer gets a " +
+			"Transcript at all. An Incident is never a line proximo read: no Incident does " +
+			"not mean no problem.\n\n" +
+			"By default it shows only what went wrong — a client report, a warning, a " +
+			"failing status, an Incident — because the alternative buries the one broken " +
+			"page under every request that worked. --all shows the rest.\n\n" +
 			"The output is meant to be read by a person or an agent without further " +
 			"processing. Use `proximo errors transcript <id>` for a container's whole " +
 			"output, and `proximo errors dom <id>` for the page's DOM at the time.\n\n" +
@@ -72,43 +79,73 @@ func newErrorsCmd() *cobra.Command {
 			// a request that interleaved its lines with this one did so whether or
 			// not the filter kept it.
 			window := r.Merge(logged, hopExchanges(cutoff))
-			exchanges := inspect.Select(window, host, cutoff, limit, !all)
-			quoted := r.Join(cmd.Context(), quotable(exchanges), window, transcript.DefaultLimit)
+			// The second source. Its failure is reported rather than swallowed:
+			// an absent Incident and an unreachable Incident store look the same
+			// from here, and one of them hides a restart-looping worker.
+			listing, incErr := docker.IncidentsFromStack(cmd.Context(), time.Since(cutoff))
+			if service != "" {
+				if service, err = resolveService(service, r.Services(), listing.Incidents); err != nil {
+					return err
+				}
+			}
 
-			// Both notices apply whether the listing is empty or not, and whether
-			// it is read by a person or parsed: an agent asking with --json is the
-			// reader that will never run `proximo doctor` on its own.
-			notes := listingNotes(cmd.Context(), host, len(exchanges) == 0)
+			exchanges := inspect.Select(window, host, cutoff, limit, !all)
+			if service != "" {
+				exchanges = onlyService(r, exchanges, service)
+			}
+			// An Incident carries no host, so a --host narrows it by the service
+			// that served that host's requests rather than dropping every one.
+			var narrowed map[string]bool
+			if host != "" {
+				narrowed = servicesServing(r, exchanges)
+			}
+			incidents := selectIncidents(listing.Incidents, service, narrowed, cutoff, limit, !all)
+
+			quoted := r.Join(cmd.Context(), quotable(exchanges), window, transcript.DefaultLimit)
+			for id, tr := range quoteIncidents(cmd.Context(), r, incidents, listing.Incidents, transcript.DefaultLimit) {
+				quoted[id] = tr
+			}
+			rows := mergeRows(exchanges, incidents)
+
+			// Every notice applies whether the listing is empty or not, and
+			// whether it is read by a person or parsed: an agent asking with
+			// --json is the reader that will never run `proximo doctor` on its own.
+			notes := listingNotes(cmd.Context(), host, len(rows) == 0)
+			if note := incidentsNote(cmd.Context(), incErr); note != "" {
+				notes = append(notes, note)
+			}
 
 			if asJSON {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				return enc.Encode(struct {
 					Exchanges   []inspect.Exchange               `json:"exchanges"`
+					Incidents   []docker.Incident                `json:"incidents"`
 					Transcripts map[string]transcript.Transcript `json:"transcripts"`
 					Notes       []string                         `json:"notes,omitempty"`
-				}{exchanges, quoted, notes})
+				}{exchanges, incidents, quoted, notes})
 			}
 			for _, n := range notes {
 				fmt.Fprintln(out, n)
 			}
-			if len(exchanges) == 0 {
-				writeNothingFound(out, all, host)
+			if len(rows) == 0 {
+				writeNothingFound(out, all, host, service)
 				return nil
 			}
 			show := warnAndAbove
 			if all {
 				show = everything
 			}
-			writeListing(out, exchanges, quoted, show)
+			writeListing(out, rows, quoted, show)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&host, "host", "", "only this host (e.g. web.test)")
+	cmd.Flags().StringVar(&service, "service", "", "only this Compose service, qualified (shop/worker) or bare when nothing contests it (worker)")
 	cmd.Flags().StringVar(&since, "since", "15m", "a duration back from now (15m, 2h) or an absolute RFC 3339 instant")
-	cmd.Flags().IntVar(&limit, "limit", 20, "most recent N Exchanges")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the raw Exchanges as JSON")
+	cmd.Flags().IntVar(&limit, "limit", 20, "most recent N Exchanges, and N Incidents")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the raw Exchanges, Incidents and Transcripts as JSON")
 	cmd.Flags().BoolVar(&all, "all", false, "hold nothing back: Exchanges with nothing wrong, and breadcrumbs below warning level")
 
 	cmd.AddCommand(newErrorsDOMCmd(), newErrorsTranscriptCmd())
@@ -184,7 +221,12 @@ func inspectRouteWarnings() map[string][]string {
 // are opposite — nothing broke, or the buffer was just emptied — and a restart is
 // easy to cause by accident: bringing the stack up to pick up a change discards
 // every Exchange recorded before it.
-func writeNothingFound(out io.Writer, all bool, host string) {
+func writeNothingFound(out io.Writer, all bool, host, service string) {
+	if service != "" {
+		fmt.Fprintf(out, "Nothing for %s in this window: no Exchange it served, and no Incident the runtime declared about it.\n", service)
+		fmt.Fprintln(out, "Widen the window with --since. A worker that is alive and stuck produces no Incident at all — proximo has nothing to say about it, which is not the same as nothing being wrong.")
+		return
+	}
 	if host != "" {
 		fmt.Fprintf(out, "No Exchange for %s in this window. Either nothing called it, or the name does not resolve here at all — `proximo doctor` tells those apart.\n", host)
 		fmt.Fprintln(out, "Widen the window with --since, or provoke a request: `curl -sS https://"+host+"/`.")
@@ -200,7 +242,7 @@ func writeNothingFound(out io.Writer, all bool, host string) {
 		fmt.Fprintln(out, "No Exchanges recorded. Provoke a request — `curl -sS https://<host>.test/` — or load a page in the browser.")
 		return
 	}
-	fmt.Fprintln(out, "Nothing went wrong in this window. Widen it with --since, or use --all to see the clean Exchanges too.")
+	fmt.Fprintln(out, "Nothing went wrong in this window: no failing Exchange, and no Incident. Widen it with --since, or use --all to see the clean Exchanges too.")
 }
 
 // hopUptime returns how long the hop has been running, or zero when it cannot be
@@ -300,10 +342,17 @@ func writeTranscript(w io.Writer, e inspect.Exchange, tr transcript.Transcript) 
 	if !e.Interesting() {
 		return
 	}
+	writeTranscriptLines(w, tr, e.ID)
+}
+
+// writeTranscriptLines renders a Transcript under the row it belongs to. Both
+// windows a Transcript can be cut to — an Exchange's and an Incident's — render
+// through here: a Transcript is one thing however its window was fixed, and the
+// declared elision and the overlap must never be dropped from one of them.
+func writeTranscriptLines(w io.Writer, tr transcript.Transcript, id string) {
 	if tr.Container == "" && tr.Silence == "" {
 		return
 	}
-
 	fmt.Fprintf(w, "  %s\n", transcriptHeading(tr))
 	if tr.Silence != "" {
 		fmt.Fprintf(w, "      (%s)\n", tr.Silence)
@@ -313,7 +362,7 @@ func writeTranscript(w io.Writer, e inspect.Exchange, tr transcript.Transcript) 
 	if tr.Overlap > 0 {
 		fmt.Fprintf(w, "      %s\n", overlapNote(tr))
 	}
-	fmt.Fprintf(w, "      whole transcript — `proximo errors transcript %s`\n", e.ID)
+	fmt.Fprintf(w, "      whole transcript — `proximo errors transcript %s`\n", id)
 }
 
 // writeQuotedLines renders the container's own output: the head, the declared
@@ -360,9 +409,16 @@ const credentialNotice = "A transcript is the application's own output, quoted w
 // that a Transcript is raw application output. proximo redacts nothing, and
 // saying so is what it owes instead: a redactor covering most patterns produces
 // false confidence exactly where an unrecognised format slips through.
-func writeListing(w io.Writer, exchanges []inspect.Exchange, quoted map[string]transcript.Transcript, show detail) {
+func writeListing(w io.Writer, rows []row, quoted map[string]transcript.Transcript, show detail) {
 	anyQuoted := false
-	for _, e := range exchanges {
+	for _, r := range rows {
+		if r.incident != nil {
+			tr := quoted[r.incident.ID]
+			writeIncident(w, *r.incident, tr)
+			anyQuoted = anyQuoted || !tr.Empty()
+			continue
+		}
+		e := *r.exchange
 		tr := quoted[e.ID]
 		writeExchange(w, e, tr, show)
 		if e.Interesting() && !tr.Empty() {
@@ -525,23 +581,56 @@ func newErrorsTranscriptCmd() *cobra.Command {
 		since string
 		limit int
 	)
+	var service string
 	cmd := &cobra.Command{
-		Use:   "transcript <exchange-id>",
-		Short: "Print what the container wrote while one Exchange was live",
-		Long: "Quotes the serving container's own output for one Exchange, verbatim and " +
-			"uncapped by default.\n\nIt is raw application output: it may carry " +
-			"credentials or personal data, and proximo redacts nothing.",
-		Args: cobra.ExactArgs(1),
+		Use:   "transcript [<exchange-id> | <incident-id>]",
+		Short: "Print what a container wrote in one window",
+		Long: "Quotes a container's own output for one window, verbatim and uncapped by " +
+			"default.\n\nThe window comes from whatever fixed it: an Exchange (what the " +
+			"container wrote while one request was live), an Incident (what it wrote " +
+			"between the previous Incident of its service and this one), or, with " +
+			"--service and no id, plainly from --since — the fallback for a service the " +
+			"runtime has declared nothing about.\n\nIt is raw application output: it may " +
+			"carry credentials or personal data, and proximo redacts nothing.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cutoff, err := parseSince(since, time.Now())
 			if err != nil {
 				return err
+			}
+			if len(args) == 0 && service == "" {
+				return fmt.Errorf("give an Exchange or Incident id from `proximo errors`, or --service to quote a plain window")
 			}
 			r, closeDocker, err := newTranscriptReader(cmd.Context())
 			if err != nil {
 				return err
 			}
 			defer closeDocker()
+
+			incidents, incErr := docker.IncidentsFromStack(cmd.Context(), time.Since(cutoff))
+			var b strings.Builder
+
+			if len(args) == 0 {
+				svc, err := resolveService(service, r.Services(), incidents.Incidents)
+				if err != nil {
+					return err
+				}
+				now := time.Now()
+				tr := r.QuoteService(cmd.Context(), svc, cutoff, now, limit)
+				writeWhole(&b, []string{fmt.Sprintf("%s  %s → %s  (no Incident anchors this window; --since does)",
+					svc, cutoff.Local().Format(time.RFC3339), now.Local().Format("15:04:05"))}, tr)
+				return writeTranscriptOut(cmd, out, b.String())
+			}
+
+			id := args[0]
+			for _, inc := range incidents.Incidents {
+				if inc.ID != id {
+					continue
+				}
+				tr := r.QuoteIncident(cmd.Context(), inc, incidents.Incidents, limit)
+				writeWholeIncident(&b, inc, tr)
+				return writeTranscriptOut(cmd, out, b.String())
+			}
 
 			logged, err := r.Access(cmd.Context(), cutoff)
 			if err != nil {
@@ -550,39 +639,72 @@ func newErrorsTranscriptCmd() *cobra.Command {
 			all := r.Merge(logged, hopExchanges(cutoff))
 			var found *inspect.Exchange
 			for i, e := range all {
-				if e.ID == args[0] {
+				if e.ID == id {
 					found = &all[i]
 					break
 				}
 			}
 			if found == nil {
-				return fmt.Errorf("no Exchange %s in the window --since %s covers — widen it, or list them again with `proximo errors` (identities are derived, so they are stable across invocations)",
-					args[0], since)
+				// Which of the two sources came up empty matters: an unreachable
+				// Incident store is why an Incident id would not be found here,
+				// and it is not the developer's window that is wrong.
+				if incErr != nil {
+					return fmt.Errorf("no Exchange %s in the window --since %s covers, and the watcher's Incident store could not be asked (%v) — so an Incident id cannot be found either. Run `proximo doctor`",
+						id, since, incErr)
+				}
+				return fmt.Errorf("no Exchange or Incident %s in the window --since %s covers — widen it, or list them again with `proximo errors` (identities are derived, so they are stable across invocations)",
+					id, since)
 			}
 
 			tr := r.JoinOne(cmd.Context(), *found, all, limit)
-			var b strings.Builder
 			writeWholeTranscript(&b, *found, tr)
-			if out != "" {
-				// 0600: this is the project's own output, and the command's own
-				// help says it may carry credentials.
-				return os.WriteFile(out, []byte(b.String()), 0o600)
-			}
-			_, err = io.WriteString(cmd.OutOrStdout(), b.String())
-			return err
+			return writeTranscriptOut(cmd, out, b.String())
 		},
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "write to this path instead of stdout")
-	cmd.Flags().StringVar(&since, "since", "15m", "the window the Exchange was found in (see `proximo errors --since`)")
+	cmd.Flags().StringVar(&service, "service", "", "quote this service's plain --since window, when no Incident and no Exchange fixes one")
+	cmd.Flags().StringVar(&since, "since", "15m", "the window the Exchange or Incident was found in (see `proximo errors --since`)")
 	cmd.Flags().IntVar(&limit, "limit", 1<<20, "cap the transcript at this many bytes")
 	return cmd
+}
+
+// writeTranscriptOut sends a rendered Transcript to stdout or to a file. 0600
+// where it is a file: this is the project's own output, and the command's own
+// help says it may carry credentials.
+func writeTranscriptOut(cmd *cobra.Command, path, body string) error {
+	if path != "" {
+		return os.WriteFile(path, []byte(body), 0o600)
+	}
+	_, err := io.WriteString(cmd.OutOrStdout(), body)
+	return err
 }
 
 // writeWholeTranscript renders one Transcript on its own, with the Exchange that
 // scoped it named above it so the quote is never read out of context.
 func writeWholeTranscript(w io.Writer, e inspect.Exchange, tr transcript.Transcript) {
-	fmt.Fprintf(w, "# %s  %s %s  →  %s  %s  (%s)\n",
-		e.At.Local().Format("15:04:05"), e.Method, e.Path, formatStatus(e.Status), formatDuration(e.Duration), e.Host)
+	writeWhole(w, []string{fmt.Sprintf("%s  %s %s  →  %s  %s  (%s)",
+		e.At.Local().Format("15:04:05"), e.Method, e.Path, formatStatus(e.Status), formatDuration(e.Duration), e.Host)}, tr)
+}
+
+// writeWholeIncident is writeWholeTranscript for a window an Incident fixed. The
+// heading says what the runtime declared and where the window's left edge came
+// from: a Transcript read out of context is one whose window nobody can check.
+func writeWholeIncident(w io.Writer, inc docker.Incident, tr transcript.Transcript) {
+	writeWhole(w, []string{
+		fmt.Sprintf("%s  %s  %s  (container %s)",
+			inc.At.Local().Format("15:04:05"), inc.Service, inc.Describe(), inc.Container),
+		"window: up to this Incident, from the previous one of this service (or the container's first line)",
+	}, tr)
+}
+
+// writeWhole renders one Transcript on its own, under the headings that say what
+// window it was cut to. Every whole-Transcript rendering goes through it, so the
+// credential notice, the overlap and the declared elision cannot be dropped from
+// one of them.
+func writeWhole(w io.Writer, heading []string, tr transcript.Transcript) {
+	for _, h := range heading {
+		fmt.Fprintf(w, "# %s\n", h)
+	}
 	fmt.Fprintf(w, "# %s\n", transcriptHeading(tr))
 	if tr.Overlap > 0 {
 		fmt.Fprintf(w, "# %s\n", overlapNote(tr))

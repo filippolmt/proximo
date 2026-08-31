@@ -44,9 +44,11 @@ Architecture lives in `docs/`, never here. Whole picture:
 | Where the stack's Go binaries come from; running a different image | [docs/updating.md — Running a different image](docs/updating.md#running-a-different-image) |
 | What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
 | What a container wrote during a request, and why proximo stores none of it | [docs/observability.md — Transcripts](docs/observability.md#transcripts--what-the-container-said) |
+| What proximo remembers about a container with no route (Incidents), and the label that makes one known | [docs/observability.md — Incidents](docs/observability.md#incidents--what-the-runtime-declared), [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md) |
+| A container that keeps dying but reports no Incident | [docs/troubleshooting.md — proximo errors reports no Incident](docs/troubleshooting.md#proximo-errors-reports-no-incident) |
 | Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
 | The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
-| Reading a whole Transcript, and the `--since` instant | [docs/cli.md — proximo errors transcript](docs/cli.md#proximo-errors-transcript) |
+| Reading a whole Transcript, the window an Incident fixes, and the `--since` instant | [docs/cli.md — proximo errors transcript](docs/cli.md#proximo-errors-transcript) |
 | Observability bootstrap (Beszel hub/agent) | [docs/observability.md — How it is wired](docs/observability.md#how-it-is-wired) |
 
 ## Conventions & gotchas
@@ -57,6 +59,10 @@ compiler will not enforce:
 - Adding a Check (the registry, its prerequisites, and the troubleshooting
   anchor a test asserts): [docs/adr/0004](docs/adr/0004-checks-report-remedies.md),
   `internal/checks/registry.go`
+- Recording an Incident (only what the runtime declares, never a line that was
+  read; the per-service retention and the derived id):
+  [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md),
+  `internal/docker/incident.go`
 - The published Skill: its source is `skills/proximo/`, its `references/` are
   generated from `docs/` (`make skill-refs`, checked in CI), and no link out of
   it may be repository-relative:

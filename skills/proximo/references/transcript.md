@@ -1,23 +1,29 @@
 # Read what the container said
 
 Reached from [`SKILL.md`](../SKILL.md) when the route answers, the page renders,
-and an endpoint fails — a 500, a 502, an API call that comes back wrong.
+and an endpoint fails — a 500, a 502, an API call that comes back wrong — or when
+nothing is visibly broken and something is not progressing.
 
 ## What a Transcript is
 
-A **Transcript** is what the container that served a request wrote while that
-request was live, quoted verbatim and never interpreted. It is the third part of
-an **Exchange**, beside the **Access record** (what the stack saw) and, on
-inspected routes, the **Client reports** (what the browser saw).
+A **Transcript** is what a container wrote in a window, quoted verbatim and never
+interpreted. What fixes the window is never a reading of the text:
+
+- an **Exchange** — one request: the **Access record** (what the stack saw), the
+  Transcript, and on inspected routes the **Client reports** (what the browser
+  saw);
+- an **Incident** — a fact the runtime declared about the container, for a
+  container no request ever reaches (see below);
+- `--since` — a plain window, when neither of the two exists.
 
 Three things follow, and each one changes how you read it:
 
-- **Every route has one.** No label is needed, and no browser: Traefik records an
-  access log, so any request produces an Exchange. You can provoke one yourself
-  with `curl` and read the result.
-- **proximo stores none of it.** It is read back from the container's own output
-  at the moment it prints, and cut to the window of the Exchange. Nothing is
-  retained, so there is nothing to page through and no cursor to keep.
+- **Every route has an Exchange.** No label is needed, and no browser: Traefik
+  records an access log, so any request produces one. You can provoke one
+  yourself with `curl` and read the result.
+- **proximo stores no Transcript.** It is read back from the container's own
+  output at the moment it prints, and cut to the window. Nothing is retained, so
+  there is nothing to page through and no cursor to keep.
 - **The cut is temporal, not causal.** It says *what the container wrote in this
   window*, never *what this request caused*. When proximo reports that other
   requests overlapped, the lines are interleaved and cannot be separated —
@@ -42,6 +48,37 @@ It prints to stdout. `--since` takes a duration or an absolute RFC 3339 instant,
 and identities are derived rather than minted, so the same Exchange keeps the
 same id across invocations.
 
+## When nothing is progressing: ask for Incidents
+
+A worker, a queue consumer, a migration job has no host, so no request reaches it
+and no Exchange exists. What proximo has instead is **Incidents**: facts the
+runtime declared — `exited <code>`, `exited <code> (OOM-killed)`, `restarted`,
+`turned unhealthy`. They appear in the same listing as the Exchanges, in one time
+order, and each one anchors a Transcript window running from the previous Incident
+of that service to itself.
+
+```sh
+proximo errors --json --since 30m                 # Exchanges and Incidents together
+proximo errors --json --service <service> --since 30m
+proximo errors transcript <incident-id>           # the whole window that Incident closes
+```
+
+`--service` takes the qualified name a listing prints (`shop/worker`), or a bare
+one when nothing contests it. A contested bare name comes back with its
+candidates rather than a guess — pass one of them.
+
+Two rules before you report anything:
+
+- **A container with no route must ask to be observed.** If the developer's worker
+  produces no Incident at all, check the label: `proximo.transcript=true` on that
+  container, and nothing else. It routes nothing. `proximo status` then lists it
+  as *no route — observed for Incidents*.
+- **No Incident does not mean no problem.** A worker that is alive and blocked —
+  on a slow query, on a lock, on a queue that never delivers — is healthy, silent,
+  and produces nothing. An empty listing means *proximo has nothing to say*.
+  Read the output directly for the window before concluding:
+  `proximo errors transcript --service <service> --since 30m`.
+
 ## When there is nothing to quote
 
 proximo never returns an unexplained silence. Each of these is a different
@@ -53,8 +90,10 @@ answer, and they send you to different places:
 | *wrote nothing while this request was live* | The container was up and quiet. Look at the Access record's status instead. |
 | *has written nothing at all since it started, so it probably logs elsewhere* | The application logs to a file inside the container, or to a collector. Only stdout and stderr can be quoted. Point its logger at stdout. |
 | *log driver cannot be read back* | The container runs a driver Docker cannot replay (`syslog`, `fluentd`, `gelf`). |
-| *the container that served this request is gone* | It was stopped or replaced, or the address now answers for a container started after the request. proximo refuses to quote whichever container holds the address now. |
+| *the container that served this request is gone* | It was removed, or the address now answers for a container started after the request. A container that merely stopped is still quoted — Docker answers `docker logs` for it. proximo refuses to quote whichever container holds the address now. |
 | *this stack records no access log* | Version skew, not an absence of errors: no route produces an Exchange at all. The line carries its Remedy, `proximo update`, and it is the developer's to run. |
+| *this stack records no Incident* | Version skew again: the running watcher publishes no Incident API, so nothing reports that a container exited or restarted. Remedy `proximo update`, the developer's to run. |
+| *proximo remembers this Incident, not what … wrote* | proximo kept the Incident — runtime metadata — and the container's output is gone with the container, or the one answering to that name now started after it. There is nothing left to read back, and proximo will not substitute another container's output. |
 
 When a Transcript names a replica count — *1 of 3 replicas* — read "it only
 happens sometimes" as a fact about **that** container before reading it as a

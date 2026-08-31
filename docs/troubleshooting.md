@@ -163,6 +163,14 @@ With [observability](observability.md) enabled (`proximo up --observability`),
 the same logs are browsable at `https://logs.<tld>` (Dozzle) — select the
 `watcher` container.
 
+Every [Incident](observability.md#incidents--what-the-runtime-declared) the
+watcher records is logged there too, prefixed `Incident:` — the same facts
+`proximo errors` lists, in the order they arrived:
+
+```sh
+cd ~/.proximo/stack && docker compose logs watcher | grep Incident:
+```
+
 ## Container not routed
 
 A container with proximo labels is not reachable. Check in order:
@@ -280,10 +288,43 @@ never reached proximo. `proximo doctor` tells apart "nothing called it" from
 "the name does not resolve here", which are the two causes and look identical
 from the listing.
 
+## proximo errors reports no Incident
+
+An [Incident](observability.md#incidents--what-the-runtime-declared) is what the
+runtime declared about a container: a non-zero exit, a restart, an OOM kill. The
+watcher records them and publishes them on a loopback port; a stack brought up
+before that existed publishes nothing, and `proximo errors` is then silent about
+a container that keeps dying for a reason that has nothing to do with your code.
+It says so inline, and `proximo doctor` reports it as *The running stack records
+Incidents*.
+
+```console
+$ proximo update
+```
+
+If the Check passes and a container you expected still produces no Incident,
+work through these in order:
+
+1. **Is the container one proximo knows?** A container with no host is invisible
+   until it says otherwise: add `proximo.transcript=true`. `proximo status` lists
+   it as *no route — observed for Incidents* once the label takes effect, which
+   is how you verify the label at all.
+2. **Did the runtime actually declare anything?** A clean exit (code 0) is not an
+   Incident, and `turned unhealthy` is held back from the default listing —
+   `proximo errors --service <service>` holds nothing back.
+3. **Is it still in the window?** `--since` defaults to 15 minutes, and the
+   watcher keeps a bounded number of Incidents per service. `proximo up` discards
+   them all: they are held in memory.
+4. **Is the container alive and simply stuck?** Then there is no Incident to
+   report, and there never will be. A worker blocked on a slow query is healthy
+   and silent, and proximo will say nothing about it — **no Incident does not mean
+   no problem**. Read its output directly for the window you care about:
+   `proximo errors transcript --service <service> --since 30m`.
+
 ## A transcript is empty or says the container is gone
 
 A [Transcript](observability.md#transcripts--what-the-container-said) is quoted
-from the container's own output at the moment you ask, never stored. Four
+from the container's own output at the moment you ask, never stored. Five
 outcomes are not failures, and each says which it is:
 
 - **"wrote nothing while this request was live"** — the container was up and
@@ -295,11 +336,19 @@ outcomes are not failures, and each says which it is:
 - **"log driver cannot be read back"** — the container runs a logging driver
   Docker cannot replay (`syslog`, `fluentd`, `gelf`). Docker's own `json-file`
   and `local` drivers can; the rest cannot, by design.
-- **"the container that served this request is gone"** — it was stopped or
-  replaced since, or the address now answers for a container started *after* the
-  request. proximo says so rather than quoting whichever container holds the
-  address now: attributing another container's stack trace to your request is
-  the one failure worth being silent about.
+- **"the container that served this request is gone"** — it was *removed*
+  since, or the address now answers for a container started *after* the request.
+  A container that merely stopped is still quoted, because Docker still answers
+  `docker logs` for it. proximo says so rather than quoting whichever container
+  holds the address now: attributing another container's stack trace to your
+  request is the one failure worth being silent about.
+
+- **"proximo remembers this Incident, not what … wrote"** — the Incident is
+  runtime metadata proximo kept; the output it would quote is the project's, and
+  proximo holds none of it. The container is gone, or the one answering to that
+  name now started after the Incident, so there is nothing left to read back.
+  This is the declared price of remembering only what the runtime says, and
+  proximo says it rather than quoting whichever container holds the name today.
 
 A transcript can also say *N other request(s) overlapped this one*. The cut is
 temporal — it is what the container wrote in this window, never what this request

@@ -67,6 +67,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./ca:/ca:ro
       - __DATADIR__/traefik:/etc/traefik/dynamic
+    ports:
+      # The Incident read API, published on loopback only — `proximo errors` is
+      # what reads it, and nothing outside this host can.
+      - "127.0.0.1:__WATCHERPORT__:9002"
     labels:
       - "proximo.role=watcher"
       - "proximo.image=${PROXIMO_IMAGE:-__IMAGE__}"

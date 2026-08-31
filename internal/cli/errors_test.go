@@ -201,7 +201,7 @@ func TestListingStatesTheCredentialRiskOnceAndOnlyWhenQuoting(t *testing.T) {
 	quoted := map[string]transcript.Transcript{"a1": {Container: "web-1", Head: []string{"token=abc"}}}
 
 	var b strings.Builder
-	writeListing(&b, []inspect.Exchange{failing, failing}, quoted, warnAndAbove)
+	writeListing(&b, mergeRows([]inspect.Exchange{failing, failing}, nil), quoted, warnAndAbove)
 	out := b.String()
 	if n := strings.Count(out, "may carry credentials"); n != 1 {
 		t.Errorf("the credential notice appears %d times, want exactly 1\n---\n%s", n, out)
@@ -211,7 +211,7 @@ func TestListingStatesTheCredentialRiskOnceAndOnlyWhenQuoting(t *testing.T) {
 	}
 
 	b.Reset()
-	writeListing(&b, []inspect.Exchange{{ID: "b1", At: time.Now(), Method: "GET", Path: "/", Status: 200}}, nil, warnAndAbove)
+	writeListing(&b, mergeRows([]inspect.Exchange{{ID: "b1", At: time.Now(), Method: "GET", Path: "/", Status: 200}}, nil), nil, warnAndAbove)
 	if strings.Contains(b.String(), "may carry credentials") {
 		t.Errorf("nothing was quoted, so there is nothing to warn about\n---\n%s", b.String())
 	}
@@ -273,7 +273,7 @@ func ids(es []inspect.Exchange) []string {
 // proximo at all.
 func TestNothingFoundForAHostNamesBothCauses(t *testing.T) {
 	var b strings.Builder
-	writeNothingFound(&b, false, "web.test")
+	writeNothingFound(&b, false, "web.test", "")
 	out := b.String()
 	for _, want := range []string{"web.test", "proximo doctor"} {
 		if !strings.Contains(out, want) {

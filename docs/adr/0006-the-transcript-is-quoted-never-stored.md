@@ -4,8 +4,14 @@ An Exchange said what the stack saw and what the browser reported, and nothing
 about what the application itself said — so a 500 produced an Access record
 reading `500` and no stack trace, and the agent a developer asked to fix the code
 had to leave proximo and run `docker logs` to find the one thing that mattered.
-Closing that hole meant answering where the third part comes from, and what
-proximo does with it.
+Closing that hole meant answering where a container's own output comes from, and
+what proximo does with it.
+
+> Refined by
+> [ADR 0007](0007-proximo-remembers-what-the-runtime-declares.md): a Transcript
+> is what a container wrote *in a window*, and an Exchange is the most precise of
+> the things that can fix that window rather than the owner of the Transcript.
+> Everything below still holds for the window an Exchange fixes.
 
 **Decision.** proximo collects no application output of its own. The
 **Transcript** is read back on demand from the container's existing output and

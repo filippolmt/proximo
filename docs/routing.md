@@ -24,6 +24,15 @@ keep working for advanced cases.
 | `proximo.tcp.port` | no | — | Route the container's hosts over **TCP-over-TLS by SNI** on the given backend port (for DBs, gRPC, MQTT, HTTPS backends). Invalid values are skipped with a warning. |
 | `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port`. Note: SNI routes by host only, so several ports on one host cannot be told apart — give each TCP service its own host. |
 | `proximo.tcp.tls` | no | `terminate` | TLS mode for TCP routes: `terminate` (proxy terminates with the per-host proximo cert, forwards plaintext) or `passthrough` (proxy routes the raw TLS stream by SNI; the backend terminates). |
+| `proximo.transcript` | no | `false` | **Routes nothing.** Makes a container with no host known to proximo, so what the runtime declares about it — an exit, a restart, an OOM kill — is recorded and its output can be quoted. For workers, queue consumers and jobs. Truthy: `true`/`1`/`yes`. See [Incidents](observability.md#incidents--what-the-runtime-declared). |
+
+Every label above is about how a container is *reached*, with one exception:
+`proximo.transcript` says a container can be *quoted*. Those are two independent
+axes — a worker has no host and still has output worth reading — and the label is
+listed here, among proximo's labels, because a label kept outside the list of
+labels is one nobody finds. It publishes no route, no certificate and no DNS
+name; on a container that is already routed it is redundant and accepted in
+silence.
 
 Minimal example — the port is auto-detected because `traefik/whoami` exposes a
 single port:

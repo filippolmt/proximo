@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/inspect"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
@@ -75,7 +76,17 @@ func (f *fakeDocker) ContainerLogs(_ context.Context, id string, o client.Contai
 func summary(id, name string, born time.Time, labels map[string]string) container.Summary {
 	return container.Summary{
 		ID: id, Names: []string{"/" + name}, Created: born.Unix(), Labels: labels,
+		State: container.StateRunning,
 	}
+}
+
+// exited is a container that ran and stopped without being removed — the state a
+// worker sits in between restarts, and one Docker still answers `docker logs`
+// for.
+func exited(id, name string, born time.Time, labels map[string]string) container.Summary {
+	c := summary(id, name, born, labels)
+	c.State = container.StateExited
+	return c
 }
 
 const (
@@ -359,5 +370,146 @@ func TestAFailedTailReadIsNotEvidenceOfLoggingElsewhere(t *testing.T) {
 	}
 	if !strings.Contains(got, "this request") {
 		t.Errorf("Silence = %q, want the one thing that was observed: it was quiet in this window", got)
+	}
+}
+
+// The window an Incident fixes: from the previous Incident of the same service
+// to the Incident itself. For a restart loop that is one container lifetime.
+func TestQuoteIncidentWindowsFromThePreviousIncident(t *testing.T) {
+	born := requestAt.Add(-time.Hour)
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", born, map[string]string{
+			project: "shop", service: "worker", "proximo.transcript": "true",
+		})},
+		logs: map[string]string{"w1": "picked up job 41\npanic: nil map\n"},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := docker.Incident{ID: "p", Service: "shop/worker", Container: "shop-worker-1", At: requestAt.Add(-10 * time.Minute), Kind: docker.IncidentExited, ExitCode: 1}
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 137, OOM: true}
+
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc, prev}, DefaultLimit)
+	if tr.Silence != "" {
+		t.Fatalf("silence %q, want the quoted lines", tr.Silence)
+	}
+	if len(tr.Head) != 2 || tr.Head[1] != "panic: nil map" {
+		t.Errorf("quoted %q, want both lines", tr.Head)
+	}
+	asked := f.asked["w1"]
+	if asked.Since != prev.At.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read from %q, want the previous Incident at %s", asked.Since, prev.At)
+	}
+	if asked.Until != inc.At.Add(time.Second).UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read to %q, want the Incident's instant plus the grace", asked.Until)
+	}
+}
+
+// The first Incident of a service has no left edge: reading from the container's
+// creation second can cut the first lines it ever wrote, and the byte cap already
+// bounds the quote and declares its own elision.
+func TestQuoteIncidentReadsFromTheStartWhenItIsTheFirst(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", requestAt.Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker",
+		})},
+		logs: map[string]string{"w1": "boot\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentRestarted}
+
+	if tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit); tr.Silence != "" {
+		t.Fatalf("silence %q, want the quoted line", tr.Silence)
+	}
+	if since := f.asked["w1"].Since; since != "" {
+		t.Errorf("read from %q, want no left bound", since)
+	}
+}
+
+// The fourth silence: proximo kept the Incident and cannot show what was written
+// around it. Both ways it happens say so, and neither quotes another container.
+func TestQuoteIncidentSaysWhenItOutlivedTheOutput(t *testing.T) {
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 137}
+
+	gone := &fakeDocker{}
+	r, _ := NewReader(context.Background(), gone)
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if !strings.Contains(tr.Silence, "proximo remembers this Incident") || !strings.Contains(tr.Silence, "the container was removed") {
+		t.Errorf("silence = %q, want the fourth silence for a container that was removed", tr.Silence)
+	}
+
+	replaced := &fakeDocker{items: []container.Summary{
+		summary("w2", "shop-worker-1", requestAt.Add(time.Minute), map[string]string{project: "shop", service: "worker"}),
+	}}
+	r2, _ := NewReader(context.Background(), replaced)
+	tr2 := r2.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if !strings.Contains(tr2.Silence, "proximo remembers this Incident") || !strings.Contains(tr2.Silence, "1m0s after it") {
+		t.Errorf("silence = %q, want the fourth silence for a container recreated since", tr2.Silence)
+	}
+	if len(tr2.Head) != 0 {
+		t.Error("the replacement container's output must not be quoted as this Incident's")
+	}
+}
+
+func TestQuoteIncidentNamesTheSilenceOfAQuietWindow(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", requestAt.Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker",
+		})},
+		logs:      map[string]string{"w1": ""},
+		anyOutput: map[string]string{"w1": "something, once\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if want := "shop-worker-1 wrote nothing in the window this Incident closes"; tr.Silence != want {
+		t.Errorf("silence = %q, want %q", tr.Silence, want)
+	}
+}
+
+// The driving case: a worker that exited and was left in place. Docker still
+// answers `docker logs` for it, so the window the Incident closes is quotable —
+// reporting it as gone would call the output lost while it sits right there.
+func TestQuoteIncidentReadsAContainerThatExitedAndStayed(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{exited("w1", "shop-worker-1", requestAt.Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker", "proximo.transcript": "true",
+		})},
+		logs: map[string]string{"w1": "worker: panic: nil map\n"},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inc := docker.Incident{ID: "i", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+
+	tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit)
+	if tr.Silence != "" {
+		t.Fatalf("silence %q, want the quoted line — the container is stopped, not removed", tr.Silence)
+	}
+	if len(tr.Head) != 1 || tr.Head[0] != "worker: panic: nil map" {
+		t.Errorf("quoted %q, want the worker's own line", tr.Head)
+	}
+	// Stopped is not a replica: "1 of N replicas" is about what is serving now.
+	if tr.Replicas != 0 {
+		t.Errorf("Replicas = %d, want a stopped container counted as none", tr.Replicas)
+	}
+}
+
+// A dead backend must still resolve to its service, or a --host listing drops
+// the Incident that explains the 502 it is showing.
+func TestServiceOfBackendResolvesAContainerThatStopped(t *testing.T) {
+	f := &fakeDocker{items: []container.Summary{
+		exited("w1", "web-1", requestAt.Add(-time.Hour), map[string]string{project: "shop", service: "web"}),
+	}}
+	r, _ := NewReader(context.Background(), f)
+	if got := r.ServiceOfBackend("web-1:8080"); got != "shop/web" {
+		t.Errorf("ServiceOfBackend = %q, want shop/web even though the container is stopped", got)
+	}
+	// It is not a candidate for a bare --service, though: nothing is running.
+	if len(r.Services()) != 0 {
+		t.Errorf("Services() = %v, want none — a stopped service is named by its Incident, not by the listing", r.Services())
 	}
 }

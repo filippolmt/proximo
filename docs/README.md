@@ -44,6 +44,10 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0005 — The agent skill ships in the CLI, and the CLI keeps it current](adr/0005-the-agent-skill-ships-in-the-cli.md)
 
+[0006 — The Transcript is quoted, never stored](adr/0006-the-transcript-is-quoted-never-stored.md)
+
+[0007 — proximo remembers what the runtime declares, never what the project wrote](adr/0007-proximo-remembers-what-the-runtime-declares.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·
@@ -113,6 +117,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Tear it down](observability.md#tear-it-down) ·
 [Logs, metrics & retention](observability.md#logs-metrics--retention) ·
 [Transcripts — what the container said](observability.md#transcripts--what-the-container-said) ·
+[Incidents — what the runtime declared](observability.md#incidents--what-the-runtime-declared) ·
 [Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 
@@ -138,6 +143,7 @@ Why a design is the way it is, and what was rejected on the way.
 [A host collision is reported](troubleshooting.md#a-host-collision-is-reported) ·
 [An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
 [proximo errors shows nothing at all](troubleshooting.md#proximo-errors-shows-nothing-at-all) ·
+[proximo errors reports no Incident](troubleshooting.md#proximo-errors-reports-no-incident) ·
 [A transcript is empty or says the container is gone](troubleshooting.md#a-transcript-is-empty-or-says-the-container-is-gone) ·
 [proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
