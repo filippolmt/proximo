@@ -111,7 +111,7 @@ func newErrorsCmd() *cobra.Command {
 				narrowed = servicesServing(grouped)
 			}
 			incidents := docker.SelectIncidents(listing.Incidents, docker.IncidentQuery{
-				Service: service, Services: narrowed, Since: cutoff, Limit: limit, OnlyProblems: !all,
+				Service: service, Services: narrowed, Since: cutoff, Limit: limit,
 			})
 
 			quoted := r.Join(cmd.Context(), quotable(exchanges), window, transcript.DefaultLimit)
@@ -130,12 +130,16 @@ func newErrorsCmd() *cobra.Command {
 			if note := watcherRestartNote(listing, len(incidents) == 0); note != "" {
 				notes = append(notes, note)
 			}
-			// The readings for a named service, taken only when the listing has
-			// nothing to show: they are what proximo says instead of silence about
-			// a container that is alive and may not be progressing.
-			var reading docker.Reading
-			if service != "" && len(rows) == 0 {
-				reading = r.ReadingOf(cmd.Context(), service)
+			// The readings for a named service, taken whether or not the listing
+			// has anything to show: an Incident answers *what happened* and a
+			// Reading *how it is now*, and the second does not stop having an
+			// answer because the first has one.
+			var readings []docker.Reading
+			if service != "" {
+				readings = r.ReadingsOf(cmd.Context(), service)
+				if len(readings) == 0 {
+					notes = append(notes, noReadingNote(service))
+				}
 			}
 
 			if asJSON {
@@ -146,18 +150,19 @@ func newErrorsCmd() *cobra.Command {
 					Incidents   []docker.Incident                `json:"incidents"`
 					Transcripts map[string]transcript.Transcript `json:"transcripts"`
 					Notes       []string                         `json:"notes,omitempty"`
-					// A pointer, so an invocation that named no service has no
-					// "reading" member at all rather than an object full of zero
-					// values an agent would have to second-guess.
-					Reading *docker.Reading `json:"reading,omitempty"`
-				}{exchanges, incidents, quoted, notes, readingOrNil(reading)})
+					// Omitted entirely when nothing was read, so an invocation that
+					// named no service carries no "readings" member at all rather
+					// than one an agent would have to second-guess.
+					Readings []docker.Reading `json:"readings,omitempty"`
+				}{exchanges, incidents, quoted, notes, readings})
 			}
 			for _, n := range notes {
 				fmt.Fprintln(out, n)
 			}
 			if len(rows) == 0 {
 				writeNothingFound(out, all, host, service)
-				writeReading(out, reading)
+				writeReadings(out, readings)
+				writeRefusal(out, readings)
 				return nil
 			}
 			show := warnAndAbove
@@ -165,6 +170,9 @@ func newErrorsCmd() *cobra.Command {
 				show = everything
 			}
 			writeListing(out, rows, quoted, show)
+			// No writeRefusal: this listing found something, so there is no
+			// silence here to be misread as *all fine*.
+			writeReadings(out, readings)
 			return nil
 		},
 	}
@@ -216,14 +224,6 @@ func newErrorsDOMCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "write to this path (default: a file under the temp dir)")
 	return cmd
-}
-
-// readingOrNil keeps an empty Reading out of the JSON entirely.
-func readingOrNil(rd docker.Reading) *docker.Reading {
-	if rd.Empty() {
-		return nil
-	}
-	return &rd
 }
 
 // getJSON reads one endpoint of the hop's loopback API into v.

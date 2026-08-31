@@ -198,16 +198,18 @@ can be quoted. Two independent axes.
 
 Four things are Incidents, and that is the whole list:
 
-| Incident | Where it comes from | In the default listing |
-| --- | --- | --- |
-| `exited <code>` | the container's main process exited non-zero | yes |
-| `exited <code> (OOM-killed)` | the same exit, with the kernel's `oom` event folded into it | yes |
-| `restarted` | the container was restarted | yes |
-| `turned unhealthy` | the Docker healthcheck went from healthy to unhealthy | only under `--service` |
+| Incident | Where it comes from |
+| --- | --- |
+| `exited <code>` | the container's main process exited non-zero |
+| `exited <code> (OOM-killed)` | the same exit, with the kernel's `oom` event folded into it |
+| `restarted` | the container was restarted |
+| `stopped being healthy` | the Docker healthcheck was passing and stopped |
 
-Unhealthy is out of the default listing on purpose: a worker waiting on postgres
-is unhealthy for twenty seconds on every `compose up`, and a listing full of that
-noise stops being read exactly when it is needed.
+The last one is *out of healthy*, never merely into unhealthy, and that is the
+whole of what keeps it useful: a worker waiting on postgres is unhealthy for
+twenty seconds on every `compose up` and was never healthy, so it is not an
+Incident and never reaches a listing. A stall was healthy, by construction. Every
+Incident is in the default listing; none is held back.
 
 Nothing here reads the text. An exit code, a restart and an OOM kill are
 statements *Docker* makes about the container; deciding that a line looks like an
@@ -270,10 +272,12 @@ Exchange buffer.
 ## Readings — what the runtime says right now
 
 An Incident is dated history. A **Reading** is the present tense: what the
-runtime says about a container at the moment you ask. It is what
-`proximo errors --service <svc>` answers with when there is nothing else to
-show — because a container that is alive and stuck declares no Incident, and
-silence is the one answer that gets misread as *all fine*.
+runtime says about a container at the moment you ask. `proximo errors --service
+<svc>` always takes them — with an Incident in the window or without one, because
+*what happened* and *how it is now* are two questions and the second does not
+stop having an answer because the first has one.
+
+They print after the listing, one per running container of the service:
 
 ```console
 $ proximo errors --service worker
@@ -286,15 +290,28 @@ What proximo can see of shop-worker-1 right now: running for 3h12m4s, its health
 Whether that is wrong is not proximo's to say: a consumer with nothing to do and one blocked on a slow query look the same from outside the container, and only the project knows whether work was waiting.
 ```
 
+The readings print whatever the listing found. The refusal below them — the last
+line — prints only on an empty listing: it exists to stop silence being read as
+*all fine*, and there is no silence to misread on a screen full of Incidents.
+
 Each reading is a fact the runtime declares, and nothing else is one:
 
 | Reading | Where it comes from |
 | --- | --- |
-| running, and for how long | the container's state and the instant it last *started* — not when it was created, which would overstate a worker that has been restarted |
+| how long it has been running | the instant it last *started* — not when it was created, which would overstate a worker that has been restarted. That it *is* running is not among the readings: being alive is what qualified the container for one |
 | what the healthcheck says | Docker's healthcheck, if the image declares one |
 | how many times it restarted | Docker's own restart count |
-| how many replicas are running | the containers of that service, when there is more than one |
 | when its output last moved | the timestamp Docker stamps on the last line — **the instant, never the line**: when a stream moved is the runtime's to declare, what it said is the project's |
+
+A reading is a fact about **one container**, so a scaled service produces one per
+replica rather than one replica's reading and a count of the rest: with three
+workers running and one of them wedged, a single reading is a coin toss that
+comes up "healthy, wrote 3s ago" twice out of three. A container that is *not*
+running produces none — it has already declared an
+[Incident](#incidents--what-the-runtime-declared), and dated history and the
+present tense are kept apart rather than said twice. A service with nothing
+running says that instead, as a note — so an agent reading `--json` is told too,
+where an omitted `"readings"` member could not say which absence it is.
 
 A reading that could not be taken is *named*, never reported as a zero: a
 container whose log driver Docker cannot replay is told exactly that, rather than
@@ -306,8 +323,10 @@ stuck". A consumer waiting on an empty queue and one blocked on a slow query
 produce the same readings — running, healthy, quiet for a while — and telling them
 apart means knowing whether there was work waiting, which is the project's own
 business. Reporting without concluding is the same stance a Check takes: it
-reports, and never repairs. `--json` carries them under `"reading"` so an agent
-gets the facts without the prose.
+reports, and never repairs — the boundary, and the three ways of crossing it that
+were turned down, are in
+[ADR 0008](adr/0008-proximo-measures-the-project-concludes.md). `--json` carries
+them under `"readings"` so an agent gets the facts without the prose.
 
 ### Making "not progressing" an Incident
 
@@ -331,16 +350,16 @@ services:
       - "proximo.transcript=true"
 ```
 
-Docker then declares the container **unhealthy**, and an unhealthy transition *is*
-an [Incident](#incidents--what-the-runtime-declared) — so the window it fixes
-quotes exactly what the worker wrote before it stopped:
+Docker then declares the container **unhealthy**, and a healthcheck that was
+passing and stopped *is* an [Incident](#incidents--what-the-runtime-declared) —
+so the window it fixes quotes exactly what the worker wrote before it stopped:
 
 ```console
 $ proximo errors --service worker
 ```
 
 ```
-12:28:52  5417e9d05379cb21  shop/worker  turned unhealthy
+12:28:52  5417e9d05379cb21  shop/worker  stopped being healthy
   container shop-worker-1
   transcript of shop-worker-1:
       worker: finished job 41871
@@ -355,9 +374,13 @@ Docker feature, the marker is a file the worker already knows how to touch, and
 proximo neither defines the contract nor reads the marker. It only reports what
 the runtime declared.
 
-One thing to keep in mind, or the healthcheck will look broken: `turned unhealthy`
-is the one Incident kind held back from the default listing, so `proximo errors`
-alone will not show it. Ask by service, as above. See `stalling` in
+One thing to get right, or the healthcheck reports nothing at all: the container
+has to reach **healthy** once. The Incident is a healthcheck that was passing and
+stopped, so a check that has never passed declares nothing when it fails — a
+worker whose marker never appears goes straight from `starting` to unhealthy and
+stays a container that never worked. `start_period` is not what makes it pass:
+it is what keeps a *slow* first job from being reported unhealthy on the way
+there, which is why it is in the example and not decoration. See `stalling` in
 `examples/whoami/docker-compose.yml` for a runnable version.
 
 ## Inspection — what the browser saw

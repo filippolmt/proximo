@@ -35,9 +35,9 @@ func (s Service) Bare() string {
 func (s Service) String() string { return string(s) }
 
 // An Incident is a fact the runtime declares about a container: it exited
-// non-zero, it was restarted, the kernel killed it, it turned unhealthy. Never a
-// line that was read — proximo may remember what the runtime declares, never
-// what the project wrote. See
+// non-zero, it was restarted, the kernel killed it, its passing healthcheck
+// stopped passing. Never a line that was read — proximo may remember what the
+// runtime declares, never what the project wrote. See
 // docs/adr/0007-proximo-remembers-what-the-runtime-declares.md.
 type Incident struct {
 	// ID is derived — service, instant and kind — rather than minted, so the
@@ -69,17 +69,15 @@ type IncidentKind string
 const (
 	IncidentExited    IncidentKind = "exited"
 	IncidentRestarted IncidentKind = "restarted"
+	// IncidentUnhealthy is a healthcheck that was *passing and stopped*, never one
+	// that merely reports unhealthy: a container waiting on postgres at boot goes
+	// starting → unhealthy and was never healthy, and a stall is healthy →
+	// unhealthy by construction. That distinction is the whole of the noise
+	// filtering, which is why it is made when the Incident is recorded rather than
+	// when a listing is rendered. See
+	// docs/adr/0008-proximo-measures-the-project-concludes.md.
 	IncidentUnhealthy IncidentKind = "unhealthy"
 )
-
-// Interesting reports whether an Incident belongs in the default listing —
-// mirroring inspect.Exchange.Interesting, since the two share one listing.
-//
-// Unhealthy is deliberately out of it: a worker waiting on postgres is unhealthy
-// for twenty seconds on every `compose up`, and a listing full of that noise
-// stops being read exactly when a developer needs it. It stays visible under an
-// explicit --service.
-func (i Incident) Interesting() bool { return i.Kind != IncidentUnhealthy }
 
 // Describe is the Incident in the words the runtime used.
 func (i Incident) Describe() string {
@@ -93,7 +91,7 @@ func (i Incident) Describe() string {
 	case IncidentRestarted:
 		return "restarted"
 	case IncidentUnhealthy:
-		return "turned unhealthy"
+		return "stopped being healthy"
 	}
 	return string(i.Kind)
 }
@@ -107,15 +105,20 @@ func (i Incident) Describe() string {
 // It is what proximo has to offer about a container that is alive and may not be
 // progressing, and it stops short of the conclusion on purpose: an idle consumer
 // and one blocked on a slow query read identically from out here.
+//
+// It is a fact about *one* container, so a Service produces one per running
+// replica: with three workers up and one of them wedged, a single reading is a
+// coin toss that comes up "healthy, wrote 3s ago" twice out of three.
 type Reading struct {
+	// Container is the one measured. There is no "running" alongside it: a Reading
+	// is the present tense of something alive, so being alive is what qualified
+	// the container for one rather than something the Reading reports.
 	Container string `json:"container"`
-	Running   bool   `json:"running"`
 	// Since is when the container last started (not when it was created): for a
 	// worker that has been restarted, the second would overstate its uptime.
 	Since       time.Time `json:"since,omitzero"`
 	Healthcheck string    `json:"healthcheck,omitempty"`
 	Restarts    int       `json:"restarts,omitempty"`
-	Replicas    int       `json:"replicas,omitempty"`
 
 	// LastWrote is when the container last wrote a line — the instant, never the
 	// line. WroteNothing is set instead when the stream was read and had nothing
@@ -131,20 +134,15 @@ type Reading struct {
 	Unread []string `json:"unread,omitempty"`
 }
 
-// Empty reports whether there is nothing to report — no container answered to the
-// Service at all.
-func (rd Reading) Empty() bool { return rd.Container == "" }
-
 // Describe renders the Reading as one clause per fact, in the order a developer
 // checks them. What could not be read is named rather than left as a gap.
 func (rd Reading) Describe() string {
 	var parts []string
-	switch {
-	case !rd.Running:
-		parts = append(parts, "not running")
-	case rd.Since.IsZero():
+	if rd.Since.IsZero() {
+		// The inspect that carries it failed; the container is running either way,
+		// which is why it has a Reading at all.
 		parts = append(parts, "running")
-	default:
+	} else {
 		parts = append(parts, "running for "+time.Since(rd.Since).Round(time.Second).String())
 	}
 	if rd.Healthcheck != "" && rd.Healthcheck != string(container.NoHealthcheck) {
@@ -156,9 +154,6 @@ func (rd Reading) Describe() string {
 		parts = append(parts, "restarted once")
 	default:
 		parts = append(parts, fmt.Sprintf("restarted %d times", rd.Restarts))
-	}
-	if rd.Replicas > 1 {
-		parts = append(parts, fmt.Sprintf("%d replicas running", rd.Replicas))
 	}
 	parts = append(parts, rd.Unread...)
 	// The stream clause goes last: it is the one a developer reads for, and the
@@ -202,6 +197,16 @@ type IncidentStore struct {
 	// oom remembers a container's last oom event so the die it precedes can carry
 	// it, keyed by container id.
 	oom map[string]time.Time
+	// healthy remembers, per container id, that proximo saw the healthcheck pass.
+	// It is what makes the unhealthy Incident a check that *stopped* passing: the
+	// event alone cannot say, since Docker fires the same one for starting →
+	// unhealthy. Forgotten when the container dies, because the id survives a
+	// restart and the healthcheck does not.
+	//
+	// ponytail: one bool per observed container, never swept beyond that. The
+	// containers proximo can see are the ceiling, and a container that goes away
+	// without a die event is a leak of one map entry.
+	healthy map[string]bool
 	// started is when this store came up. Incidents do not survive a restart, so
 	// an empty listing means one of two very different things — nothing happened,
 	// or it was all thrown away — and a developer must be told which.
@@ -220,6 +225,7 @@ func NewIncidentStore(perService int, maxAge time.Duration) *IncidentStore {
 	return &IncidentStore{
 		perService: perService, maxAge: maxAge,
 		byService: map[Service][]Incident{}, oom: map[string]time.Time{},
+		healthy: map[string]bool{},
 		started: time.Now(),
 	}
 }
@@ -227,6 +233,17 @@ func NewIncidentStore(perService int, maxAge time.Duration) *IncidentStore {
 // Started reports when the store came up, so an empty listing can say whether a
 // restart is the reason.
 func (s *IncidentStore) Started() time.Time { return s.started }
+
+// SawHealthy records that a container's healthcheck is currently passing, so a
+// later fall out of healthy is the Incident it is. The event stream cannot supply
+// this on its own: a watcher that restarted has seen no health_status event for a
+// container that was already healthy, and would read its next stall as a check
+// that never passed. The reconcile's container listing closes that hole.
+func (s *IncidentStore) SawHealthy(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.healthy[id] = true
+}
 
 // Observe turns one Docker event into an Incident and records it, reporting
 // whether it recorded one. Everything the runtime does not declare an Incident
@@ -262,6 +279,11 @@ func (s *IncidentStore) Observe(msg events.Message) (Incident, bool) {
 		s.oom[msg.Actor.ID] = at
 		return Incident{}, false
 	case events.ActionDie:
+		// Before the clean-exit return below: the id survives a restart and the
+		// healthcheck does not — it goes back to starting — so the unhealthy that
+		// follows any die is a check that never passed in this life, whatever the
+		// exit code was.
+		delete(s.healthy, msg.Actor.ID)
 		code, err := strconv.Atoi(msg.Actor.Attributes["exitCode"])
 		if err != nil || code == 0 {
 			// A clean exit is not an Incident, and an exit code that cannot be
@@ -275,7 +297,18 @@ func (s *IncidentStore) Observe(msg events.Message) (Incident, bool) {
 		}
 	case events.ActionRestart:
 		inc.Kind = IncidentRestarted
+	case events.ActionHealthStatusHealthy:
+		// Not an Incident: a check that passes is the state a later fall is
+		// measured against, which is the only reason it is remembered at all.
+		s.healthy[msg.Actor.ID] = true
+		return Incident{}, false
 	case events.ActionHealthStatusUnhealthy:
+		if !s.healthy[msg.Actor.ID] {
+			// A check that never passed says nothing when it fails: this is the
+			// container waiting on postgres at boot, not the one that stalled.
+			return Incident{}, false
+		}
+		delete(s.healthy, msg.Actor.ID)
 		inc.Kind = IncidentUnhealthy
 	default:
 		return Incident{}, false
@@ -342,9 +375,12 @@ func (s *IncidentStore) List(since time.Time) []Incident {
 }
 
 // IncidentQuery narrows a listing of Incidents. The zero value holds nothing
-// back. It mirrors inspect.Query, because the two halves of one listing must be
-// narrowed by the same flags or `--since` means two different things depending on
-// which source a row came from.
+// back, and so does every query: an Incident is a fact the runtime declared, and
+// there is no longer a kind with nothing to say (see
+// docs/adr/0008-proximo-measures-the-project-concludes.md). What it shares with
+// inspect.Query is the window and the limit, because the two halves of one
+// listing must be narrowed by the same flags or `--since` means two different
+// things depending on which source a row came from.
 type IncidentQuery struct {
 	// Service is an exact match on a resolved Service; empty matches any.
 	Service Service
@@ -357,18 +393,14 @@ type IncidentQuery struct {
 	Since time.Time
 	// Limit keeps the most recent N; zero or less means no bound.
 	Limit int
-	// OnlyProblems drops what has nothing to say — today, a transition to
-	// unhealthy. An explicit Service overrides it: the developer named the
-	// service, so unhealthy is an answer rather than noise.
-	OnlyProblems bool
 }
 
 // SelectIncidents narrows a listing of Incidents, most recent first — the way
 // inspect.Select narrows Exchanges, and to the same flags.
 func SelectIncidents(all []Incident, q IncidentQuery) []Incident {
-	// One service named explicitly changes two things at once: it is the only
-	// filter that applies, and it holds nothing back. Asked once here rather than
-	// re-tested in every arm below.
+	// A service named explicitly is the only filter that applies: a --host asked
+	// for at the same time narrowed by the services serving it, which the named
+	// one is already the answer to. Asked once here rather than in both arms.
 	named := q.Service != ""
 	out := make([]Incident, 0, len(all))
 	for _, inc := range all {
@@ -378,8 +410,6 @@ func SelectIncidents(all []Incident, q IncidentQuery) []Incident {
 		case !named && q.Services != nil && !q.Services[inc.Service]:
 			continue
 		case !q.Since.IsZero() && inc.At.Before(q.Since):
-			continue
-		case !named && q.OnlyProblems && !inc.Interesting():
 			continue
 		}
 		out = append(out, inc)

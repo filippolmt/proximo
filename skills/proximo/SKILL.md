@@ -61,16 +61,19 @@ you need before restarting, and reproduce the problem after.
 *runtime* declared about a container — an exit, a restart, an OOM kill — and
 never what a container wrote. A worker that is alive and blocked on a slow query
 declares nothing, so an empty listing means *proximo saw nothing happen*, never
-*nothing is wrong*. Under `--service` the listing then prints the **readings**
-(running since when, healthcheck, restarts, when its output last moved) and
-deliberately draws no conclusion: identical readings come from a consumer with
-nothing to do and one that is stuck. Report the readings as readings, and read the
+*nothing is wrong*. Under `--service` the listing always ends with the
+**readings** — one per running container (running since when, healthcheck,
+restarts, when its output last moved) — and deliberately draws no conclusion:
+identical readings come from a consumer with nothing to do and one that is stuck.
+A scaled service gives you one reading per replica; do not generalise one
+replica's reading to the service. Report the readings as readings, and read the
 output for the window before concluding anything:
 `proximo errors transcript --service <service> --since 30m`. To make a stuck
 worker visible next time, propose a healthcheck that fails when it stops
-advancing — Docker then says *unhealthy*, which is an Incident. `turned unhealthy`
-is the one kind the default listing holds back, so read it back with
-`--service <service>` or you will conclude a working healthcheck did nothing.
+advancing — Docker then says *unhealthy*, and a healthcheck that was passing and
+stopped is an Incident. It has to pass once first — a check that never passed
+declares nothing when it fails — so propose a `start_period` with it, which keeps
+a slow first job from being reported unhealthy on the way there.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another

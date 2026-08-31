@@ -120,19 +120,20 @@ func TestNothingFoundForAServiceSaysWhatSilenceMeans(t *testing.T) {
 	}
 }
 
-// The debt this closes with: proximo cannot tell an idle consumer from a stuck
-// one, so it reports the readings and says the conclusion is not its to draw.
-// Silence with no readings at all was the thing that let "I have nothing to say"
-// be read as "all fine".
-func TestReadingReportsAndRefusesToJudge(t *testing.T) {
+// proximo cannot tell an idle consumer from a stuck one, so it reports the
+// readings and says the conclusion is not its to draw. Silence with no readings
+// at all was the thing that let "I have nothing to say" be read as "all fine".
+func TestReadingsReportAndRefuseToJudge(t *testing.T) {
 	var b strings.Builder
-	writeReading(&b, docker.Reading{
-		Container: "shop-worker-1", Running: true,
+	readings := []docker.Reading{{
+		Container:   "shop-worker-1",
 		Since:       time.Now().Add(-3 * time.Hour),
 		Healthcheck: "healthy",
 		Restarts:    2,
 		LastWrote:   time.Now().Add(-14 * time.Minute),
-	})
+	}}
+	writeReadings(&b, readings)
+	writeRefusal(&b, readings)
 	out := b.String()
 	for _, want := range []string{"shop-worker-1", "running for 3h0m0s", "healthy", "restarted 2 times", "and it last wrote 14m0s ago"} {
 		if !strings.Contains(out, want) {
@@ -148,33 +149,65 @@ func TestReadingReportsAndRefusesToJudge(t *testing.T) {
 	}
 }
 
-// A container proximo cannot see produces no Reading, and no half-empty one.
-func TestReadingSaysNothingWhenThereIsNothingToRead(t *testing.T) {
+// One reading per running container, and the refusal only where silence would
+// otherwise be read as "all fine".
+func TestReadingsAreOnePerContainerAndRefuseOnlyOnSilence(t *testing.T) {
+	readings := []docker.Reading{
+		{Container: "shop-worker-1", LastWrote: time.Now().Add(-time.Second)},
+		{Container: "shop-worker-2", WroteNothing: true},
+	}
 	var b strings.Builder
-	writeReading(&b, docker.Reading{})
+	writeReadings(&b, readings)
+	out := b.String()
+	for _, want := range []string{"shop-worker-1", "shop-worker-2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the readings are missing %q:\n%s", want, out)
+		}
+	}
+	// A screen full of Incidents has no silence in it to misread.
+	if strings.Contains(out, "not proximo's to say") {
+		t.Errorf("the refusal is wallpaper under a listing that found something:\n%s", out)
+	}
+}
+
+// Nothing at all when there is nothing to read: the present tense of something
+// that is not alive is not a reading of zero, and never a half-empty one. That a
+// service has nothing running is said in a note instead, so an agent reading
+// --json is told too — asserted in TestNothingRunningIsSaidInANote.
+func TestReadingsSayNothingWhenThereIsNothingToRead(t *testing.T) {
+	var b strings.Builder
+	writeReadings(&b, nil)
+	writeRefusal(&b, nil)
 	if b.Len() != 0 {
-		t.Errorf("a Reading for an unseen container = %q, want nothing", b.String())
+		t.Errorf("readings with none taken = %q, want nothing — not even the refusal, which is about a container that is alive", b.String())
 	}
-	if readingOrNil(docker.Reading{}) != nil {
-		t.Error("the JSON must omit the reading member rather than carry zero values")
+}
+
+// A service with nothing running is a fact, and one both readers are told: the
+// note reaches --json, where an omitted "readings" member cannot say which
+// absence it is.
+func TestNothingRunningIsSaidInANote(t *testing.T) {
+	got := noReadingNote("shop/worker")
+	if !strings.Contains(got, "No container of shop/worker is running") {
+		t.Errorf("note = %q, want the absence named for the service asked about", got)
 	}
-	rd := docker.Reading{Container: "shop-worker-1", Running: true}
-	if readingOrNil(rd) == nil {
-		t.Error("a Reading that was taken must reach the JSON")
+	// Never a verdict: nothing running is not "nothing wrong".
+	if strings.Contains(got, "nothing is wrong") || strings.Contains(got, "is stuck") {
+		t.Errorf("note = %q, want no conclusion drawn", got)
 	}
 }
 
 // The clause a developer reads for goes last, whatever else the Reading carries.
 func TestReadingEndsOnTheStreamClause(t *testing.T) {
 	rd := docker.Reading{
-		Container: "shop-worker-1", Running: true, Replicas: 3, Restarts: 1,
+		Container: "shop-worker-1", Restarts: 1,
 		Since: time.Now().Add(-time.Minute), LastWrote: time.Now().Add(-time.Second),
 	}
 	got := rd.Describe()
 	if !strings.HasSuffix(got, "and it last wrote 1s ago") {
 		t.Errorf("Describe() = %q, want the stream clause last", got)
 	}
-	for _, want := range []string{"restarted once", "3 replicas running"} {
+	for _, want := range []string{"running for 1m0s", "restarted once"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Describe() = %q, missing %q", got, want)
 		}

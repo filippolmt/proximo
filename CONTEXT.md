@@ -6,10 +6,6 @@ service did when a developer opens it. Docker is the current implementation
 vehicle, not the purpose: the domain is the local development environment — the
 names it answers to, and what it can be made to say about itself.
 
-Terms marked _Debt_ are normative: they fix the language proximo must use, and
-the absence of an implementation is a declared gap, never a description of
-today's behaviour.
-
 ## Language
 
 ### The environment
@@ -159,33 +155,25 @@ _Avoid_: log, logs, stderr, output, stack trace, server error
 
 **Incident**:
 A fact the runtime declares about a container: a non-zero exit, a restart, an
-OOM kill, a transition to unhealthy. Never a line that was read — the boundary is
-the term, because proximo may remember what the runtime declares and never what
-the project wrote, and the first matcher for `panic:` breaks nothing else that is
-written down. An Incident is dated history, which is what separates it from a
-Check: a check is present-tense and repeatable, an Incident happened once, at an
-instant, and fixes the window of a Transcript around itself. proximo remembers
-Incidents and only Incidents: tens of bytes of runtime metadata per container,
-capped per Service so a container restarting every three seconds cannot evict
-another's only one. Every container proximo knows about produces them, routed or
-not; a container with no Route becomes known by asking to be, and being observed
-is a separate thing from being reachable.
+OOM kill, and the loss of a healthcheck that was passing. Never a line that was
+read — the boundary is the term, because proximo may remember what the runtime
+declares and never what the project wrote, and the first matcher for `panic:`
+breaks nothing else that is written down. An Incident is dated history, which is
+what separates it from a Check: a check is present-tense and repeatable, an
+Incident happened once, at an instant, and fixes the window of a Transcript
+around itself. proximo remembers Incidents and only Incidents: tens of bytes of
+runtime metadata per container, capped per Service so a container restarting
+every three seconds cannot evict another's only one. Every container proximo
+knows about produces them, routed or not; a container with no Route becomes known
+by asking to be, and being observed is a separate thing from being reachable.
+The healthcheck one is *out of healthy* and not merely into unhealthy, which is
+the whole of what separates a container that stopped working from one that has
+not started yet: a worker waiting on postgres was never healthy, and a stall was.
+It is therefore the one Incident a project can cause on purpose, and the only way
+"not progressing" becomes a fact proximo can report — the judgement being the
+project's, declared in the project's own terms
+([ADR 0008](docs/adr/0008-proximo-measures-the-project-concludes.md)).
 _Avoid_: error, event, crash, failure, fault
-_Debt_: proximo never deduces that a container is stuck. A worker blocked on a
-slow query is running, healthy and silent; an idle consumer is the same picture,
-and telling them apart needs to know whether work was waiting, which only the
-project knows. So proximo answers with the **Reading** it can take and refuses
-the conclusion. The project can still declare it — a healthcheck that fails when
-the worker stops advancing makes Docker say *unhealthy*, which is an Incident,
-though the one kind a listing holds back until it is asked for by Service — but
-the judgement is the project's, made in the project's own terms, and proximo
-neither defines that contract nor infers one. What stays
-declared rather than filled is the inference itself: it would need proximo to
-become a dependency of the code it observes, which
-[ADR 0006](docs/adr/0006-the-transcript-is-quoted-never-stored.md) rejected with
-its strongest reason. The gap is written down because the failure mode of leaving
-it implicit is a developer reading proximo's silence as *all fine* when it means
-*I have nothing to say*.
 
 **Reading**:
 What the runtime says about a container *right now*, as opposed to a dated
@@ -201,6 +189,13 @@ progressing, and its limit is declared with it: no reading proximo can take by
 itself distinguishes a consumer with nothing to do from one that is stuck. A
 healthcheck changes that answer — but that is the project declaring it, in the
 project's own terms, and the reading only repeats what the runtime was told.
+A reading stays a fact about one container, so a Service asked about produces one
+per container of it that is running and none for a container that is not: a
+container that died has already declared an Incident, and dated history and the
+present tense are kept apart rather than said twice. Asking about a Service
+always takes them, whether or not the window holds an Incident too — *what
+happened* and *how it is now* are two questions, and the second does not stop
+having an answer because the first has one.
 _Avoid_: metric, status, health, probe, sample
 
 **Inspection**:

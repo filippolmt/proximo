@@ -371,6 +371,19 @@ func (w *Watcher) noteIncident(msg events.Message) {
 		inc.Container, inc.Service, inc.Describe(), inc.Service)
 }
 
+// noteHealthy tells the Incident store which containers Docker currently reports
+// healthy — the hole the event stream cannot fill on its own, described on
+// IncidentStore.SawHealthy. Every reconcile rather than only the first: it is a
+// map write per container, and it also covers an event stream that dropped the
+// transition while it was reconnecting.
+func (w *Watcher) noteHealthy(containers []container.Summary) {
+	for _, c := range containers {
+		if c.Health != nil && c.Health.Status == container.Healthy && isObserved(c.Labels) {
+			w.incidents.SawHealthy(c.ID)
+		}
+	}
+}
+
 func (w *Watcher) reconcileLogged(ctx context.Context) {
 	if err := w.reconcile(ctx); err != nil {
 		log.Printf("proximo watcher: reconcile error: %v", err)
@@ -383,6 +396,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 		return err
 	}
 	containers := result.Items
+	w.noteHealthy(containers)
 
 	traefikID, traefikNets := findStackContainer(containers, "traefik")
 	if traefikID == "" {

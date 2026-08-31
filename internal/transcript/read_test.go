@@ -558,7 +558,7 @@ func TestServiceOfBackendResolvesAContainerThatStopped(t *testing.T) {
 
 // A Reading is what the runtime declares plus the instant a stream last moved —
 // never the line it moved with.
-func TestReadingOfTakesEveryReadingWithoutReadingTheLine(t *testing.T) {
+func TestReadingsOfTakeEveryReadingWithoutReadingTheLine(t *testing.T) {
 	started := time.Now().Add(-3 * time.Hour)
 	wrote := time.Now().Add(-14 * time.Minute)
 	f := &fakeDocker{
@@ -578,10 +578,14 @@ func TestReadingOfTakesEveryReadingWithoutReadingTheLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rd := r.ReadingOf(context.Background(), "shop/worker")
+	readings := r.ReadingsOf(context.Background(), "shop/worker")
+	if len(readings) != 1 {
+		t.Fatalf("ReadingsOf = %+v, want one reading for the one running container", readings)
+	}
+	rd := readings[0]
 
 	switch {
-	case rd.Container != "shop-worker-1" || !rd.Running:
+	case rd.Container != "shop-worker-1":
 		t.Errorf("reading = %+v, want the running container named", rd)
 	case !rd.Since.Equal(started.Truncate(0)) && rd.Since.Unix() != started.Unix():
 		t.Errorf("Since = %s, want %s — the instant it last started", rd.Since, started)
@@ -611,7 +615,7 @@ func TestReadingOfTakesEveryReadingWithoutReadingTheLine(t *testing.T) {
 
 // The three answers a stream can give are never collapsed: they send a developer
 // to three different places.
-func TestReadingOfTellsTheStreamsSilencesApart(t *testing.T) {
+func TestReadingsOfTellTheStreamsSilencesApart(t *testing.T) {
 	labels := map[string]string{project: "shop", service: "worker"}
 	born := time.Now().Add(-time.Hour)
 
@@ -620,7 +624,7 @@ func TestReadingOfTellsTheStreamsSilencesApart(t *testing.T) {
 		anyOutput: map[string]string{"w1": ""},
 	}
 	r, _ := NewReader(context.Background(), wroteNothing)
-	rd := r.ReadingOf(context.Background(), "shop/worker")
+	rd := onlyReading(t, r.ReadingsOf(context.Background(), "shop/worker"))
 	if !rd.WroteNothing || !rd.LastWrote.IsZero() || len(rd.Unread) != 0 {
 		t.Errorf("reading = %+v, want a stream that was read and had nothing in it", rd)
 	}
@@ -636,7 +640,7 @@ func TestReadingOfTellsTheStreamsSilencesApart(t *testing.T) {
 		tailErr: map[string]error{"w1": errors.New("configured logging driver does not support reading")},
 	}
 	r2, _ := NewReader(context.Background(), unreadable)
-	rd2 := r2.ReadingOf(context.Background(), "shop/worker")
+	rd2 := onlyReading(t, r2.ReadingsOf(context.Background(), "shop/worker"))
 	if rd2.WroteNothing {
 		t.Error("a stream that cannot be read back must not be reported as one that said nothing")
 	}
@@ -654,7 +658,7 @@ func TestReadingOfTellsTheStreamsSilencesApart(t *testing.T) {
 
 // Three of the four readings come from the inspect. When it fails, the Reading
 // says so rather than reporting them as zero.
-func TestReadingOfNamesWhatTheInspectCouldNotAnswer(t *testing.T) {
+func TestReadingsOfNameWhatTheInspectCouldNotAnswer(t *testing.T) {
 	f := &fakeDocker{
 		items: []container.Summary{summary("w1", "shop-worker-1", time.Now().Add(-time.Hour), map[string]string{
 			project: "shop", service: "worker",
@@ -663,7 +667,7 @@ func TestReadingOfNamesWhatTheInspectCouldNotAnswer(t *testing.T) {
 		anyOutput:  map[string]string{"w1": time.Now().Format(time.RFC3339Nano) + " still here\n"},
 	}
 	r, _ := NewReader(context.Background(), f)
-	rd := r.ReadingOf(context.Background(), "shop/worker")
+	rd := onlyReading(t, r.ReadingsOf(context.Background(), "shop/worker"))
 
 	if rd.Since.IsZero() != true || rd.Healthcheck != "" || rd.Restarts != 0 {
 		t.Errorf("reading = %+v, want no measurements from a failed inspect", rd)
@@ -676,11 +680,65 @@ func TestReadingOfNamesWhatTheInspectCouldNotAnswer(t *testing.T) {
 	}
 }
 
-func TestReadingOfIsEmptyForAServiceProximoCannotSee(t *testing.T) {
+func TestReadingsOfAreEmptyForAServiceProximoCannotSee(t *testing.T) {
 	r, _ := NewReader(context.Background(), &fakeDocker{})
-	if rd := r.ReadingOf(context.Background(), "shop/ghost"); !rd.Empty() {
-		t.Errorf("reading = %+v, want nothing for a service with no container", rd)
+	if got := r.ReadingsOf(context.Background(), "shop/ghost"); len(got) != 0 {
+		t.Errorf("readings = %+v, want nothing for a service with no container", got)
 	}
+}
+
+// A Reading is a fact about one container, so a scaled service produces one per
+// running replica — and none for a replica that is not running, which has already
+// declared an Incident. See docs/adr/0008-proximo-measures-the-project-concludes.md.
+func TestReadingsOfAreOnePerRunningReplica(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "worker"}
+	born := time.Now().Add(-time.Hour)
+	f := &fakeDocker{
+		items: []container.Summary{
+			summary("w2", "shop-worker-2", born, labels),
+			summary("w1", "shop-worker-1", born, labels),
+			exited("w3", "shop-worker-3", born, labels),
+		},
+		anyOutput: map[string]string{"w1": "", "w2": "", "w3": ""},
+	}
+	r, _ := NewReader(context.Background(), f)
+	got := r.ReadingsOf(context.Background(), "shop/worker")
+	if len(got) != 2 {
+		t.Fatalf("readings = %+v, want one per running replica and none for the stopped one", got)
+	}
+	// Name order, so two invocations list the same replicas in the same places.
+	if got[0].Container != "shop-worker-1" || got[1].Container != "shop-worker-2" {
+		t.Errorf("readings = %s, %s, want them in name order", got[0].Container, got[1].Container)
+	}
+}
+
+// A container Docker reports under more than one name is still one container: the
+// name-keyed listing would otherwise walk it twice and report it twice, each read
+// costing an inspect and a log read.
+func TestReadingsOfAreOnePerContainerNotPerName(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "worker"}
+	c := summary("w1", "shop-worker-1", time.Now().Add(-time.Hour), labels)
+	c.Names = append(c.Names, "/shop_worker_1_alias")
+	f := &fakeDocker{items: []container.Summary{c}, anyOutput: map[string]string{"w1": ""}}
+
+	r, _ := NewReader(context.Background(), f)
+	got := r.ReadingsOf(context.Background(), "shop/worker")
+	if len(got) != 1 {
+		t.Fatalf("readings = %+v, want one for the one container behind the two names", got)
+	}
+	// The lowest name, so an earlier invocation's replica stays this one.
+	if got[0].Container != "shop-worker-1" {
+		t.Errorf("reading of %q, want shop-worker-1 — the first of its names in order", got[0].Container)
+	}
+}
+
+// onlyReading is the single reading of a one-container service.
+func onlyReading(t *testing.T, got []docker.Reading) docker.Reading {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("ReadingsOf = %+v, want one reading", got)
+	}
+	return got[0]
 }
 
 // A container that has written before is quiet in this window, not silent

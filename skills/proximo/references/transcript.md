@@ -53,19 +53,21 @@ same id across invocations.
 A worker, a queue consumer, a migration job has no host, so no request reaches it
 and no Exchange exists. What proximo has instead is **Incidents**: facts the
 runtime declared — `exited <code>`, `exited <code> (OOM-killed)`, `restarted`,
-`turned unhealthy`. They appear in the same listing as the Exchanges, in one time
-order, and each one anchors a Transcript window running from the previous Incident
-of that service to itself.
+`stopped being healthy`. They appear in the same listing as the Exchanges, in one
+time order, and each one anchors a Transcript window running from the previous
+Incident of that service to itself. Nothing is held back: every Incident is in the
+default listing.
 
-**One exception, and it will catch you out:** `turned unhealthy` is held back from
-the default listing — a worker waiting on postgres is unhealthy on every
-`compose up`, and that noise would bury everything else. It appears only under an
-explicit `--service`. So a listing with no unhealthy row does not mean the
-container is healthy; it means you did not ask.
+**One thing that will catch you out:** the healthcheck Incident is a check that
+was *passing and stopped*, never merely one that reports unhealthy. A container
+that never reached healthy — a worker waiting on postgres with no `start_period`,
+a check whose marker never appears — declares nothing when it fails. So a service
+with no such row is not necessarily one whose healthcheck is fine; it may be one
+whose healthcheck never passed.
 
 ```sh
 proximo errors --json --since 30m                 # Exchanges and Incidents together
-proximo errors --json --service <service> --since 30m   # this one, for `turned unhealthy`
+proximo errors --json --service <service> --since 30m   # one service, plus its readings
 proximo errors transcript <incident-id>           # the whole window that Incident closes
 ```
 
@@ -81,23 +83,28 @@ Two rules before you report anything:
   as *no route — observed for Incidents*.
 - **No Incident does not mean no problem.** A worker that is alive and blocked —
   on a slow query, on a lock, on a queue that never delivers — is healthy, silent,
-  and declares nothing. An empty listing under `--service` carries the
-  **readings** instead: running since when, what the healthcheck says, how many
-  restarts, when its output last moved (`"reading"` in `--json`, with anything that
-  could not be read under `"unread"`). They are facts,
-  not a verdict — a consumer with nothing to do reads identically to a stuck one,
-  because only the project knows whether work was waiting. Quote them as facts and
-  read the output for the window before concluding:
+  and declares nothing. Every `--service` listing carries the **readings**, one
+  per running container: running since when, what the healthcheck says, how many
+  restarts, when its output last moved (`"readings"` in `--json`, with anything
+  that could not be read under `"unread"`). They are facts, not a verdict — a
+  consumer with nothing to do reads identically to a stuck one, because only the
+  project knows whether work was waiting. A scaled service gives one reading per
+  replica: never generalise one replica's reading to the service, since the wedged
+  one is the one you are looking for. A service with nothing running carries no
+  readings at all and a note saying so — read the note, and do not read the
+  missing member as a service that is fine. Quote them as facts and read the
+  output for the window before concluding:
   `proximo errors transcript --service <service> --since 30m`.
 - **Offer the healthcheck.** To make a stuck worker visible next time, the
   container needs a healthcheck that fails when it stops advancing — the worker
   touches a marker on every job, the healthcheck fails once the marker is stale.
-  Docker then says *unhealthy*, which is an Incident, and its window quotes
-  exactly what the worker wrote before it stalled. It is the developer's code to
-  change, so propose it and let them decide; proximo neither defines the contract
-  nor reads the marker. When you check whether it worked, ask with
-  `--service <service>`: unhealthy is the one kind the default listing holds back,
-  and asking without it is how you conclude a working healthcheck did nothing.
+  Docker then says *unhealthy*, and a check that was passing and stopped is an
+  Incident whose window quotes exactly what the worker wrote before it stalled. It
+  is the developer's code to change, so propose it and let them decide; proximo
+  neither defines the contract nor reads the marker. The check has to pass once,
+  or the stall it is there to catch declares nothing; propose a `start_period`
+  with it, which keeps a slow first job from being reported unhealthy on the way
+  there.
 
 ## When there is nothing to quote
 

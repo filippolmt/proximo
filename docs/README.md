@@ -50,6 +50,8 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0007 — proximo remembers what the runtime declares, never what the project wrote](adr/0007-proximo-remembers-what-the-runtime-declares.md)
 
+[0008 — proximo measures, the project concludes](adr/0008-proximo-measures-the-project-concludes.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·

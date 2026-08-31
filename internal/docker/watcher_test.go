@@ -364,10 +364,25 @@ func testWatcher(t *testing.T) *Watcher {
 		t.Fatalf("LoadCA: %v", err)
 	}
 	return &Watcher{
+		incidents:  NewIncidentStore(0, 0),
 		caCert:     caCert,
 		caKey:      caKey,
 		dynamicDir: t.TempDir(),
 		tld:        config.DefaultTLD,
+		lastHosts:  map[string]string{},
+	}
+}
+
+// plainWatcher is a Watcher without a CA: enough for the paths that only touch
+// networks, routers and Incidents. testWatcher above is the one that can also
+// write certs, which costs an EnsureCA.
+func plainWatcher(t *testing.T, cli dockerAPI) *Watcher {
+	t.Helper()
+	return &Watcher{
+		incidents:  NewIncidentStore(0, 0),
+		cli:        cli,
+		dynamicDir: t.TempDir(),
+		tld:        "test",
 		lastHosts:  map[string]string{},
 	}
 }
@@ -531,7 +546,7 @@ func TestReconcileAttachesAndDetaches(t *testing.T) {
 		},
 	}
 
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := plainWatcher(t, f)
 	if err := w.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -544,6 +559,53 @@ func TestReconcileAttachesAndDetaches(t *testing.T) {
 	}
 }
 
+// The hole the event stream cannot fill on its own: a watcher that restarted has
+// seen no health_status event for a container that was already healthy, so
+// without this every stall it goes on to observe reads as a check that never
+// passed. Load-bearing for
+// docs/adr/0008-proximo-measures-the-project-concludes.md.
+func TestReconcileRemembersAContainerAlreadyHealthy(t *testing.T) {
+	healthy := func(id, name string, labels map[string]string) container.Summary {
+		return container.Summary{
+			ID: id, Names: []string{"/" + name}, Labels: labels,
+			State:  container.StateRunning,
+			Health: &container.HealthSummary{Status: container.Healthy},
+		}
+	}
+	worker := healthy("wid", "shop-worker-1", map[string]string{
+		TranscriptLabel: "true", composeProjectLabel: "shop", ComposeServiceLabel: "worker",
+	})
+	// The stack's own containers are not Projects, and a container proximo cannot
+	// see is not one it may record Incidents about.
+	stack := healthy("tid", "proximo-traefik-1", map[string]string{RoleLabel: "traefik"})
+	unknown := healthy("pid", "postgres", map[string]string{composeProjectLabel: "shop", ComposeServiceLabel: "db"})
+
+	f := newFakeDocker()
+	f.containers = []container.Summary{worker, stack, unknown}
+	w := plainWatcher(t, f)
+	if err := w.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	fell := func(id, name string, labels map[string]string) bool {
+		_, ok := w.incidents.Observe(events.Message{
+			Type: events.ContainerEventType, Action: events.ActionHealthStatusUnhealthy,
+			TimeNano: time.Now().UnixNano(),
+			Actor:    events.Actor{ID: id, Attributes: withName(name, labels)},
+		})
+		return ok
+	}
+	if !fell("wid", "shop-worker-1", worker.Labels) {
+		t.Error("a container the reconcile found already healthy must be one whose fall is an Incident")
+	}
+	if fell("tid", "proximo-traefik-1", stack.Labels) {
+		t.Error("the stack's own containers declare no Incident")
+	}
+	if fell("pid", "postgres", unknown.Labels) {
+		t.Error("a container with neither a Route nor proximo.transcript declares no Incident")
+	}
+}
+
 // TestReconcileNoTraefikIsNoOp: with no traefik container running, reconcile
 // touches no networks (it cannot attach a backend to a proxy that is not up).
 func TestReconcileNoTraefik(t *testing.T) {
@@ -552,7 +614,7 @@ func TestReconcileNoTraefik(t *testing.T) {
 		{ID: "appcid", Names: []string{"/app"}, Labels: map[string]string{proximoHostsLabel: "app.test", proximoPortLabel: "8080"},
 			NetworkSettings: netSummary(map[string]string{"appnet": "appid"})},
 	}
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := plainWatcher(t, f)
 	if err := w.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -565,7 +627,7 @@ func TestReconcileNoTraefik(t *testing.T) {
 // Docker event, and returns ctx.Err() when the context is cancelled.
 func TestRunReconcilesOnEventAndStops(t *testing.T) {
 	f := newFakeDocker()
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := plainWatcher(t, f)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -588,7 +650,7 @@ func TestRunReconcilesOnEventAndStops(t *testing.T) {
 // ctx cancel.
 func TestRunReconnectsAfterEventError(t *testing.T) {
 	f := newFakeDocker()
-	w := &Watcher{cli: f, dynamicDir: t.TempDir(), tld: "test", lastHosts: map[string]string{}}
+	w := plainWatcher(t, f)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -612,7 +674,7 @@ func TestRunReconnectsAfterEventError(t *testing.T) {
 }
 
 func TestSyncDynamicWritesAndCleans(t *testing.T) {
-	w := &Watcher{dynamicDir: t.TempDir(), lastHosts: map[string]string{}}
+	w := plainWatcher(t, nil)
 	rc := routedContainer{name: "whoami", safe: "whoami", hosts: []string{"whoami.test"}, port: 80, proximo: true}
 
 	w.syncDynamic([]routedContainer{rc})

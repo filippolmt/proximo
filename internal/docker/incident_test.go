@@ -80,13 +80,13 @@ func TestObserveRecordsWhatTheRuntimeDeclares(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "a transition to unhealthy",
+			// A healthcheck that never passed declares nothing when it fails; the
+			// one that was passing and stopped is asserted on its own below.
+			name: "a transition to unhealthy on a check that never passed",
 			msg: events.Message{
 				Type: events.ContainerEventType, Action: events.ActionHealthStatusUnhealthy, TimeNano: at.UnixNano(),
 				Actor: events.Actor{ID: "c1", Attributes: withName("shop-worker-1", workerLabels("shop", "worker"))},
 			},
-			want: Incident{At: at, Service: "shop/worker", Container: "shop-worker-1", Kind: IncidentUnhealthy},
-			ok:   true,
 		},
 		{
 			name: "starting is not an Incident",
@@ -256,21 +256,6 @@ func TestListWindowsBySince(t *testing.T) {
 	}
 }
 
-// Unhealthy is inside the term and out of the default listing: a worker waiting
-// on postgres is unhealthy on every `compose up`, and a noisy listing stops
-// being read.
-func TestUnhealthyIsNotInTheDefaultListing(t *testing.T) {
-	unhealthy := Incident{Kind: IncidentUnhealthy}
-	if unhealthy.Interesting() {
-		t.Error("unhealthy must stay out of the default listing")
-	}
-	for _, k := range []IncidentKind{IncidentExited, IncidentRestarted} {
-		if !(Incident{Kind: k}).Interesting() {
-			t.Errorf("%s must be in the default listing", k)
-		}
-	}
-}
-
 func TestPreviousOfTheSameService(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	a := Incident{ID: "a", Service: "shop/worker", At: base}
@@ -344,13 +329,12 @@ func TestSelectIncidents(t *testing.T) {
 		query IncidentQuery
 		want  []string
 	}{
-		{"the default holds unhealthy back", IncidentQuery{Since: at(30 * time.Minute), OnlyProblems: true}, []string{"i1", "i3"}},
-		{"--all keeps it", IncidentQuery{Since: at(30 * time.Minute)}, []string{"i1", "i2", "i3"}},
-		{"an explicit service holds nothing back", IncidentQuery{Service: "shop/worker", Since: at(30 * time.Minute), OnlyProblems: true}, []string{"i1", "i2"}},
-		{"a host narrows by the services that served it", IncidentQuery{Services: map[Service]bool{"shop/db": true}, Since: at(30 * time.Minute), OnlyProblems: true}, []string{"i3"}},
-		{"a host nothing can be attributed to keeps none", IncidentQuery{Services: map[Service]bool{}, OnlyProblems: true}, nil},
-		{"since bounds the window", IncidentQuery{Since: at(90 * time.Second), OnlyProblems: true}, []string{"i1"}},
-		{"limit keeps the most recent", IncidentQuery{Limit: 1, OnlyProblems: true}, []string{"i1"}},
+		{"the default holds nothing back", IncidentQuery{Since: at(30 * time.Minute)}, []string{"i1", "i2", "i3"}},
+		{"one service keeps only its own", IncidentQuery{Service: "shop/worker", Since: at(30 * time.Minute)}, []string{"i1", "i2"}},
+		{"a host narrows by the services that served it", IncidentQuery{Services: map[Service]bool{"shop/db": true}, Since: at(30 * time.Minute)}, []string{"i3"}},
+		{"a host nothing can be attributed to keeps none", IncidentQuery{Services: map[Service]bool{}}, nil},
+		{"since bounds the window", IncidentQuery{Since: at(90 * time.Second)}, []string{"i1"}},
+		{"limit keeps the most recent", IncidentQuery{Limit: 1}, []string{"i1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -364,5 +348,89 @@ func TestSelectIncidents(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// healthEvent is what Docker emits when a container's healthcheck changes state.
+func healthEvent(action events.Action, id, name string, at time.Time, labels map[string]string) events.Message {
+	return events.Message{
+		Type: events.ContainerEventType, Action: action, TimeNano: at.UnixNano(),
+		Actor: events.Actor{ID: id, Attributes: withName(name, labels)},
+	}
+}
+
+// The healthcheck Incident is a check that was passing and stopped, never one
+// that merely reports unhealthy: a worker waiting on postgres at boot goes
+// starting → unhealthy and was never healthy, and a stall is healthy → unhealthy
+// by construction. See docs/adr/0008-proximo-measures-the-project-concludes.md.
+func TestUnhealthyIsAnIncidentOnlyForAHealthcheckThatWasPassing(t *testing.T) {
+	at := time.Now().Add(-time.Minute)
+	labels := workerLabels("shop", "worker")
+
+	t.Run("a check that never passed declares nothing", func(t *testing.T) {
+		s := NewIncidentStore(0, 0)
+		if inc, ok := s.Observe(healthEvent(events.ActionHealthStatusUnhealthy, "c1", "shop-worker-1", at, labels)); ok {
+			t.Errorf("recorded %+v, want nothing: the container was never healthy", inc)
+		}
+	})
+
+	t.Run("a check that was passing and stopped is an Incident", func(t *testing.T) {
+		s := NewIncidentStore(0, 0)
+		if _, ok := s.Observe(healthEvent(events.ActionHealthStatusHealthy, "c1", "shop-worker-1", at, labels)); ok {
+			t.Error("turning healthy is not an Incident of its own")
+		}
+		inc, ok := s.Observe(healthEvent(events.ActionHealthStatusUnhealthy, "c1", "shop-worker-1", at.Add(time.Second), labels))
+		if !ok {
+			t.Fatal("a healthcheck that was passing and stopped is an Incident")
+		}
+		if inc.Kind != IncidentUnhealthy || inc.Container != "shop-worker-1" {
+			t.Errorf("recorded %+v, want the unhealthy transition of shop-worker-1", inc)
+		}
+	})
+
+	t.Run("a flapping check declares one Incident per fall", func(t *testing.T) {
+		s := NewIncidentStore(0, 0)
+		for i, action := range []events.Action{
+			events.ActionHealthStatusHealthy, events.ActionHealthStatusUnhealthy,
+			events.ActionHealthStatusHealthy, events.ActionHealthStatusUnhealthy,
+		} {
+			s.Observe(healthEvent(action, "c1", "shop-worker-1", at.Add(time.Duration(i)*time.Second), labels))
+		}
+		if got := s.List(time.Time{}); len(got) != 2 {
+			t.Errorf("store holds %d Incidents, want 2 — flapping is the fact, and each fall is one", len(got))
+		}
+	})
+
+	t.Run("a restart resets what the check declared", func(t *testing.T) {
+		// The container id survives a restart, its healthcheck does not: it goes
+		// back to starting, so the unhealthy that follows a die is a check that
+		// never passed in this life.
+		s := NewIncidentStore(0, 0)
+		s.Observe(healthEvent(events.ActionHealthStatusHealthy, "c-shop-worker-1", "shop-worker-1", at, labels))
+		s.Observe(dieEvent("shop-worker-1", "1", at.Add(time.Second), labels))
+		if inc, ok := s.Observe(healthEvent(events.ActionHealthStatusUnhealthy, "c-shop-worker-1", "shop-worker-1", at.Add(2*time.Second), labels)); ok {
+			t.Errorf("recorded %+v, want nothing: the check had not passed since the container restarted", inc)
+		}
+	})
+
+	t.Run("a container proximo knows nothing about declares nothing either", func(t *testing.T) {
+		s := NewIncidentStore(0, 0)
+		unknown := map[string]string{composeProjectLabel: "shop", ComposeServiceLabel: "db"}
+		s.Observe(healthEvent(events.ActionHealthStatusHealthy, "c2", "postgres", at, unknown))
+		if _, ok := s.Observe(healthEvent(events.ActionHealthStatusUnhealthy, "c2", "postgres", at.Add(time.Second), unknown)); ok {
+			t.Error("a container with neither a Route nor proximo.transcript produces no Incident")
+		}
+	})
+}
+
+// A watcher that restarted has seen no health_status event for a container that
+// was already healthy, and would read its next stall as a check that never
+// passed. SawHealthy is how the reconcile's container listing closes that hole.
+func TestSawHealthyMakesAnAlreadyHealthyContainerOneThatCanFall(t *testing.T) {
+	at := time.Now().Add(-time.Minute)
+	s := NewIncidentStore(0, 0)
+	s.SawHealthy("c1")
+	if _, ok := s.Observe(healthEvent(events.ActionHealthStatusUnhealthy, "c1", "shop-worker-1", at, workerLabels("shop", "worker"))); !ok {
+		t.Error("a container proximo found already healthy must be one whose fall is an Incident")
 	}
 }
