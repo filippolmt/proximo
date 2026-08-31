@@ -109,8 +109,13 @@ skipped — skipped when the environment could not answer it, never when the
 answer was inconvenient, and a skip names what it waited on. A report is one
 whole thing rather than a stream of errors, which is why it shows the checks
 that passed too: those say where *not* to look, and narrow the search as much as
-a failure does. Only a report carries Remedies. An inventory of what is running
-is not a report, and `proximo status` is an inventory.
+a failure does. A report is where Remedies live, and `proximo doctor` is the only
+command that prints a whole one. An inventory of what is running is not a report,
+and `proximo status` is an inventory, which is why it never prints a Remedy at
+all. A command that is neither may still hand over the Remedy for a Check it
+names, when the reason it has nothing to show is the stack itself: `proximo
+errors` does, because the reader it exists for is an agent that will not run a
+second command to learn a one-word answer.
 _Avoid_: diagnosis, output, summary, health check
 
 **Access record**:

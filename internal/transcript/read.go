@@ -109,7 +109,7 @@ func serviceKey(c container.Summary) string {
 func (r *Reader) Access(ctx context.Context, since time.Time) ([]inspect.Exchange, error) {
 	traefik, ok := r.stackContainer("traefik")
 	if !ok {
-		return nil, errors.New("the stack's Traefik is not running, so no Access record can be read — `proximo doctor` reports which stack services are missing, with the Remedy")
+		return nil, errors.New("the stack's Traefik is not running, so no Access record can be read — run `proximo up` (`proximo doctor` reports which stack services are missing)")
 	}
 	raw, err := r.readLogs(ctx, traefik, since, time.Time{})
 	if err != nil {

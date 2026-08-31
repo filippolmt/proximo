@@ -28,7 +28,8 @@ consequence.
 | `curl -sSI https://<host>` reports a TLS error | the CA is not trusted by this client, see below |
 | status is **404** | no route matched: the host is not the one proximo has, or a `proximo.path` prefix excludes this path |
 | status is **502/503** | the route matched and the backend did not answer — see the next section |
-| status is the container's own | routing is fine; the problem is the page — [`inspection.md`](inspection.md) |
+| status is the container's own **5xx** | routing is fine and the server failed — read its output, [`transcript.md`](transcript.md) |
+| status is the container's own, and the page is wrong | routing is fine; the problem is the page — [`inspection.md`](inspection.md) |
 
 Probe the **qualified host** when the bare one fails: if the qualified host works
 and the bare one does not, this is a Collision, not a fault.

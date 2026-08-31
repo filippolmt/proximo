@@ -54,7 +54,7 @@ answer, and they send you to different places:
 | *has written nothing at all since it started, so it probably logs elsewhere* | The application logs to a file inside the container, or to a collector. Only stdout and stderr can be quoted. Point its logger at stdout. |
 | *log driver cannot be read back* | The container runs a driver Docker cannot replay (`syslog`, `fluentd`, `gelf`). |
 | *the container that served this request is gone* | It was stopped or replaced, or the address now answers for a container started after the request. proximo refuses to quote whichever container holds the address now. |
-| *this stack records no access log* | Version skew, not an absence of errors: no route produces an Exchange at all. `proximo doctor` reports it as a failed Check and carries the Remedy, which is the developer's to run. |
+| *this stack records no access log* | Version skew, not an absence of errors: no route produces an Exchange at all. The line carries its Remedy, `proximo update`, and it is the developer's to run. |
 
 When a Transcript names a replica count — *1 of 3 replicas* — read "it only
 happens sometimes" as a fact about **that** container before reading it as a

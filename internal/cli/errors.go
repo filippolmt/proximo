@@ -285,24 +285,11 @@ func writeExchange(w io.Writer, e inspect.Exchange, tr transcript.Transcript, sh
 func quotable(exchanges []inspect.Exchange) []inspect.Exchange {
 	out := make([]inspect.Exchange, 0, len(exchanges))
 	for _, e := range exchanges {
-		if hasSomethingToSay(e) {
+		if e.Interesting() {
 			out = append(out, e)
 		}
 	}
 	return out
-}
-
-// hasSomethingToSay gates the Transcript. Quoting a healthy container's chatter
-// under every clean request buries the one page that broke, which is the failure
-// the default listing already refuses.
-//
-// It is deliberately narrower than Exchange.Interesting(), which also counts
-// Warnings and decides what the listing *shows*. A warning is about the route —
-// proximo relaxed a policy — so the container's output has nothing to add to it,
-// and quoting one there would be output nobody asked for. Widen this only if a
-// warning ever describes something the container itself did.
-func hasSomethingToSay(e inspect.Exchange) bool {
-	return e.Status >= 400 || len(e.Reports) > 0
 }
 
 // writeTranscript quotes what the serving container wrote, inline and tightly
@@ -310,7 +297,7 @@ func hasSomethingToSay(e inspect.Exchange) bool {
 // message is at the head and its most recent output at the tail, and a
 // truncation nobody is told about is the one after which a reader stops looking.
 func writeTranscript(w io.Writer, e inspect.Exchange, tr transcript.Transcript) {
-	if !hasSomethingToSay(e) {
+	if !e.Interesting() {
 		return
 	}
 	if tr.Container == "" && tr.Silence == "" {
@@ -378,7 +365,7 @@ func writeListing(w io.Writer, exchanges []inspect.Exchange, quoted map[string]t
 	for _, e := range exchanges {
 		tr := quoted[e.ID]
 		writeExchange(w, e, tr, show)
-		if hasSomethingToSay(e) && !tr.Empty() {
+		if e.Interesting() && !tr.Empty() {
 			anyQuoted = true
 		}
 	}
@@ -484,10 +471,11 @@ func hopExchanges(since time.Time) []inspect.Exchange {
 // own, and both matter most when it is empty — which is exactly where they used
 // to be skipped.
 //
-// Neither carries a Remedy. Only a Report does: `proximo doctor` runs the Checks
-// and prints the command, and `proximo errors` is an inventory. Naming the Check
-// is what an agent needs, since a Remedy that changes the host is the
-// developer's to run in any case.
+// Both carry their Remedy. A Report is where Remedies live, but a listing that is
+// empty *because of the stack itself* has to hand over the command on the spot:
+// the reader is an agent that will never run `proximo doctor` on its own, and
+// sending it to a second command to learn a one-word answer is a silence with a
+// footnote rather than a named cause.
 func listingNotes(ctx context.Context, host string, empty bool) []string {
 	var notes []string
 	if warning := contestedHostWarning(ctx, host); warning != "" {
@@ -498,7 +486,7 @@ func listingNotes(ctx context.Context, host string, empty bool) []string {
 	// with the developer's code.
 	if empty {
 		if on, err := docker.StackRecordsAccessLog(ctx); err == nil && !on {
-			notes = append(notes, warnPrefix+"This stack records no access log, so no route produces an Exchange. That is why this is empty — version skew, not an absence of errors. `proximo doctor` reports it as a failed Check, with the Remedy.")
+			notes = append(notes, warnPrefix+"This stack records no access log, so no route produces an Exchange. That is why this is empty — version skew, not an absence of errors. Run `proximo update` (`proximo doctor` reports it as a failed Check too).")
 		}
 	}
 	return notes

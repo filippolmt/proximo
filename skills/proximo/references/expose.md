@@ -17,9 +17,8 @@ the container, or shows one flagged with a warning.
    `proximo status` flags it `⚠ set proximo.port`; add the label explicitly.
 4. **Apply and confirm.** `docker compose up -d`, then `proximo status` — the
    route appears with both its hosts.
-5. **Verify against the qualified host, not the bare one.** The bare host is the
-   only name that can be contested; the qualified host always belongs to this
-   container.
+5. **Verify against the qualified host.** It always belongs to this container,
+   while the bare host is the one a Collision can contest.
 
    ```sh
    curl -sS -o /dev/null -w '%{http_code}\n' https://<name>.<project>.test
@@ -27,7 +26,8 @@ the container, or shows one flagged with a warning.
 
 Done when the qualified host returns the container's own response over HTTPS
 with no certificate warning. A 502 or 503 at this point is a routing question,
-not a labelling one: [`routing.md`](routing.md).
+not a labelling one: [`routing.md`](routing.md). A 500 is the container's own,
+and it is already diagnosable — no label needed: [`transcript.md`](transcript.md).
 
 ## Choosing among the optional labels
 

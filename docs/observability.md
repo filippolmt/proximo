@@ -156,9 +156,9 @@ overlap, proximo reports the overlap rather than attributing a line — see
 gone](troubleshooting.md#a-transcript-is-empty-or-says-the-container-is-gone)
 for that and the three silences it tells apart.
 
-A Transcript is quoted inline only where there is something to say — a failing
-status, or a Client report — and tightly capped, keeping both ends and declaring
-what it elided in between. `proximo errors transcript <id>` prints the whole of
+A Transcript is quoted inline only beside an Exchange with something to say — a
+failing status, a Client report, or a warning proximo raised — and tightly
+capped, keeping both ends and declaring what it elided in between. `proximo errors transcript <id>` prints the whole of
 it.
 
 ### Credentials

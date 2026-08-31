@@ -54,6 +54,22 @@ services:
       - "proximo.hosts=slow-optout.test"
       - "proximo.health=false"
 
+  # Transcript: no proximo.inspect, on purpose. Every route produces an Exchange
+  # because Traefik records an access log, so this container is diagnosable with
+  # no label and no browser — `curl` a 500 out of it and read what it wrote.
+  # nginx logs to stdout, so /boom leaves a line the Transcript quotes back.
+  failing:
+    image: nginx:alpine
+    container_name: failing
+    command:
+      - sh
+      - -c
+      - |
+        printf 'server { listen 80; location /boom { return 500 "boom\n"; } location / { return 200 "ok\n"; } }' > /etc/nginx/conf.d/default.conf
+        exec nginx -g 'daemon off;'
+    labels:
+      - "proximo.hosts=failing.test"
+
   # Inspection: nginx serves real HTML (whoami answers text/plain, which has
   # nothing to inject into), so the hop can insert the reporting agent before
   # </head>. Load https://inspected.test and then run `proximo errors`.

@@ -368,7 +368,7 @@ an agent as by a person. See
 [Inspection](observability.md#inspection--what-the-browser-saw) for what is
 captured and where it lives.
 
-A Transcript is quoted inline only where there is something to say, and is
+A Transcript is quoted inline beside every Exchange the listing shows, and is
 **raw application output quoted with no redaction** — it may carry credentials
 or personal data. The listing says so once.
 
