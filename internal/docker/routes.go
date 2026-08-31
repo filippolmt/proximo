@@ -2,7 +2,10 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -279,3 +282,62 @@ func DisplayVersion(ver string) string {
 	}
 	return ver
 }
+
+// traefikConfigPath is where the stack mounts Traefik's static configuration
+// inside its container. It is the anchor for finding that file back on the host.
+const traefikConfigPath = "/etc/traefik/traefik.yml"
+
+// StackRecordsAccessLog reports whether the running Traefik writes an access
+// log. Without one there is no Access record for any route, and `proximo errors`
+// would be silent for a reason that has nothing to do with a developer's code.
+//
+// It reads the config the running container has mounted rather than the copy
+// this CLI would materialize: Traefik reads its static configuration once, at
+// startup, so a stack brought up before the access log existed keeps running
+// without it however new the file on disk is. That skew is the whole point of
+// the question.
+func StackRecordsAccessLog(ctx context.Context) (bool, error) {
+	cli, err := newClient()
+	if err != nil {
+		return false, err
+	}
+	defer cli.Close()
+
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, c := range res.Items {
+		if c.Labels[roleLabel] != "traefik" {
+			continue
+		}
+		got, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+		if err != nil {
+			return false, err
+		}
+		return accessLogConfigured(got.Container.Mounts, os.ReadFile)
+	}
+	return false, errors.New("the stack's Traefik is not running")
+}
+
+// accessLogConfigured reads the mounted traefik.yml back off the host and
+// reports whether it turns the access log on. An unmounted or unreadable config
+// is an error rather than a "no": not knowing is not the same as knowing it is
+// off, and a Check that confuses the two sends a developer after the wrong thing.
+func accessLogConfigured(mounts []container.MountPoint, read func(string) ([]byte, error)) (bool, error) {
+	for _, m := range mounts {
+		if m.Destination != traefikConfigPath {
+			continue
+		}
+		raw, err := read(m.Source)
+		if err != nil {
+			return false, fmt.Errorf("reading the running Traefik's config (%s): %w", m.Source, err)
+		}
+		return accessLogRe.Match(raw), nil
+	}
+	return false, fmt.Errorf("the running Traefik has no %s mounted", traefikConfigPath)
+}
+
+// accessLogRe matches the access log key at the top level of Traefik's config,
+// so a mention of it in a comment does not count as having it on.
+var accessLogRe = regexp.MustCompile(`(?m)^accessLog:`)

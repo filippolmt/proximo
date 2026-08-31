@@ -79,6 +79,16 @@ func newErrorsCmd() *cobra.Command {
 				}{exchanges, r.Join(cmd.Context(), exchanges, transcript.DefaultLimit)})
 			}
 			if len(exchanges) == 0 {
+				// Asked only here, and only when there is nothing to show: it is a
+				// second Docker round trip, and version skew is the one cause of an
+				// empty listing that has nothing to do with the developer's code.
+				// `proximo doctor` reports it for whoever looks before having a
+				// problem; this line answers the agent asking now, which will never
+				// run `proximo doctor` on its own.
+				if on, err := docker.StackRecordsAccessLog(cmd.Context()); err == nil && !on {
+					fmt.Fprintln(out, "This stack records no access log, so no route produces an Exchange — that is why this is empty, and it is version skew rather than an absence of errors. Run `proximo update`.")
+					return nil
+				}
 				writeNothingFound(out, all, host)
 				return nil
 			}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
+
 	"github.com/filippolmt/proximo/internal/config"
 )
 
@@ -644,5 +646,61 @@ func TestTraefikRecordsAccessLogs(t *testing.T) {
 	// rotates the stream, and proximo persists nothing of its own.
 	if strings.Contains(cfg, "filePath:") {
 		t.Error("the access log is written to a file; it must go to stdout, which the compose logging anchor bounds")
+	}
+}
+
+// TestAccessLogConfigured reads the config the running Traefik actually has
+// mounted, not the copy on disk this CLI would materialize: a stack that
+// predates the access log keeps running its own file until it is restarted, and
+// that skew is exactly what the Check exists to report.
+func TestAccessLogConfigured(t *testing.T) {
+	const dst = "/etc/traefik/traefik.yml"
+	files := map[string]string{
+		"/data/new/traefik.yml": "log:\n  level: INFO\naccessLog:\n  format: json\n",
+		"/data/old/traefik.yml": "log:\n  level: INFO\n",
+	}
+	read := func(path string) ([]byte, error) {
+		b, ok := files[path]
+		if !ok {
+			return nil, fmt.Errorf("no such file: %s", path)
+		}
+		return []byte(b), nil
+	}
+
+	cases := map[string]struct {
+		mounts  []container.MountPoint
+		want    bool
+		wantErr bool
+	}{
+		"records them": {
+			mounts: []container.MountPoint{
+				{Source: "/data/ca", Destination: "/ca"},
+				{Source: "/data/new/traefik.yml", Destination: dst},
+			},
+			want: true,
+		},
+		"a stack that predates them": {
+			mounts: []container.MountPoint{{Source: "/data/old/traefik.yml", Destination: dst}},
+			want:   false,
+		},
+		// Not knowing is not the same as knowing it is off: an unreadable or
+		// unmounted config must be an error the Check can report as such, never a
+		// silent "no".
+		"config not mounted":  {mounts: []container.MountPoint{{Source: "/data/ca", Destination: "/ca"}}, wantErr: true},
+		"config not readable": {mounts: []container.MountPoint{{Source: "/data/gone/traefik.yml", Destination: dst}}, wantErr: true},
+	}
+	for name, tc := range cases {
+		got, err := accessLogConfigured(tc.mounts, read)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: want an error, got %v", name, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+		} else if got != tc.want {
+			t.Errorf("%s: accessLogConfigured = %v, want %v", name, got, tc.want)
+		}
 	}
 }

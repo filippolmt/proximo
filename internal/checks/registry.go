@@ -28,6 +28,7 @@ const (
 	IDStackImage   = "stack-image"
 	IDDNSServer    = "dns-server"
 	IDDNSResolver  = "dns-resolver"
+	IDAccessLog    = "access-log"
 	IDRoutes       = "routes"
 	IDAgentSkill   = "agent-skill"
 )
@@ -141,6 +142,22 @@ func All(env Env) []Check {
 					return Failed("proximo up", "the stack runs %s, this CLI pins %s", info.Image, env.CanonicalImage)
 				}
 				return Passed("%s", env.CanonicalImage)
+			},
+		},
+		Check{
+			ID:    IDAccessLog,
+			Name:  "The running stack records access logs",
+			Doc:   "proximo-errors-shows-nothing-at-all",
+			Needs: []string{IDStack},
+			Run: func(ctx context.Context) Result {
+				on, err := env.AccessLog(ctx)
+				switch {
+				case err != nil:
+					return Failed("proximo update", "could not read whether the running Traefik records access logs: %v", err)
+				case !on:
+					return Failed("proximo update", "the running Traefik writes no access log, so no route produces an Exchange")
+				}
+				return Passed("every route produces an Exchange")
 			},
 		},
 		Check{

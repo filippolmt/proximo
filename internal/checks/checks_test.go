@@ -46,6 +46,7 @@ func healthyEnv() Env {
 		Routes: func(context.Context) ([]docker.Route, error) {
 			return []docker.Route{{Container: "web", Host: "web.test"}}, nil
 		},
+		AccessLog: func(context.Context) (bool, error) { return true, nil },
 		AgentSkill: func() ([]skill.Copy, error) {
 			return []skill.Copy{{Dest: skill.Dest{Dir: "/home/dev/.claude/skills/proximo"}, State: skill.Current}}, nil
 		},
@@ -582,4 +583,43 @@ func TestAgentSkillCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAccessLogCheck: a stack that predates the access log records no Access
+// record, so `proximo errors` is silent for a reason unrelated to a developer's
+// code. That is version skew, and it must be reported as such rather than read
+// as "nothing went wrong".
+func TestAccessLogCheck(t *testing.T) {
+	env := healthyEnv()
+	env.AccessLog = func(context.Context) (bool, error) { return false, nil }
+	res := runCheck(t, env, IDAccessLog)
+	if res.Status != Fail {
+		t.Fatalf("a stack recording no access log passed: %+v", res)
+	}
+	if res.Remedy != "proximo update" {
+		t.Errorf("remedy = %q, want proximo update", res.Remedy)
+	}
+
+	// Not knowing must not read as knowing it is off.
+	env.AccessLog = func(context.Context) (bool, error) { return false, errors.New("cannot read the config") }
+	if res := runCheck(t, env, IDAccessLog); res.Status != Fail || !strings.Contains(res.Detail, "cannot read") {
+		t.Errorf("an unreadable config was not reported as such: %+v", res)
+	}
+
+	if res := runCheck(t, healthyEnv(), IDAccessLog); res.Status != Pass {
+		t.Errorf("a healthy stack failed the access log check: %+v", res)
+	}
+}
+
+// runCheck runs one check of the registry by ID, with its prerequisites already
+// satisfied by the healthy fixture.
+func runCheck(t *testing.T, env Env, id string) Result {
+	t.Helper()
+	for _, c := range All(env) {
+		if c.ID == id {
+			return c.Run(t.Context())
+		}
+	}
+	t.Fatalf("no check %q in the registry", id)
+	return Result{}
 }
