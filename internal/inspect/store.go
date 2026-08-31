@@ -55,6 +55,12 @@ type Exchange struct {
 	Warnings []string      `json:"warnings,omitempty"`
 	Reports  []Report      `json:"reports,omitempty"`
 
+	// Backend is the address — host:port — of the container this request was
+	// served by, in the form Traefik's access log names a server by. It is what
+	// a Transcript is looked up from, so an Access record without it can only be
+	// joined to the wrong container's output, or to none.
+	Backend string `json:"backend,omitempty"`
+
 	// Suppressed counts the reports this Exchange saw beyond maxReports. They are
 	// bounded, not discarded quietly: a page in a render loop must not be able to
 	// evict every other Exchange, and a developer must still be told it happened.

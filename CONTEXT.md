@@ -115,11 +115,39 @@ _Avoid_: diagnosis, output, summary, health check
 
 **Access record**:
 The metadata of one request that passed through the stack — host, method,
-status, latency, size. Deliberately excludes request and response bodies. One
-half of an Exchange: what the stack saw from outside the application.
+status, latency, size, and the backend that served it. Deliberately excludes
+request and response bodies. One part of an Exchange: what the stack saw from
+outside the application. Every route produces one, whether or not it is under
+Inspection, because a developer learns they need a diagnosis only after the
+request they needed it for is over.
 _Avoid_: trace, transaction, log entry
 _Debt_: recorded only for routes under Inspection, which is where the hop sees
 the exchange. Every other route produces none: Traefik's access log is off.
+
+**Transcript**:
+What a Project's own container wrote while an Exchange was live, quoted verbatim
+and never interpreted — the third part of an Exchange, and the only one the
+project itself authored rather than proximo observed. proximo never holds one: it
+is read back on demand and cut to the Exchange's window, because the container's
+output already exists somewhere that keeps it. The cut is therefore temporal, not
+causal, and says only *what the container wrote in this window* — never *what
+this request caused*: where two Exchanges of one container overlap, proximo
+reports the overlap rather than attributing a line, the same way it reports a
+Collision rather than resolving one. A Transcript is bounded, and an elision is
+always declared: a truncation nobody is told about is the one after which a
+reader stops looking. It is raw application output, so it may carry credentials
+and personal data; proximo redacts nothing, because redacting is interpreting,
+and a redaction that misses is worse than none.
+_Avoid_: log, logs, stderr, output, stack trace, server error
+_Debt_: not collected at all today. Two silences must be told apart when it is:
+a container that wrote nothing in this window, and a container that writes
+nowhere proximo can read — the second is a fact about the project, and a fixable
+one.
+_Debt_: a container with no Route — a worker, a queue consumer, a migration job
+— produces no Access record, therefore no Exchange, therefore no Transcript. The
+gap is declared rather than filled: an Exchange without an Access record would
+hollow out the term, and deciding which lines of a routeless container look like
+errors would mean interpreting the text a Transcript exists to quote.
 
 **Inspection**:
 The collection of Exchanges for one route, live only while its container carries
@@ -160,10 +188,14 @@ is diagnosing, not scrolled past.
 _Avoid_: dump, capture, replay
 
 **Exchange**:
-One Access record joined to the Client reports that arose while the page it
-served was live. The unit proximo hands to a developer or an agent, and the
-reason both halves are collected: neither half alone says whether a broken page
-is the backend's fault or the front-end's.
+One Access record, the Transcript of the container that served it, and the
+Client reports that arose while the page it served was live. The unit proximo
+hands to a developer or an agent, and the reason all three parts are collected:
+no one of them says on its own whether a broken page is the backend's fault or
+the front-end's. The parts are joined, never merged: a Client report about a
+request the page made carries the identity of the Exchange that request
+produced, so a front-end error leads to the serving container's Transcript in
+one step, and an Exchange stays one request rather than becoming a tree.
 _Avoid_: session, request, correlation
 
 ### What proximo hands to an agent

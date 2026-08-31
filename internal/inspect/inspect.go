@@ -121,6 +121,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	h.store.Add(&Exchange{
 		ID: st.id, At: start, Host: r.Host, Method: r.Method, Path: r.URL.Path,
+		Backend: backend.Host,
 	})
 
 	cw := &countingWriter{ResponseWriter: w}
