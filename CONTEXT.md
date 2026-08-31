@@ -121,8 +121,6 @@ outside the application. Every route produces one, whether or not it is under
 Inspection, because a developer learns they need a diagnosis only after the
 request they needed it for is over.
 _Avoid_: trace, transaction, log entry
-_Debt_: recorded only for routes under Inspection, which is where the hop sees
-the exchange. Every other route produces none: Traefik's access log is off.
 
 **Transcript**:
 What a Project's own container wrote while an Exchange was live, quoted verbatim
@@ -139,10 +137,6 @@ reader stops looking. It is raw application output, so it may carry credentials
 and personal data; proximo redacts nothing, because redacting is interpreting,
 and a redaction that misses is worse than none.
 _Avoid_: log, logs, stderr, output, stack trace, server error
-_Debt_: not collected at all today. Two silences must be told apart when it is:
-a container that wrote nothing in this window, and a container that writes
-nowhere proximo can read — the second is a fact about the project, and a fixable
-one.
 _Debt_: a container with no Route — a worker, a queue consumer, a migration job
 — produces no Access record, therefore no Exchange, therefore no Transcript. The
 gap is declared rather than filled: an Exchange without an Access record would

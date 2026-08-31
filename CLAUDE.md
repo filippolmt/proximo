@@ -43,8 +43,10 @@ Architecture lives in `docs/`, never here. Whole picture:
 | Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |
 | Where the stack's Go binaries come from; running a different image | [docs/updating.md — Running a different image](docs/updating.md#running-a-different-image) |
 | What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
+| What a container wrote during a request, and why proximo stores none of it | [docs/observability.md — Transcripts](docs/observability.md#transcripts--what-the-container-said) |
 | Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
 | The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
+| Reading a whole Transcript, and the `--since` instant | [docs/cli.md — proximo errors transcript](docs/cli.md#proximo-errors-transcript) |
 | Observability bootstrap (Beszel hub/agent) | [docs/observability.md — How it is wired](docs/observability.md#how-it-is-wired) |
 
 ## Conventions & gotchas

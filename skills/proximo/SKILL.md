@@ -34,6 +34,7 @@ first: what it shows picks the branch.
 | No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
+| A route, the page renders, and an endpoint fails — a 500, a 502, an API call that comes back wrong | [`references/transcript.md`](references/transcript.md) |
 
 When the developer's account does not settle which row it is, ask the host
 itself and let the status code decide:
@@ -42,7 +43,7 @@ itself and let the status code decide:
 curl -sS -o /dev/null -w '%{http_code}\n' https://<host>
 ```
 
-## Two rules, in every branch
+## Four rules, in every branch
 
 **A Remedy that changes the host is the developer's to run.** `proximo doctor`
 reports Checks, and every failed Check carries a Remedy — the exact command.
@@ -54,3 +55,14 @@ read-only commands yourself, and say which one you are running.
 bounded, so restarting the stack discards every Client report recorded before it
 — including the restart a developer runs to pick up a label change. Collect what
 you need before restarting, and reproduce the problem after.
+
+**Ask on the qualified host, never the bare one.** Every route answers on both,
+but the bare host is the one a collision can move to another container. The
+qualified host is the name that stays put, so it is the one to put in `--host`
+and in `curl`.
+
+**Read the capped transcript before asking for the whole one.** The inline quote
+carries both ends of the container's output and a declared count of what was
+elided between them; that is usually enough to place the failure. Ask for the
+whole transcript once you know where to look — and remember it is raw
+application output, quoted with no redaction, so it may carry credentials.

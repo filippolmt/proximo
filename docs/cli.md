@@ -325,14 +325,21 @@ touches. Both print only what failed.
 
 ## proximo errors
 
-Show recent Exchanges from routes labelled
-[`proximo.inspect`](routing.md#proximoinspect--see-what-the-browser-saw): what the
-stack served, and what the browser reported while that page was live.
+Show recent Exchanges: what the stack served, what the container that served it
+wrote while the request was live (the
+[Transcript](observability.md#transcripts--what-the-container-said)), and — on
+routes labelled
+[`proximo.inspect`](routing.md#proximoinspect--see-what-the-browser-saw) — what
+the browser reported.
+
+Every route produces an Exchange, labelled or not: a developer learns they need
+a diagnosis only after the request they needed it for is over.
 
 ```sh
 proximo errors                       # what went wrong in the last 15 minutes
 proximo errors --host web.test       # one host
 proximo errors --since 1h --limit 50
+proximo errors --since 2026-08-31T10:30:00Z   # an absolute instant
 proximo errors --all                 # the clean Exchanges too, and quiet breadcrumbs
 proximo errors --json                # structured, for tooling
 ```
@@ -347,7 +354,7 @@ request served since, and `--since` follows the report rather than the load.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--host` | all | Only this host, e.g. `web.test`. |
-| `--since` | `15m` | Only Exchanges newer than this. |
+| `--since` | `15m` | A duration back from now (`15m`, `2h`) **or** an absolute RFC 3339 instant (`2026-08-31T10:30:00Z`). There is no cursor and no persisted state: an agent knows when it last looked, proximo does not. |
 | `--limit` | `20` | Most recent N. |
 | `--all` | `false` | Hold nothing back: the Exchanges with nothing wrong, and the `debug`/`info`/`log` breadcrumbs hidden by default so framework chatter does not bury the report. |
 | `--json` | `false` | Emit the raw Exchanges instead of the reading layout. |
@@ -360,6 +367,32 @@ The default layout has a stable field order on purpose — it is read as often b
 an agent as by a person. See
 [Inspection](observability.md#inspection--what-the-browser-saw) for what is
 captured and where it lives.
+
+A Transcript is quoted inline only where there is something to say, and is
+**raw application output quoted with no redaction** — it may carry credentials
+or personal data. The listing says so once.
+
+### proximo errors transcript
+
+Print the whole of what the serving container wrote for one Exchange. Unlike
+`dom`, it goes to **stdout**: a transcript is text to read and pipe, not
+hundreds of kilobytes to grep.
+
+```sh
+proximo errors transcript 1f0c9a2b3d4e5f60
+proximo errors transcript 1f0c9a2b3d4e5f60 --since 2h
+proximo errors transcript 1f0c9a2b3d4e5f60 -o /tmp/web-1.log
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--since` | `15m` | The window the Exchange is looked for in, same forms as `proximo errors --since`. |
+| `--limit` | `1048576` | Cap the transcript at this many bytes. An elision is always declared. |
+| `-o`, `--out` | stdout | Write to this path instead. |
+
+Identities are derived from host, instant and backend rather than minted, so the
+same Exchange has the same id in two invocations — which is what lets an agent
+say "that one".
 
 ### proximo errors dom
 
