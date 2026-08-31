@@ -6,23 +6,27 @@ is wrong.
 ## What an Exchange is
 
 An **Exchange** is one **Access record** — host, method, status, latency, size,
-never bodies — joined to the **Client reports** raised while the page it served
-was live. Neither half alone says whether a broken page is the backend's fault or
-the front end's, which is the whole reason both are collected. A Client report
-carries the **Breadcrumbs** that led up to it (console calls, requests, clicks,
-navigations) and, once per Exchange, the **Snapshot**: the DOM as it stood when
-the first report of that load was raised.
+never bodies — with the **Transcript** of the container that served it and the
+**Client reports** raised while the page it served was live. No one part says on
+its own whether a broken page is the backend's fault or the front end's, which is
+the whole reason all three are collected. A Client report carries the
+**Breadcrumbs** that led up to it (console calls, requests, clicks, navigations)
+and, once per Exchange, the **Snapshot**: the DOM as it stood when the first
+report of that load was raised.
 
-Exchanges exist only for routes labelled `proximo.inspect=true`. **Chrome is the
-supported browser** — say so early when the developer is on another engine,
-rather than after a round of probing.
+Every route produces an Exchange. **Client reports** are the part that needs
+`proximo.inspect=true`, and they are what this branch is about; the backend half
+needs no label — [`transcript.md`](transcript.md). **Chrome is the supported
+browser** for Client reports — say so early when the developer is on another
+engine, rather than after a round of probing.
 
 ## Before running `proximo errors`
 
 `proximo status` lists which routes are under Inspection, and anything proximo
 had to relax to get there — a `Content-Security-Policy` it rewrote, most often.
-When the route is not there, `proximo errors` has nothing to find and the answer
-is the label, not the query.
+When the route is not under Inspection, `proximo errors` still lists its
+Exchanges — with no Client report on any of them. The answer is then the label,
+not the query.
 
 ## Read the structured form, narrowed
 
@@ -43,13 +47,7 @@ proximo errors --json --host <host> --since 30m
   breadcrumbs that are hidden by default — hidden because framework chatter buries
   the report otherwise.
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--host` | all | One host, e.g. `web.test`. |
-| `--since` | `15m` | Exchanges newer than this, measured on the report. |
-| `--limit` | `20` | Most recent N. |
-| `--all` | `false` | The clean Exchanges too, and the quiet breadcrumbs. |
-| `--json` | `false` | Raw Exchanges instead of the reading layout. |
+`proximo errors --help` lists the flags and their defaults.
 
 ## The Snapshot is a file, and stays one
 

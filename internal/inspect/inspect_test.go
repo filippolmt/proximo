@@ -615,3 +615,32 @@ func TestReportsAreCountedNotDiscarded(t *testing.T) {
 		t.Errorf("Suppressed = %d, want 25 — the excess must be counted, not forgotten", got.Suppressed)
 	}
 }
+
+// TestExchangeCarriesTheBackendThatServedIt: an Access record that cannot name
+// the container it was served by cannot be joined to a Transcript. The hop is
+// the only place that knows it for an inspected route — Traefik's own access log
+// names the inspector, not the backend behind it.
+// See docs/adr/0006-the-transcript-is-quoted-never-stored.md.
+func TestExchangeCarriesTheBackendThatServedIt(t *testing.T) {
+	store := NewStore(0)
+	h := NewHandler(store, []byte("// agent"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+
+	r := httptest.NewRequest(http.MethodGet, "http://web.test/", nil)
+	r.Header.Set(BackendHeader, srv.URL)
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	ex := store.List(Query{})
+	if len(ex) != 1 {
+		t.Fatalf("want 1 Exchange, got %d", len(ex))
+	}
+	// host:port, the form Traefik's access log names a server by, so the join
+	// compares like with like.
+	if want := strings.TrimPrefix(srv.URL, "http://"); ex[0].Backend != want {
+		t.Errorf("Backend = %q, want %q", ex[0].Backend, want)
+	}
+}

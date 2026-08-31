@@ -5,6 +5,19 @@ global:
 log:
   level: INFO
 
+# Every route's Access record comes from here, whether or not the route is under
+# Inspection — a developer learns they need a diagnosis only after the request
+# they needed it for is over.
+#
+# stdout, not a file: the compose logging anchor already bounds and rotates this
+# stream, and proximo persists nothing of its own. It is therefore the same
+# stream as the operational log above; JSON is what tells the two apart, and the
+# CLI filters on that. Default fields are kept as they are — they already carry
+# the backend a request was served by, which is what a Transcript is looked up
+# from. Headers stay dropped, as they are by default.
+accessLog:
+  format: json
+
 # Built-in dashboard, read-only and local-only. api.insecure stays OFF (no
 # extra port is published); the dashboard is served at https://traefik.<tld>
 # by the watcher's self-route to api@internal — no static router here.

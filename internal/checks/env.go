@@ -68,6 +68,10 @@ type Env struct {
 	Docker              func(ctx context.Context) error
 	Stack               func(ctx context.Context) (docker.StackInfo, error)
 	Routes              func(ctx context.Context) ([]docker.Route, error)
+	// AccessLog reports whether the Traefik that is running records an access
+	// log. Without one no route produces an Exchange, and `proximo errors` is
+	// silent for a reason that has nothing to do with a developer's code.
+	AccessLog func(ctx context.Context) (bool, error)
 	// AgentSkill reports every copy of the agent Skill proximo can see, so the
 	// registry can tell a copy that is level with this binary from one that is
 	// behind it and one it may not touch.
@@ -107,6 +111,7 @@ func DefaultEnv(tld string) (Env, error) {
 		PortHeldBy:          portHeldBy(once(docker.PublishedPorts)),
 		Docker:              DockerReachable,
 		Stack:               docker.StackStatus,
+		AccessLog:           docker.StackRecordsAccessLog,
 		AgentSkill:          skill.Survey,
 		Routes: func(ctx context.Context) ([]docker.Route, error) {
 			return docker.Routes(ctx, tld)

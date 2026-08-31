@@ -1,6 +1,6 @@
 ---
 name: proximo
-description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when exposing a container through proximo.* labels, when a .test host does not answer or returns 502/503, when a browser distrusts a local certificate, or when a page loads and then breaks in the browser.
+description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when exposing a container through proximo.* labels, when a .test host does not answer or returns 502/503, when a browser distrusts a local certificate, when a page loads and then breaks in the browser, or when a request through a .test host fails and you need what the container itself wrote.
 metadata:
   short-description: Expose a container at https://<name>.test, and diagnose one that is broken
 ---
@@ -34,6 +34,7 @@ first: what it shows picks the branch.
 | No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
+| A route, the host answers, and a request fails on the server — a 500, or an API call that comes back wrong | [`references/transcript.md`](references/transcript.md) |
 
 When the developer's account does not settle which row it is, ask the host
 itself and let the status code decide:
@@ -42,7 +43,7 @@ itself and let the status code decide:
 curl -sS -o /dev/null -w '%{http_code}\n' https://<host>
 ```
 
-## Two rules, in every branch
+## Rules, in every branch
 
 **A Remedy that changes the host is the developer's to run.** `proximo doctor`
 reports Checks, and every failed Check carries a Remedy — the exact command.
@@ -54,3 +55,7 @@ read-only commands yourself, and say which one you are running.
 bounded, so restarting the stack discards every Client report recorded before it
 — including the restart a developer runs to pick up a label change. Collect what
 you need before restarting, and reproduce the problem after.
+
+**Ask on the qualified host.** Every route answers on two names, and only the
+qualified one stays put: a Collision can move the bare host to another
+container. Put the qualified host in `--host` and in `curl`.

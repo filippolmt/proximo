@@ -63,6 +63,7 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo status`](cli.md#proximo-status) ·
 [`proximo doctor`](cli.md#proximo-doctor) ·
 [`proximo errors`](cli.md#proximo-errors) ·
+[`proximo errors transcript`](cli.md#proximo-errors-transcript) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
 [`proximo skill install`](cli.md#proximo-skill-install) ·
@@ -111,6 +112,7 @@ Why a design is the way it is, and what was rejected on the way.
 [No hardcoded secret](observability.md#no-hardcoded-secret) ·
 [Tear it down](observability.md#tear-it-down) ·
 [Logs, metrics & retention](observability.md#logs-metrics--retention) ·
+[Transcripts — what the container said](observability.md#transcripts--what-the-container-said) ·
 [Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 
@@ -135,6 +137,8 @@ Why a design is the way it is, and what was rejected on the way.
 [Container not routed](troubleshooting.md#container-not-routed) ·
 [A host collision is reported](troubleshooting.md#a-host-collision-is-reported) ·
 [An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
+[proximo errors shows nothing at all](troubleshooting.md#proximo-errors-shows-nothing-at-all) ·
+[A transcript is empty or says the container is gone](troubleshooting.md#a-transcript-is-empty-or-says-the-container-is-gone) ·
 [proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·

@@ -259,11 +259,63 @@ Throw from a real task instead, which is what a broken app does:
 setTimeout(function(){ null.foo }, 0)
 ```
 
+## proximo errors shows nothing at all
+
+Every route produces an Exchange, whether or not it is inspected, because
+Traefik records an access log. A stack brought up before that existed records
+none, and `proximo errors` is then silent for a reason that has nothing to do
+with your code — it says so inline, and `proximo doctor` reports it as *The
+running stack records access logs*.
+
+```console
+$ proximo update
+```
+
+Traefik reads its static configuration once, at startup, so a stack keeps
+running without the access log however new the file on disk is. `proximo update`
+restarts it; `proximo doctor` confirms.
+
+If the check passes and a route you called still shows nothing, the request
+never reached proximo. `proximo doctor` tells apart "nothing called it" from
+"the name does not resolve here", which are the two causes and look identical
+from the listing.
+
+## A transcript is empty or says the container is gone
+
+A [Transcript](observability.md#transcripts--what-the-container-said) is quoted
+from the container's own output at the moment you ask, never stored. Four
+outcomes are not failures, and each says which it is:
+
+- **"wrote nothing while this request was live"** — the container was up and
+  quiet. Nothing to fix.
+- **"has written nothing at all since it started, so it probably logs
+  elsewhere"** — the project writes to a file inside the container, or to a
+  collector. Only stdout and stderr can be quoted. Point the application's
+  logger at stdout and the transcripts fill in.
+- **"log driver cannot be read back"** — the container runs a logging driver
+  Docker cannot replay (`syslog`, `fluentd`, `gelf`). Docker's own `json-file`
+  and `local` drivers can; the rest cannot, by design.
+- **"the container that served this request is gone"** — it was stopped or
+  replaced since, or the address now answers for a container started *after* the
+  request. proximo says so rather than quoting whichever container holds the
+  address now: attributing another container's stack trace to your request is
+  the one failure worth being silent about.
+
+A transcript can also say *N other request(s) overlapped this one*. The cut is
+temporal — it is what the container wrote in this window, never what this request
+caused — so when two requests to one container overlap, their lines interleave
+and nothing after the fact can separate them. Reproduce the problem on its own,
+or read the whole transcript with `proximo errors transcript <id>`.
+
 ## proximo errors shows nothing for an inspected route
 
 If you were testing by hand from the console, read the entry above first — that
 accounts for most of it. Otherwise work down this list; each step is visible
 without guessing.
+
+This entry is about the *Client reports* half — what the browser saw. The
+backend half needs no label: read the [Transcript](cli.md#proximo-errors) of any
+route.
 
 1. **The label is on and the route is HTTP.** `proximo status` lists the route;
    `proximo.inspect` is ignored on a TCP (SNI) route and on a

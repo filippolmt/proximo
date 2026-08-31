@@ -118,6 +118,59 @@ no time-based "keep N days" option) and restart Docker:
 
 …or per service in your own compose under a `logging:` key.
 
+## Transcripts — what the container said
+
+An Exchange has three parts: the **Access record** (what the stack saw), the
+**Transcript** (what the container that served it wrote while it was live) and,
+on inspected routes, the **Client reports** (what the browser saw). Every route
+produces the first two — Traefik records an access log, so a route needs no
+label and no browser to be diagnosable.
+
+```console
+$ curl -sS -o /dev/null https://web.test/checkout
+$ proximo errors --host web.test
+```
+
+```
+14:05:09  1f0c9a2b3d4e5f60  POST /checkout  →  500  41ms
+  (no client report — the failure is the backend's)
+  transcript of web-1 (1 of 3 replicas):
+      panic: assignment to entry in nil map
+      … 412 line(s) elided …
+      exit status 2
+      whole transcript — `proximo errors transcript 1f0c9a2b3d4e5f60`
+
+A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere.
+```
+
+**proximo stores none of it.** A Transcript is read back from the container's
+own output at the moment it is printed, and cut to the window of the Exchange.
+The store of record stays where it already is — Docker's log driver, bounded and
+rotated — and proximo holds nothing. Nothing about application logs is ever
+written to disk by proximo.
+
+The cut is **temporal, not causal**: it says *what the container wrote in this
+window*, never *what this request caused*. Where two Exchanges of one container
+overlap, proximo reports the overlap rather than attributing a line — see
+[A transcript is empty or says the container is
+gone](troubleshooting.md#a-transcript-is-empty-or-says-the-container-is-gone)
+for that and the three silences it tells apart.
+
+A Transcript is quoted inline only beside an Exchange with something to say — a
+failing status, a Client report, or a warning proximo raised — and tightly
+capped, keeping both ends and declaring what it elided in between. `proximo errors transcript <id>` prints the whole of
+it.
+
+### Credentials
+
+A Transcript is raw application output. It may carry tokens, connection strings
+or personal data, and **proximo redacts nothing** — redacting is interpreting,
+and a redactor covering most patterns produces false confidence exactly where an
+unrecognised format slips through. What proximo owes instead is to say so, which
+it does in the CLI and in the [agent Skill](skill.md). Transcripts are handed to
+agents, and an agent sends its context to a model API: check one before pasting
+it anywhere.
+
 ## Inspection — what the browser saw
 
 Dozzle and Beszel watch containers. Inspection watches **pages**: label a

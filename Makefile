@@ -27,11 +27,12 @@ LDFLAGS := -s -w \
 DEMO_COMPOSE := examples/whoami/docker-compose.yml
 DEMO_URL     := https://whoami.test
 INSPECT_URL  := https://inspected.test
+FAILING_URL  := https://failing.test
 OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
 .PHONY: build build-all test vet tidy check-links skill-refs \
 	install up down status doctor errors uninstall \
-	demo demo-down e2e e2e-inspect e2e-down clean
+	demo demo-down e2e e2e-inspect e2e-transcript e2e-down clean
 
 # ---- Build (Go runs in Docker) ------------------------------------------------
 
@@ -72,7 +73,7 @@ skill-refs:
 ## check-links: validate Markdown links + anchors (lychee, offline — same as CI)
 check-links:
 	docker run --rm -w /input -v "$(CURDIR)":/input $(LYCHEE_IMAGE) \
-		--offline --include-fragments --no-progress README.md CLAUDE.md docs
+		--offline --include-fragments --no-progress README.md CLAUDE.md CONTEXT.md TRANSCRIPT-PLAN.md docs
 
 # ---- Lifecycle (host binary; build first so the arch always matches) ----------
 
@@ -144,6 +145,35 @@ e2e-inspect: build
 	@echo "OK: agent injected and served, unlabelled route untouched, Exchange recorded"
 	@echo "    (client reports need a browser: open $(INSPECT_URL) and run setTimeout(function(){ null.foo }, 0))"
 	$(BIN) errors --host inspected.test
+
+## e2e-transcript: prove the Transcript end to end (stack must be installed/up)
+# The two things unit tests cannot reach: Traefik's real access-log output, and
+# Docker's real multiplexed log stream. Neither is mocked here — a wrong decoder
+# yields no Exchange at all, and a wrong demultiplexer yields a Transcript of
+# frame headers instead of the line nginx wrote.
+#
+# `failing` carries no proximo.inspect, which is the point: a route needs no
+# label and no browser to be diagnosable.
+e2e-transcript: build
+	docker compose -f $(DEMO_COMPOSE) up -d
+	@echo "==> waiting for $(FAILING_URL) to route"
+	@for i in $$(seq 1 30); do \
+		[ "$$(curl -sS -o /dev/null -w '%{http_code}' $(FAILING_URL)/ 2>/dev/null)" = "200" ] && break || sleep 1; \
+	done
+	@code=$$(curl -sS -o /dev/null -w '%{http_code}' $(FAILING_URL)/boom); \
+	[ "$$code" = "500" ] || { echo "FAIL: $(FAILING_URL)/boom answered $$code, want 500"; exit 1; }
+	@echo "==> the Access record came from Traefik's log, with no label on the container"
+	@$(BIN) errors --json --host failing.test | grep -q '"status": 500' \
+		|| { echo "FAIL: no failing Exchange for failing.test — Traefik's access log was not read"; exit 1; }
+	@echo "==> the Transcript quotes what the container wrote"
+	@$(BIN) errors --json --host failing.test | grep -q '/boom' \
+		|| { echo "FAIL: the Transcript does not quote nginx's own line for /boom"; exit 1; }
+	@id=$$($(BIN) errors --json --host failing.test | sed -n 's/.*"id": "\([0-9a-f]*\)".*/\1/p' | head -1); \
+	[ -n "$$id" ] && echo "    Exchange $$id"; \
+	$(BIN) errors transcript "$$id" | grep -q '/boom' \
+		|| { echo "FAIL: \`errors transcript\` printed no transcript for $$id"; exit 1; }
+	@echo "OK: every route produces an Exchange, and its Transcript is quoted back"
+	$(BIN) errors --host failing.test
 
 ## e2e-down: stop demo and uninstall (restore the host)
 e2e-down: build

@@ -55,6 +55,12 @@ type Exchange struct {
 	Warnings []string      `json:"warnings,omitempty"`
 	Reports  []Report      `json:"reports,omitempty"`
 
+	// Backend is the address — host:port — of the container this request was
+	// served by, in the form Traefik's access log names a server by. It is what
+	// a Transcript is looked up from, so an Access record without it can only be
+	// joined to the wrong container's output, or to none.
+	Backend string `json:"backend,omitempty"`
+
 	// Suppressed counts the reports this Exchange saw beyond maxReports. They are
 	// bounded, not discarded quietly: a page in a render loop must not be able to
 	// evict every other Exchange, and a developer must still be told it happened.
@@ -239,17 +245,18 @@ type Query struct {
 	OnlyProblems bool
 }
 
-// interesting reports whether an Exchange is worth a developer's attention: the
+// Interesting reports whether an Exchange is worth a developer's attention: the
 // browser reported something, proximo had to warn about something, or the stack
 // itself answered with a failure.
-func (e *Exchange) interesting() bool {
+func (e Exchange) Interesting() bool {
 	return len(e.Reports) > 0 || len(e.Warnings) > 0 || e.Status >= 400
 }
 
-// activity is when something last happened on an Exchange. A page served ten
+// Activity is when something last happened on an Exchange. A page served ten
 // minutes ago that threw just now is fresher news than a request served since,
-// so ordering by the Exchange alone would sink it.
-func (e *Exchange) activity() time.Time {
+// so ordering by the Exchange alone would sink it — and windowing by it alone
+// would drop it.
+func (e Exchange) Activity() time.Time {
 	at := e.At
 	for _, r := range e.Reports {
 		if r.At.After(at) {
@@ -264,30 +271,48 @@ func (s *Store) List(q Query) []Exchange {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	all := make([]Exchange, 0, len(s.items))
+	for _, e := range s.items {
+		item := *e
+		item.HasSnapshot = len(e.Snapshot) > 0
+		item.Snapshot = nil
+		all = append(all, item)
+	}
 	var cutoff time.Time
 	if q.Since > 0 {
 		cutoff = time.Now().Add(-q.Since)
 	}
+	return Select(all, q.Host, cutoff, q.Limit, q.OnlyProblems)
+}
 
-	out := make([]Exchange, 0, len(s.items))
-	for _, e := range s.items {
-		if q.Host != "" && e.Host != q.Host {
+// Select narrows a listing of Exchanges, most recently active first. The Store
+// and the CLI both need it — the CLI's listing is merged from two sources, so it
+// cannot ask the Store to narrow it — and they must narrow it the same way, or
+// the same flags mean two different things depending on where an Exchange came
+// from.
+//
+// The window and the order follow Activity, never the request instant: a page
+// served ten minutes ago that threw a moment ago is fresher news than a request
+// served since. Windowing by the instant would drop exactly the Client report
+// this exists for, and ordering by it would sink that report below every clean
+// request, where a limit cuts it first.
+func Select(all []Exchange, host string, since time.Time, limit int, onlyProblems bool) []Exchange {
+	out := make([]Exchange, 0, len(all))
+	for _, e := range all {
+		if host != "" && e.Host != host {
 			continue
 		}
-		if !cutoff.IsZero() && e.activity().Before(cutoff) {
+		if !since.IsZero() && e.Activity().Before(since) {
 			continue
 		}
-		if q.OnlyProblems && !e.interesting() {
+		if onlyProblems && !e.Interesting() {
 			continue
 		}
-		item := *e
-		item.HasSnapshot = len(e.Snapshot) > 0
-		item.Snapshot = nil
-		out = append(out, item)
+		out = append(out, e)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].activity().After(out[j].activity()) })
-	if q.Limit > 0 && len(out) > q.Limit {
-		out = out[:q.Limit]
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Activity().After(out[j].Activity()) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }
