@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -232,4 +233,37 @@ func (r *Reader) readLogs(ctx context.Context, c container.Summary, from, to tim
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// Merge folds the Exchanges the hop recorded into the ones Traefik logged, most
+// recent first.
+//
+// A request to an inspected route appears in both sources, and the hop's copy is
+// the one to keep: it names the container behind the hop rather than the hop
+// itself, and it carries the Client reports. Traefik's copy is recognised by
+// what it is — its backend is a stack service — rather than by matching two
+// records on host and instant, which is a guess and would fail exactly when two
+// requests arrive together.
+func (r *Reader) Merge(logged, inspected []inspect.Exchange) []inspect.Exchange {
+	out := make([]inspect.Exchange, 0, len(logged)+len(inspected))
+	for _, e := range logged {
+		if r.servedByTheStack(e.Backend) {
+			continue
+		}
+		out = append(out, e)
+	}
+	out = append(out, inspected...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out
+}
+
+// servedByTheStack reports whether a backend address names one of proximo's own
+// containers — the hop, for an inspected route.
+func (r *Reader) servedByTheStack(backend string) bool {
+	if backend == "" {
+		return false
+	}
+	name, _, _ := strings.Cut(backend, ":")
+	c, ok := r.byName[name]
+	return ok && c.Labels[roleLabel] != ""
 }

@@ -245,10 +245,10 @@ type Query struct {
 	OnlyProblems bool
 }
 
-// interesting reports whether an Exchange is worth a developer's attention: the
+// Interesting reports whether an Exchange is worth a developer's attention: the
 // browser reported something, proximo had to warn about something, or the stack
 // itself answered with a failure.
-func (e *Exchange) interesting() bool {
+func (e Exchange) Interesting() bool {
 	return len(e.Reports) > 0 || len(e.Warnings) > 0 || e.Status >= 400
 }
 
@@ -283,7 +283,7 @@ func (s *Store) List(q Query) []Exchange {
 		if !cutoff.IsZero() && e.activity().Before(cutoff) {
 			continue
 		}
-		if q.OnlyProblems && !e.interesting() {
+		if q.OnlyProblems && !e.Interesting() {
 			continue
 		}
 		item := *e

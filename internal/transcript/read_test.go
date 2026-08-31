@@ -275,3 +275,43 @@ func TestAccessReadsTraefiksLog(t *testing.T) {
 		t.Errorf("Exchange = %+v", got[0])
 	}
 }
+
+// A request to an inspected route is in both sources: Traefik saw it go to the
+// inspector, the hop saw the backend behind it. Only the hop's copy names the
+// real backend and carries the Client reports, so Traefik's is dropped — and it
+// is dropped by what it is, not by guessing which two records are the same one.
+func TestMergePrefersTheHopsCopyOfAnInspectedRequest(t *testing.T) {
+	f := &fakeDocker{items: []container.Summary{
+		summary("id-inspector", "proximo-inspector-1", requestAt.Add(-time.Hour),
+			map[string]string{"proximo.role": "inspector"}),
+		summary("id-web-1", "web-1", requestAt.Add(-time.Hour), nil),
+	}}
+	r, err := NewReader(t.Context(), f)
+	if err != nil {
+		t.Fatalf("NewReader: %v", err)
+	}
+
+	viaHop := exchange("proximo-inspector-1:8080") // what Traefik logged
+	plain := exchange("web-1:8080")                // a route not under Inspection
+	plain.Host = "api.test"
+	plain.ID = inspect.DeriveID(plain)
+	fromHop := inspect.Exchange{
+		ID: "minted01", At: requestAt, Host: "web.test", Method: "GET", Path: "/",
+		Status: 500, Backend: "web-1:8080", Reports: []inspect.Report{{Message: "boom"}},
+	}
+
+	got := r.Merge([]inspect.Exchange{viaHop, plain}, []inspect.Exchange{fromHop})
+
+	if len(got) != 2 {
+		t.Fatalf("merged to %d Exchanges, want 2: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.Backend == "proximo-inspector-1:8080" {
+			t.Error("kept Traefik's view of an inspected request, which names the hop instead of the backend")
+		}
+	}
+	// Most recent first, and the hop's copy — the one with the report — survived.
+	if got[0].ID != "minted01" && got[1].ID != "minted01" {
+		t.Errorf("the hop's Exchange was dropped: %+v", got)
+	}
+}
