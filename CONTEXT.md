@@ -176,9 +176,10 @@ slow query is running, healthy and silent; an idle consumer is the same picture,
 and telling them apart needs to know whether work was waiting, which only the
 project knows. So proximo answers with the **Reading** it can take and refuses
 the conclusion. The project can still declare it — a healthcheck that fails when
-the worker stops advancing makes Docker say *unhealthy*, and that is an Incident
-like any other — but the judgement is the project's, made in the project's own
-terms, and proximo neither defines that contract nor infers one. What stays
+the worker stops advancing makes Docker say *unhealthy*, which is an Incident,
+though the one kind a listing holds back until it is asked for by Service — but
+the judgement is the project's, made in the project's own terms, and proximo
+neither defines that contract nor infers one. What stays
 declared rather than filled is the inference itself: it would need proximo to
 become a dependency of the code it observes, which
 [ADR 0006](docs/adr/0006-the-transcript-is-quoted-never-stored.md) rejected with
@@ -196,8 +197,10 @@ states it without drawing the conclusion, the same way a Check reports and never
 repairs. A reading that could not be taken is named as such and never reported as
 a zero, because a measurement nobody could take is not a measurement of nothing.
 It is what proximo has to offer about a container that is alive and may not be
-progressing, and its limit is declared with it: no reading distinguishes a
-consumer with nothing to do from one that is stuck.
+progressing, and its limit is declared with it: no reading proximo can take by
+itself distinguishes a consumer with nothing to do from one that is stuck. A
+healthcheck changes that answer — but that is the project declaring it, in the
+project's own terms, and the reading only repeats what the runtime was told.
 _Avoid_: metric, status, health, probe, sample
 
 **Inspection**:

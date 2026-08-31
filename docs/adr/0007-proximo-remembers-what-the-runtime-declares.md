@@ -111,9 +111,11 @@ order, an Incident as a differently-shaped row among the Exchanges.
   of the answer: the judgement is the project's, expressed in the project's own
   terms through a Docker feature, and proximo neither defines the contract nor
   reads the marker. Nothing is added to proximo, and proximo becomes a dependency
-  of nobody's code. What it costs is that the developer has to write the
-  healthcheck, which is the price of the boundary rather than a gap in it, and
-  the docs point at it from the one place a developer arrives with the question.
+  of nobody's code. Two things it does not do, kept apart on purpose: the
+  developer has to write the healthcheck, which is the price of the boundary and
+  not a gap in it; and proximo still never *infers* that a container is stuck,
+  which is the gap, and stays the `_Debt_`. The docs point at the healthcheck from
+  the one place a developer arrives with the question.
 - **A fourth silence.** proximo will report that a worker was OOM-killed at 14:02
   and that it can no longer show what the worker wrote, because the container is
   gone or its log has rotated past that window. That is the declared price of

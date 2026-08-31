@@ -68,7 +68,9 @@ nothing to do and one that is stuck. Report the readings as readings, and read t
 output for the window before concluding anything:
 `proximo errors transcript --service <service> --since 30m`. To make a stuck
 worker visible next time, propose a healthcheck that fails when it stops
-advancing — Docker then says *unhealthy*, which is an Incident.
+advancing — Docker then says *unhealthy*, which is an Incident. `turned unhealthy`
+is the one kind the default listing holds back, so read it back with
+`--service <service>` or you will conclude a working healthcheck did nothing.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another

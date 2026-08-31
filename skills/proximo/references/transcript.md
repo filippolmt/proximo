@@ -57,9 +57,15 @@ runtime declared — `exited <code>`, `exited <code> (OOM-killed)`, `restarted`,
 order, and each one anchors a Transcript window running from the previous Incident
 of that service to itself.
 
+**One exception, and it will catch you out:** `turned unhealthy` is held back from
+the default listing — a worker waiting on postgres is unhealthy on every
+`compose up`, and that noise would bury everything else. It appears only under an
+explicit `--service`. So a listing with no unhealthy row does not mean the
+container is healthy; it means you did not ask.
+
 ```sh
 proximo errors --json --since 30m                 # Exchanges and Incidents together
-proximo errors --json --service <service> --since 30m
+proximo errors --json --service <service> --since 30m   # this one, for `turned unhealthy`
 proximo errors transcript <incident-id>           # the whole window that Incident closes
 ```
 
@@ -77,7 +83,8 @@ Two rules before you report anything:
   on a slow query, on a lock, on a queue that never delivers — is healthy, silent,
   and declares nothing. An empty listing under `--service` carries the
   **readings** instead: running since when, what the healthcheck says, how many
-  restarts, when its output last moved (`"service"` in `--json`). They are facts,
+  restarts, when its output last moved (`"reading"` in `--json`, with anything that
+  could not be read under `"unread"`). They are facts,
   not a verdict — a consumer with nothing to do reads identically to a stuck one,
   because only the project knows whether work was waiting. Quote them as facts and
   read the output for the window before concluding:
@@ -88,7 +95,9 @@ Two rules before you report anything:
   Docker then says *unhealthy*, which is an Incident, and its window quotes
   exactly what the worker wrote before it stalled. It is the developer's code to
   change, so propose it and let them decide; proximo neither defines the contract
-  nor reads the marker.
+  nor reads the marker. When you check whether it worked, ask with
+  `--service <service>`: unhealthy is the one kind the default listing holds back,
+  and asking without it is how you conclude a working healthcheck did nothing.
 
 ## When there is nothing to quote
 

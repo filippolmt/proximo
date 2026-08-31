@@ -315,8 +315,11 @@ services:
     healthcheck:
       # Healthy while the marker is younger than two minutes — "am I still
       # advancing?", which is the one question only the project can answer.
-      test: ["CMD-SHELL", "[ $(( $(date +%s) - $(stat -c %Y /tmp/progress) )) -lt 120 ]"]
+      # `$$` because Compose interpolates a single `$`; start_period because a
+      # missing marker fails the check, so the first job needs time to land.
+      test: ["CMD-SHELL", "[ $$(( $$(date +%s) - $$(stat -c %Y /tmp/progress) )) -lt 120 ]"]
       interval: 30s
+      start_period: 60s
     labels:
       - "proximo.transcript=true"
 ```
@@ -331,8 +334,8 @@ $ proximo errors --service worker
 
 ```
 12:28:52  5417e9d05379cb21  shop/worker  turned unhealthy
-  container worker
-  transcript of worker:
+  container shop-worker-1
+  transcript of shop-worker-1:
       worker: finished job 41871
       worker: waiting on a lock that will never come
       whole transcript — `proximo errors transcript 5417e9d05379cb21`
@@ -341,8 +344,11 @@ $ proximo errors --service worker
 Nothing about that makes proximo a dependency of your code: the healthcheck is a
 Docker feature, the marker is a file the worker already knows how to touch, and
 proximo neither defines the contract nor reads the marker. It only reports what
-the runtime declared. Remember that unhealthy is held back from the default
-listing, so ask for it with `--service` — and see `stalling` in
+the runtime declared.
+
+One thing to keep in mind, or the healthcheck will look broken: `turned unhealthy`
+is the one Incident kind held back from the default listing, so `proximo errors`
+alone will not show it. Ask by service, as above. See `stalling` in
 `examples/whoami/docker-compose.yml` for a runnable version.
 
 ## Inspection — what the browser saw
