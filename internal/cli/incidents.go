@@ -17,6 +17,9 @@ import (
 // listing and one time order, because time order is the only thing tying the
 // 14:05:09 checkout to the worker that died seven seconds earlier — and a
 // developer's question is never "was it the request or the worker".
+//
+// Which of the two it holds is asked in exactly one place, render: a listing that
+// dispatched on it twice would be two listings wearing one order.
 type row struct {
 	exchange *inspect.Exchange
 	incident *docker.Incident
@@ -32,6 +35,20 @@ func (r row) at() time.Time {
 	return r.exchange.Activity()
 }
 
+// render writes the row, and reports whether it quoted a Transcript — which is
+// what the listing owes its credential notice for.
+func (r row) render(w io.Writer, quoted map[string]transcript.Transcript, show detail) (didQuote bool) {
+	if r.incident != nil {
+		tr := quoted[r.incident.ID]
+		writeIncident(w, *r.incident, tr)
+		return !tr.Empty()
+	}
+	e := *r.exchange
+	tr := quoted[e.ID]
+	writeExchange(w, e, tr, show)
+	return e.Interesting() && !tr.Empty()
+}
+
 // mergeRows folds the two halves of a listing into one, most recent first.
 func mergeRows(exchanges []inspect.Exchange, incidents []docker.Incident) []row {
 	rows := make([]row, 0, len(exchanges)+len(incidents))
@@ -45,37 +62,6 @@ func mergeRows(exchanges []inspect.Exchange, incidents []docker.Incident) []row 
 	return rows
 }
 
-// selectIncidents narrows a listing of Incidents the way inspect.Select narrows
-// Exchanges, and to the same flags: --service, --since, --limit and the default
-// that holds back what has nothing to say.
-//
-// services is the set a --host narrowed to — an Incident carries no host, so the
-// only honest way to keep it under --host is by the service that served the
-// requests on that host. A nil set means no host was asked for.
-func selectIncidents(all []docker.Incident, service string, services map[string]bool, since time.Time, limit int, onlyProblems bool) []docker.Incident {
-	out := make([]docker.Incident, 0, len(all))
-	for _, inc := range all {
-		switch {
-		case service != "" && inc.Service != service:
-			continue
-		case service == "" && services != nil && !services[inc.Service]:
-			continue
-		case !since.IsZero() && inc.At.Before(since):
-			continue
-		// An explicit --service holds nothing back: the developer named the
-		// service, so a transition to unhealthy is an answer rather than noise.
-		case onlyProblems && service == "" && !inc.Interesting():
-			continue
-		}
-		out = append(out, inc)
-	}
-	docker.SortIncidents(out)
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
-}
-
 // servicesServing is the set of services that served the Exchanges in a listing.
 // It is how a --host reaches the Incidents of the container behind that host:
 // the page 502s, the Exchange says the backend was unreachable, and the reason —
@@ -84,8 +70,8 @@ func selectIncidents(all []docker.Incident, service string, services map[string]
 // A backend whose container has been *removed* resolves to nothing, and the set
 // is then empty: under a --host, proximo would rather show no Incident than one
 // it cannot attribute to that host. Drop the --host to see them all.
-func servicesServing(r *transcript.Reader, exchanges []inspect.Exchange) map[string]bool {
-	out := map[string]bool{}
+func servicesServing(r *transcript.Reader, exchanges []inspect.Exchange) map[docker.Service]bool {
+	out := map[docker.Service]bool{}
 	for _, e := range exchanges {
 		if svc := r.ServiceOfBackend(e.Backend); svc != "" {
 			out[svc] = true
@@ -97,7 +83,7 @@ func servicesServing(r *transcript.Reader, exchanges []inspect.Exchange) map[str
 // onlyService keeps the Exchanges served by one service. A routed service is
 // asked about the same way a routeless one is: --service names the service, and
 // what it narrows is the whole listing rather than half of it.
-func onlyService(r *transcript.Reader, exchanges []inspect.Exchange, service string) []inspect.Exchange {
+func onlyService(r *transcript.Reader, exchanges []inspect.Exchange, service docker.Service) []inspect.Exchange {
 	out := make([]inspect.Exchange, 0, len(exchanges))
 	for _, e := range exchanges {
 		if r.ServiceOfBackend(e.Backend) == service {
@@ -108,11 +94,11 @@ func onlyService(r *transcript.Reader, exchanges []inspect.Exchange, service str
 }
 
 // resolveService turns what a developer typed into --service into the qualified
-// name proximo prints. A bare name is accepted when nothing contests it; a
+// Service proximo prints. A bare name is accepted when nothing contests it; a
 // contested one has its candidates reported rather than one of them chosen, the
 // position proximo already holds on a Collision and on an Overlap.
-func resolveService(want string, running []string, incidents []docker.Incident) (string, error) {
-	known := append([]string(nil), running...)
+func resolveService(want string, running []docker.Service, incidents []docker.Incident) (docker.Service, error) {
+	known := append([]docker.Service(nil), running...)
 	for _, inc := range incidents {
 		// An Incident outlives the container that produced it, so a service that
 		// exited and was removed is still a name that answers.
@@ -123,8 +109,12 @@ func resolveService(want string, running []string, incidents []docker.Incident) 
 		return match, nil
 	}
 	if len(candidates) > 0 {
+		names := make([]string, len(candidates))
+		for i, c := range candidates {
+			names[i] = c.String()
+		}
 		return "", fmt.Errorf("--service %s is claimed by more than one project: %s. Ask for the qualified name — it is the one a listing prints, and the one a paste of it will find",
-			want, strings.Join(candidates, ", "))
+			want, strings.Join(names, ", "))
 	}
 	return "", fmt.Errorf("nothing proximo can see answers to --service %s. `proximo status` lists what it knows; a container with no route becomes known by carrying the label %s=true",
 		want, docker.TranscriptLabel)
@@ -154,7 +144,7 @@ func quoteIncidents(ctx context.Context, r *transcript.Reader, listed, all []doc
 func writeIncident(w io.Writer, inc docker.Incident, tr transcript.Transcript) {
 	fmt.Fprintf(w, "%s  %s  %s  %s\n",
 		inc.At.Local().Format("15:04:05"), inc.ID, inc.Service, inc.Describe())
-	if inc.Container != "" && inc.Container != inc.Service {
+	if inc.Container != "" && inc.Container != inc.Service.String() {
 		fmt.Fprintf(w, "  container %s\n", inc.Container)
 	}
 	writeTranscriptLines(w, tr, inc.ID)
@@ -182,4 +172,21 @@ func incidentsNoteFor(stackDown bool) string {
 		return warnPrefix + "The stack is not running, so no Incident is being recorded: nothing here can say whether a container exited or restarted. Run `proximo up`."
 	}
 	return warnPrefix + "This stack records no Incident, so nothing here can say whether a container exited, restarted or was OOM-killed — version skew, not an absence of Incidents. Run `proximo update` (`proximo doctor` reports it as a failed Check too)."
+}
+
+// writeReading is what proximo says instead of nothing when a service produced
+// neither an Exchange nor an Incident: the Reading it can take, and a refusal to
+// draw the conclusion from it.
+//
+// This is the whole of what can honestly be said about a live container that is
+// not progressing. An idle consumer and a stuck one are identical from out here —
+// telling them apart means knowing whether there is work queued, which is the
+// project's own business and the dependency ADR 0006 refused. So proximo reports
+// and does not judge, the way a Check reports and never repairs.
+func writeReading(w io.Writer, rd docker.Reading) {
+	if rd.Empty() {
+		return
+	}
+	fmt.Fprintf(w, "What proximo can see of %s right now: %s.\n", rd.Container, rd.Describe())
+	fmt.Fprintln(w, "Whether that is wrong is not proximo's to say: a consumer with nothing to do and one blocked on a slow query look the same from outside the container, and only the project knows whether work was waiting.")
 }

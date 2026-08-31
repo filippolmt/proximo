@@ -172,13 +172,30 @@ not; a container with no Route becomes known by asking to be, and being observed
 is a separate thing from being reachable.
 _Avoid_: error, event, crash, failure, fault
 _Debt_: a container that is alive and doing nothing produces no Incident — a
-worker blocked on a slow query is healthy, silent, and proximo has nothing to say
-about it. Covering that needs the project to cooperate, which
+worker blocked on a slow query is healthy and silent. proximo answers with the
+**Reading** it can take instead of with nothing, and refuses the conclusion: an
+idle consumer and a stuck one are the same picture from outside the container,
+and telling them apart needs to know whether work was waiting, which only the
+project knows. Closing that last step needs the project to cooperate, which
 [ADR 0006](docs/adr/0006-the-transcript-is-quoted-never-stored.md) rejected with
-its strongest reason: proximo is a thing you switch on, not a dependency of your
-code. The gap is written down rather than left implicit, because the failure
-mode of leaving it out is a developer reading proximo's silence as *all fine*
-when it means *I have nothing to say*.
+its strongest reason — proximo is a thing you switch on, not a dependency of your
+code — so the gap stays open and stays written down: the failure mode of leaving
+it implicit is a developer reading proximo's silence as *all fine* when it means
+*I have nothing to say*.
+
+**Reading**:
+What the runtime says about a container *right now*, as opposed to a dated
+Incident: whether it is running and since when, what its healthcheck says, how
+many times it has been restarted, and the instant its output last moved. A
+reading is measured, never interpreted — the instant a stream last moved is the
+runtime's to declare, while what the line said is the project's — and proximo
+states it without drawing the conclusion, the same way a Check reports and never
+repairs. A reading that could not be taken is named as such and never reported as
+a zero, because a measurement nobody could take is not a measurement of nothing.
+It is what proximo has to offer about a container that is alive and may not be
+progressing, and its limit is declared with it: no reading distinguishes a
+consumer with nothing to do from one that is stuck.
+_Avoid_: metric, status, health, probe, sample
 
 **Inspection**:
 The collection of Exchanges for one route, live only while its container carries

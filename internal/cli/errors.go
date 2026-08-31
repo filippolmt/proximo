@@ -30,7 +30,7 @@ func inspectAPI(path string) string {
 func newErrorsCmd() *cobra.Command {
 	var (
 		host        string
-		service     string
+		serviceWant string
 		since       string
 		limit       int
 		asJSON, all bool
@@ -83,8 +83,9 @@ func newErrorsCmd() *cobra.Command {
 			// an absent Incident and an unreachable Incident store look the same
 			// from here, and one of them hides a restart-looping worker.
 			listing, incErr := docker.IncidentsFromStack(cmd.Context(), time.Since(cutoff))
-			if service != "" {
-				if service, err = resolveService(service, r.Services(), listing.Incidents); err != nil {
+			var service docker.Service
+			if serviceWant != "" {
+				if service, err = resolveService(serviceWant, r.Services(), listing.Incidents); err != nil {
 					return err
 				}
 			}
@@ -95,11 +96,13 @@ func newErrorsCmd() *cobra.Command {
 			}
 			// An Incident carries no host, so a --host narrows it by the service
 			// that served that host's requests rather than dropping every one.
-			var narrowed map[string]bool
+			var narrowed map[docker.Service]bool
 			if host != "" {
 				narrowed = servicesServing(r, exchanges)
 			}
-			incidents := selectIncidents(listing.Incidents, service, narrowed, cutoff, limit, !all)
+			incidents := docker.SelectIncidents(listing.Incidents, docker.IncidentQuery{
+				Service: service, Services: narrowed, Since: cutoff, Limit: limit, OnlyProblems: !all,
+			})
 
 			quoted := r.Join(cmd.Context(), quotable(exchanges), window, transcript.DefaultLimit)
 			for id, tr := range quoteIncidents(cmd.Context(), r, incidents, listing.Incidents, transcript.DefaultLimit) {
@@ -114,6 +117,13 @@ func newErrorsCmd() *cobra.Command {
 			if note := incidentsNote(cmd.Context(), incErr); note != "" {
 				notes = append(notes, note)
 			}
+			// The readings for a named service, taken only when the listing has
+			// nothing to show: they are what proximo says instead of silence about
+			// a container that is alive and may not be progressing.
+			var reading docker.Reading
+			if service != "" && len(rows) == 0 {
+				reading = r.ReadingOf(cmd.Context(), service)
+			}
 
 			if asJSON {
 				enc := json.NewEncoder(out)
@@ -123,13 +133,18 @@ func newErrorsCmd() *cobra.Command {
 					Incidents   []docker.Incident                `json:"incidents"`
 					Transcripts map[string]transcript.Transcript `json:"transcripts"`
 					Notes       []string                         `json:"notes,omitempty"`
-				}{exchanges, incidents, quoted, notes})
+					// A pointer, so an invocation that named no service has no
+					// "reading" member at all rather than an object full of zero
+					// values an agent would have to second-guess.
+					Reading *docker.Reading `json:"reading,omitempty"`
+				}{exchanges, incidents, quoted, notes, readingOrNil(reading)})
 			}
 			for _, n := range notes {
 				fmt.Fprintln(out, n)
 			}
 			if len(rows) == 0 {
 				writeNothingFound(out, all, host, service)
+				writeReading(out, reading)
 				return nil
 			}
 			show := warnAndAbove
@@ -142,7 +157,7 @@ func newErrorsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&host, "host", "", "only this host (e.g. web.test)")
-	cmd.Flags().StringVar(&service, "service", "", "only this Compose service, qualified (shop/worker) or bare when nothing contests it (worker)")
+	cmd.Flags().StringVar(&serviceWant, "service", "", "only this Compose service, qualified (shop/worker) or bare when nothing contests it (worker)")
 	cmd.Flags().StringVar(&since, "since", "15m", "a duration back from now (15m, 2h) or an absolute RFC 3339 instant")
 	cmd.Flags().IntVar(&limit, "limit", 20, "most recent N Exchanges, and N Incidents")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the raw Exchanges, Incidents and Transcripts as JSON")
@@ -190,6 +205,14 @@ func newErrorsDOMCmd() *cobra.Command {
 	return cmd
 }
 
+// readingOrNil keeps an empty Reading out of the JSON entirely.
+func readingOrNil(rd docker.Reading) *docker.Reading {
+	if rd.Empty() {
+		return nil
+	}
+	return &rd
+}
+
 // getJSON reads one endpoint of the hop's loopback API into v.
 func getJSON(path string, v any) error {
 	resp, err := http.Get(inspectAPI(path))
@@ -221,10 +244,10 @@ func inspectRouteWarnings() map[string][]string {
 // are opposite — nothing broke, or the buffer was just emptied — and a restart is
 // easy to cause by accident: bringing the stack up to pick up a change discards
 // every Exchange recorded before it.
-func writeNothingFound(out io.Writer, all bool, host, service string) {
+func writeNothingFound(out io.Writer, all bool, host string, service docker.Service) {
 	if service != "" {
 		fmt.Fprintf(out, "Nothing for %s in this window: no Exchange it served, and no Incident the runtime declared about it.\n", service)
-		fmt.Fprintln(out, "Widen the window with --since. A worker that is alive and stuck produces no Incident at all — proximo has nothing to say about it, which is not the same as nothing being wrong.")
+		fmt.Fprintln(out, "Widen the window with --since. A container that is alive and stuck declares no Incident, so an empty listing means proximo saw nothing happen — not that nothing is wrong.")
 		return
 	}
 	if host != "" {
@@ -412,16 +435,7 @@ const credentialNotice = "A transcript is the application's own output, quoted w
 func writeListing(w io.Writer, rows []row, quoted map[string]transcript.Transcript, show detail) {
 	anyQuoted := false
 	for _, r := range rows {
-		if r.incident != nil {
-			tr := quoted[r.incident.ID]
-			writeIncident(w, *r.incident, tr)
-			anyQuoted = anyQuoted || !tr.Empty()
-			continue
-		}
-		e := *r.exchange
-		tr := quoted[e.ID]
-		writeExchange(w, e, tr, show)
-		if e.Interesting() && !tr.Empty() {
+		if r.render(w, quoted, show) {
 			anyQuoted = true
 		}
 	}
@@ -581,7 +595,7 @@ func newErrorsTranscriptCmd() *cobra.Command {
 		since string
 		limit int
 	)
-	var service string
+	var serviceWant string
 	cmd := &cobra.Command{
 		Use:   "transcript [<exchange-id> | <incident-id>]",
 		Short: "Print what a container wrote in one window",
@@ -598,7 +612,7 @@ func newErrorsTranscriptCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if len(args) == 0 && service == "" {
+			if len(args) == 0 && serviceWant == "" {
 				return fmt.Errorf("give an Exchange or Incident id from `proximo errors`, or --service to quote a plain window")
 			}
 			r, closeDocker, err := newTranscriptReader(cmd.Context())
@@ -611,7 +625,7 @@ func newErrorsTranscriptCmd() *cobra.Command {
 			var b strings.Builder
 
 			if len(args) == 0 {
-				svc, err := resolveService(service, r.Services(), incidents.Incidents)
+				svc, err := resolveService(serviceWant, r.Services(), incidents.Incidents)
 				if err != nil {
 					return err
 				}
@@ -662,7 +676,7 @@ func newErrorsTranscriptCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "write to this path instead of stdout")
-	cmd.Flags().StringVar(&service, "service", "", "quote this service's plain --since window, when no Incident and no Exchange fixes one")
+	cmd.Flags().StringVar(&serviceWant, "service", "", "quote this service's plain --since window, when no Incident and no Exchange fixes one")
 	cmd.Flags().StringVar(&since, "since", "15m", "the window the Exchange or Incident was found in (see `proximo errors --since`)")
 	cmd.Flags().IntVar(&limit, "limit", 1<<20, "cap the transcript at this many bytes")
 	return cmd

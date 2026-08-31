@@ -118,6 +118,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Logs, metrics & retention](observability.md#logs-metrics--retention) ·
 [Transcripts — what the container said](observability.md#transcripts--what-the-container-said) ·
 [Incidents — what the runtime declared](observability.md#incidents--what-the-runtime-declared) ·
+[Readings — what the runtime says right now](observability.md#readings--what-the-runtime-says-right-now) ·
 [Inspection — what the browser saw](observability.md#inspection--what-the-browser-saw) ·
 [Notes & limits](observability.md#notes--limits)
 

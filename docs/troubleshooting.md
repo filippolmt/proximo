@@ -316,10 +316,14 @@ work through these in order:
    watcher keeps a bounded number of Incidents per service. `proximo up` discards
    them all: they are held in memory.
 4. **Is the container alive and simply stuck?** Then there is no Incident to
-   report, and there never will be. A worker blocked on a slow query is healthy
-   and silent, and proximo will say nothing about it — **no Incident does not mean
-   no problem**. Read its output directly for the window you care about:
-   `proximo errors transcript --service <service> --since 30m`.
+   report, and there never will be: a worker blocked on a slow query is healthy
+   and silent — **no Incident does not mean no problem**. What
+   `proximo errors --service <service>` answers with instead is the
+   [readings](observability.md#readings--what-the-runtime-says-right-now):
+   running since when, what the healthcheck says, how many restarts, and when its
+   output last moved. proximo stops there rather than concluding — an idle
+   consumer and a stuck one produce identical readings — so read the output for
+   the window yourself: `proximo errors transcript --service <service> --since 30m`.
 
 ## A transcript is empty or says the container is gone
 

@@ -60,9 +60,12 @@ you need before restarting, and reproduce the problem after.
 **No Incident does not mean no problem.** `proximo errors` reports what the
 *runtime* declared about a container — an exit, a restart, an OOM kill — and
 never what a container wrote. A worker that is alive and blocked on a slow query
-produces nothing at all, so an empty listing means *proximo has nothing to say*,
-never *nothing is wrong*. Say which of the two you are reporting, and read the
-container's own output for the window before concluding anything:
+declares nothing, so an empty listing means *proximo saw nothing happen*, never
+*nothing is wrong*. Under `--service` the listing then prints the **readings**
+(running since when, healthcheck, restarts, when its output last moved) and
+deliberately draws no conclusion: identical readings come from a consumer with
+nothing to do and one that is stuck. Report the readings as readings, and read the
+output for the window before concluding anything:
 `proximo errors transcript --service <service> --since 30m`.
 
 **Ask on the qualified host.** Every route answers on two names, and only the

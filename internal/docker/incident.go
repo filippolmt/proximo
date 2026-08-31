@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -12,6 +13,26 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 )
+
+// A Service is one named part of a Project — a Compose service — qualified by
+// its Namespace: `shop/worker`. It is a type rather than a string because the
+// bare-vs-qualified rule travels with it, and because a resolved Service and
+// whatever a developer typed into --service are not the same thing: the second
+// is a question, and only MatchService turns it into an answer.
+type Service string
+
+// Bare is the service name without its Namespace — the short name a developer
+// writes when nothing contests it, and the one MatchService accepts when nothing
+// contests it. The Namespace half needs no accessor: it is only ever printed as
+// part of the qualified name.
+func (s Service) Bare() string {
+	if _, bare, ok := strings.Cut(string(s), "/"); ok {
+		return bare
+	}
+	return string(s)
+}
+
+func (s Service) String() string { return string(s) }
 
 // An Incident is a fact the runtime declares about a container: it exited
 // non-zero, it was restarted, the kernel killed it, it turned unhealthy. Never a
@@ -29,8 +50,8 @@ type Incident struct {
 	// which is what a developer asks about: "what did the worker say" is a
 	// question about the service, and "what did worker-2 say" one you can only
 	// ask after seeing all three.
-	Service   string `json:"service"`
-	Container string `json:"container"`
+	Service   Service `json:"service"`
+	Container string  `json:"container"`
 
 	Kind     IncidentKind `json:"kind"`
 	ExitCode int          `json:"exit_code,omitempty"`
@@ -77,6 +98,82 @@ func (i Incident) Describe() string {
 	return string(i.Kind)
 }
 
+// A Reading is what the runtime says about a container *right now*, where an
+// Incident is dated history: whether it is running and since when, what its
+// healthcheck says, how many times it has been restarted, and the instant its
+// output last moved. Measured, never interpreted — when a stream moved is the
+// runtime's to declare, what the line said is the project's.
+//
+// It is what proximo has to offer about a container that is alive and may not be
+// progressing, and it stops short of the conclusion on purpose: an idle consumer
+// and one blocked on a slow query read identically from out here.
+type Reading struct {
+	Container string `json:"container"`
+	Running   bool   `json:"running"`
+	// Since is when the container last started (not when it was created): for a
+	// worker that has been restarted, the second would overstate its uptime.
+	Since    time.Time `json:"since,omitzero"`
+	Health   string    `json:"health,omitempty"`
+	Restarts int       `json:"restarts,omitempty"`
+	Replicas int       `json:"replicas,omitempty"`
+
+	// LastWrote is when the container last wrote a line — the instant, never the
+	// line. WroteNothing is set instead when the stream was read and had nothing
+	// in it, which is a fact about the project rather than about the read. With
+	// neither set the stream could not be read at all, and Unread says so: a
+	// reading nobody could take is not a reading of zero.
+	LastWrote    time.Time `json:"last_wrote,omitzero"`
+	WroteNothing bool      `json:"wrote_nothing,omitempty"`
+
+	// Unread names what could not be read, and is empty when everything was. Every
+	// absence in proximo says which absence it is; a missing reading presented as
+	// a measurement is the one that sends a developer after the wrong thing.
+	Unread []string `json:"unread,omitempty"`
+}
+
+// Empty reports whether there is nothing to report — no container answered to the
+// Service at all.
+func (rd Reading) Empty() bool { return rd.Container == "" }
+
+// Describe renders the readings in one clause per fact, in the order a developer
+// checks them. What could not be read is named rather than left as a gap.
+func (rd Reading) Describe() string {
+	var parts []string
+	switch {
+	case !rd.Running:
+		parts = append(parts, "not running")
+	case rd.Since.IsZero():
+		parts = append(parts, "running")
+	default:
+		parts = append(parts, "running for "+time.Since(rd.Since).Round(time.Second).String())
+	}
+	if rd.Health != "" && rd.Health != string(container.NoHealthcheck) {
+		parts = append(parts, "its healthcheck says "+rd.Health)
+	}
+	switch rd.Restarts {
+	case 0:
+	case 1:
+		parts = append(parts, "restarted once")
+	default:
+		parts = append(parts, fmt.Sprintf("restarted %d times", rd.Restarts))
+	}
+	if rd.Replicas > 1 {
+		parts = append(parts, fmt.Sprintf("%d replicas running", rd.Replicas))
+	}
+	for _, u := range rd.Unread {
+		parts = append(parts, u)
+	}
+	// The stream clause goes last: it is the one a developer reads for, and the
+	// "and" that introduces it has to end the sentence.
+	switch {
+	case !rd.LastWrote.IsZero():
+		parts = append(parts, fmt.Sprintf("and it last wrote %s ago", time.Since(rd.LastWrote).Round(time.Second)))
+	case rd.WroteNothing:
+		parts = append(parts, "and it has written nothing at all")
+	}
+	return strings.Join(parts, ", ")
+}
+
 // Retention defaults. The cap is per service rather than a global byte budget:
 // an Incident is tens of bytes, so memory is never the risk — a worker
 // restarting every three seconds evicting another service's only Incident is.
@@ -103,7 +200,7 @@ type IncidentStore struct {
 	maxAge     time.Duration
 	// byService keys the retention: the cap is spent per service, so a looping
 	// worker cannot push another service's only Incident out. Oldest first.
-	byService map[string][]Incident
+	byService map[Service][]Incident
 	// oom remembers a container's last oom event so the die it precedes can carry
 	// it, keyed by container id.
 	oom map[string]time.Time
@@ -124,7 +221,7 @@ func NewIncidentStore(perService int, maxAge time.Duration) *IncidentStore {
 	}
 	return &IncidentStore{
 		perService: perService, maxAge: maxAge,
-		byService: map[string][]Incident{}, oom: map[string]time.Time{},
+		byService: map[Service][]Incident{}, oom: map[string]time.Time{},
 		started: time.Now(),
 	}
 }
@@ -184,7 +281,7 @@ func (s *IncidentStore) Observe(msg events.Message) (Incident, bool) {
 		return Incident{}, false
 	}
 
-	inc.ID = inspect.DeriveIDParts(inc.Service, inc.At.UTC().Format(time.RFC3339Nano), string(inc.Kind))
+	inc.ID = inspect.DeriveIDParts(string(inc.Service), inc.At.UTC().Format(time.RFC3339Nano), string(inc.Kind))
 	if !s.record(inc) {
 		return Incident{}, false
 	}
@@ -244,6 +341,52 @@ func (s *IncidentStore) List(since time.Time) []Incident {
 	return out
 }
 
+// IncidentQuery narrows a listing of Incidents. The zero value holds nothing
+// back. It mirrors inspect.Query, because the two halves of one listing must be
+// narrowed by the same flags or `--since` means two different things depending on
+// which source a row came from.
+type IncidentQuery struct {
+	// Service is an exact match on a resolved Service; empty matches any.
+	Service Service
+	// Services is the set a --host narrowed to. An Incident carries no host, so
+	// the only honest way to keep it under a --host is by the Service that served
+	// the requests on that host. A nil set means no host was asked for; an empty
+	// non-nil one means a host was asked for and nothing could be attributed to it.
+	Services map[Service]bool
+	// Since bounds the window; the zero instant means no bound.
+	Since time.Time
+	// Limit keeps the most recent N; zero or less means no bound.
+	Limit int
+	// OnlyProblems drops what has nothing to say — today, a transition to
+	// unhealthy. An explicit Service overrides it: the developer named the
+	// service, so unhealthy is an answer rather than noise.
+	OnlyProblems bool
+}
+
+// SelectIncidents narrows a listing of Incidents, most recent first — the way
+// inspect.Select narrows Exchanges, and to the same flags.
+func SelectIncidents(all []Incident, q IncidentQuery) []Incident {
+	out := make([]Incident, 0, len(all))
+	for _, inc := range all {
+		switch {
+		case q.Service != "" && inc.Service != q.Service:
+			continue
+		case q.Service == "" && q.Services != nil && !q.Services[inc.Service]:
+			continue
+		case !q.Since.IsZero() && inc.At.Before(q.Since):
+			continue
+		case q.OnlyProblems && q.Service == "" && !inc.Interesting():
+			continue
+		}
+		out = append(out, inc)
+	}
+	SortIncidents(out)
+	if q.Limit > 0 && len(out) > q.Limit {
+		out = out[:q.Limit]
+	}
+	return out
+}
+
 // SortIncidents orders a listing most recent first — the order a listing of
 // Exchanges is already read in, since the two share one.
 func SortIncidents(all []Incident) {
@@ -275,19 +418,19 @@ func PreviousIncident(inc Incident, all []Incident) (Incident, bool) {
 // returned rather than one of them chosen — the position proximo already holds
 // on a Collision and on an Overlap. Neither a match nor candidates means nothing
 // answers to that name at all.
-func MatchService(want string, known []string) (match string, candidates []string) {
+func MatchService(want string, known []Service) (match Service, candidates []Service) {
 	want = strings.TrimSpace(want)
 	if want == "" {
 		return "", nil
 	}
 	if strings.Contains(want, "/") {
-		if slices.Contains(known, want) {
-			return want, nil
+		if slices.Contains(known, Service(want)) {
+			return Service(want), nil
 		}
 		return "", nil
 	}
 	for _, k := range known {
-		if k == want || strings.HasSuffix(k, "/"+want) {
+		if k.Bare() == want {
 			candidates = append(candidates, k)
 		}
 	}
@@ -303,22 +446,22 @@ func MatchService(want string, known []string) (match string, candidates []strin
 // Namespace — the same qualifier a qualified host carries, because a qualified
 // service and a Namespace are one concept, not two. A container outside a
 // Compose project has neither, so it names itself.
-func ServiceOf(labels map[string]string, containerName string) string {
+func ServiceOf(labels map[string]string, containerName string) Service {
 	svc := strings.TrimSpace(labels[composeServiceLabel])
 	switch ns := namespaceOf(labels); {
 	case svc == "":
-		return containerName
+		return Service(containerName)
 	case ns == "":
-		return svc
+		return Service(svc)
 	default:
-		return ns + "/" + svc
+		return Service(ns + "/" + svc)
 	}
 }
 
 // ServiceKey is ServiceOf for a container listing, so the watcher (which sees
 // only an event's attributes) and every host-side reader name one service the
 // same way.
-func ServiceKey(c container.Summary) string {
+func ServiceKey(c container.Summary) Service {
 	return ServiceOf(c.Labels, primaryName(c))
 }
 

@@ -90,15 +90,20 @@ order, an Incident as a differently-shaped row among the Exchanges.
 
 ## Consequences
 
-- **A live worker that is doing nothing stays out of scope, and it is written
-  down.** A worker blocked on a slow query is alive, healthy, produces no
-  Incident, and proximo will be silent. Covering it needs the project to
-  cooperate, which ADR 0006 rejected with its strongest reason — proximo is a
-  thing you switch on, not a dependency of your code — and nothing here weakens
-  that. The gap is a normative `_Debt_` under **Incident** in
-  [CONTEXT.md](../../CONTEXT.md), because leaving it unwritten is the worst
-  option: it lets a developer read proximo's silence as *all fine* when it means
-  *I have nothing to say*. Every place an Incident is documented says so.
+- **A live worker that is doing nothing gets a Reading, not a verdict.** A worker
+  blocked on a slow query is alive, healthy and declares no Incident. proximo
+  answers with what it can measure — running since when, what the healthcheck
+  says, how many restarts, and the instant its output last moved — and stops
+  there, because an idle consumer and a stuck one produce identical readings and
+  telling them apart means knowing whether work was queued. That last step needs
+  the project to cooperate, which ADR 0006 rejected with its strongest reason —
+  proximo is a thing you switch on, not a dependency of your code — and nothing
+  here weakens that. **Reading** is therefore a term of its own: present-tense
+  and measured, where an Incident is dated and declared. The remaining gap stays a
+  normative `_Debt_` under **Incident** in [CONTEXT.md](../../CONTEXT.md), because
+  leaving it unwritten is the worst option: it lets a developer read proximo's
+  silence as *all fine* when it means *I have nothing to say*. Every place an
+  Incident is documented says so.
 - **A fourth silence.** proximo will report that a worker was OOM-killed at 14:02
   and that it can no longer show what the worker wrote, because the container is
   gone or its log has rotated past that window. That is the declared price of

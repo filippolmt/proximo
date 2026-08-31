@@ -75,8 +75,12 @@ Two rules before you report anything:
   as *no route — observed for Incidents*.
 - **No Incident does not mean no problem.** A worker that is alive and blocked —
   on a slow query, on a lock, on a queue that never delivers — is healthy, silent,
-  and produces nothing. An empty listing means *proximo has nothing to say*.
-  Read the output directly for the window before concluding:
+  and declares nothing. An empty listing under `--service` carries the
+  **readings** instead: running since when, what the healthcheck says, how many
+  restarts, when its output last moved (`"service"` in `--json`). They are facts,
+  not a verdict — a consumer with nothing to do reads identically to a stuck one,
+  because only the project knows whether work was waiting. Quote them as facts and
+  read the output for the window before concluding:
   `proximo errors transcript --service <service> --since 30m`.
 
 ## When there is nothing to quote

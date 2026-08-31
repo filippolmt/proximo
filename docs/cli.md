@@ -392,7 +392,15 @@ question, not information.
 | `--since` | `15m` | A duration back from now (`15m`, `2h`) **or** an absolute RFC 3339 instant (`2026-08-31T10:30:00Z`). There is no cursor and no persisted state: an agent knows when it last looked, proximo does not. |
 | `--limit` | `20` | Most recent N Exchanges, and N Incidents. |
 | `--all` | `false` | Hold nothing back: the Exchanges with nothing wrong, and the `debug`/`info`/`log` breadcrumbs hidden by default so framework chatter does not bury the report. |
-| `--json` | `false` | Emit `{"exchanges": [...], "incidents": [...], "transcripts": {"<id>": {...}}}` instead of the reading layout — the Transcripts keyed by the Exchange **or Incident** they belong to. |
+| `--json` | `false` | Emit `{"exchanges": [...], "incidents": [...], "transcripts": {"<id>": {...}}}` instead of the reading layout — the Transcripts keyed by the Exchange **or Incident** they belong to. Under a `--service` that found nothing it also carries `"reading"`: the [readings](observability.md#readings--what-the-runtime-says-right-now) for that service's container, with anything that could not be read named under `"unread"`. |
+
+When a `--service` produced neither an Exchange nor an Incident, the listing does
+not stop at saying so: it prints the
+[readings](observability.md#readings--what-the-runtime-says-right-now) for that
+service's container — running since when, what its healthcheck says, how many
+restarts, when its output last moved — and states that the conclusion is not
+proximo's to draw. A container that is alive and stuck declares no Incident, and
+an unexplained silence is the answer most likely to be read as *all fine*.
 
 The command reads two sources — the Inspection hop, for what browsers reported,
 and the watcher, for Incidents — so either can fail on its own. When the Incident

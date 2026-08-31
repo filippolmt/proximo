@@ -287,16 +287,16 @@ func TestPreviousOfTheSameService(t *testing.T) {
 }
 
 func TestMatchServiceTakesTheBareNameWhenNothingContestsIt(t *testing.T) {
-	known := []string{"shop/worker", "shop/web", "blog/web", "lonely"}
+	known := []Service{"shop/worker", "shop/web", "blog/web", "lonely"}
 	tests := []struct {
 		want       string
-		match      string
-		candidates []string
+		match      Service
+		candidates []Service
 	}{
 		{want: "worker", match: "shop/worker"},
 		{want: "shop/web", match: "shop/web"},
 		{want: "lonely", match: "lonely"},
-		{want: "web", candidates: []string{"blog/web", "shop/web"}},
+		{want: "web", candidates: []Service{"blog/web", "shop/web"}},
 		{want: "queue", candidates: nil},
 		{want: "shop/queue", candidates: nil},
 	}
@@ -313,5 +313,56 @@ func TestMatchServiceTakesTheBareNameWhenNothingContestsIt(t *testing.T) {
 				t.Errorf("MatchService(%q) candidates = %v, want %v", tt.want, candidates, tt.candidates)
 			}
 		}
+	}
+}
+
+// A Service carries the bare-vs-qualified rule, so nothing has to re-derive it.
+func TestServiceKnowsItsBareName(t *testing.T) {
+	if got := Service("shop/worker").Bare(); got != "worker" {
+		t.Errorf("Service(\"shop/worker\").Bare() = %q, want worker", got)
+	}
+	// A container outside a Compose project has no Namespace and names itself.
+	if got := Service("lonely").Bare(); got != "lonely" {
+		t.Errorf("Service(\"lonely\").Bare() = %q, want lonely", got)
+	}
+}
+
+func TestSelectIncidents(t *testing.T) {
+	now := time.Now()
+	at := func(d time.Duration) time.Time { return now.Add(-d) }
+	inc := func(id string, svc Service, when time.Duration, kind IncidentKind) Incident {
+		return Incident{ID: id, Service: svc, At: at(when), Kind: kind}
+	}
+	worker := inc("i1", "shop/worker", time.Minute, IncidentExited)
+	sick := inc("i2", "shop/worker", 2*time.Minute, IncidentUnhealthy)
+	db := inc("i3", "shop/db", 3*time.Minute, IncidentRestarted)
+	old := inc("i4", "shop/worker", time.Hour, IncidentExited)
+	all := []Incident{worker, sick, db, old}
+
+	tests := []struct {
+		name  string
+		query IncidentQuery
+		want  []string
+	}{
+		{"the default holds unhealthy back", IncidentQuery{Since: at(30 * time.Minute), OnlyProblems: true}, []string{"i1", "i3"}},
+		{"--all keeps it", IncidentQuery{Since: at(30 * time.Minute)}, []string{"i1", "i2", "i3"}},
+		{"an explicit service holds nothing back", IncidentQuery{Service: "shop/worker", Since: at(30 * time.Minute), OnlyProblems: true}, []string{"i1", "i2"}},
+		{"a host narrows by the services that served it", IncidentQuery{Services: map[Service]bool{"shop/db": true}, Since: at(30 * time.Minute), OnlyProblems: true}, []string{"i3"}},
+		{"a host nothing can be attributed to keeps none", IncidentQuery{Services: map[Service]bool{}, OnlyProblems: true}, nil},
+		{"since bounds the window", IncidentQuery{Since: at(90 * time.Second), OnlyProblems: true}, []string{"i1"}},
+		{"limit keeps the most recent", IncidentQuery{Limit: 1, OnlyProblems: true}, []string{"i1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SelectIncidents(all, tt.query)
+			if len(got) != len(tt.want) {
+				t.Fatalf("selected %+v, want %v", got, tt.want)
+			}
+			for i, id := range tt.want {
+				if got[i].ID != id {
+					t.Errorf("selected[%d] = %s, want %s", i, got[i].ID, id)
+				}
+			}
+		})
 	}
 }

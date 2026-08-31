@@ -10,8 +10,11 @@ import (
 	"github.com/filippolmt/proximo/internal/transcript"
 )
 
-func incident(id, service string, at time.Time, kind docker.IncidentKind) docker.Incident {
-	return docker.Incident{ID: id, Service: service, Container: strings.ReplaceAll(service, "/", "-") + "-1", At: at, Kind: kind, ExitCode: 1}
+func incident(id string, service docker.Service, at time.Time, kind docker.IncidentKind) docker.Incident {
+	return docker.Incident{
+		ID: id, Service: service, At: at, Kind: kind, ExitCode: 1,
+		Container: strings.ReplaceAll(service.String(), "/", "-") + "-1",
+	}
 }
 
 // One listing, one time order: an Incident is a differently-shaped row among the
@@ -42,47 +45,8 @@ func TestRowsAreOneListingInTimeOrder(t *testing.T) {
 	}
 }
 
-func TestSelectIncidents(t *testing.T) {
-	now := time.Now()
-	worker := incident("i1", "shop/worker", now.Add(-time.Minute), docker.IncidentExited)
-	sick := incident("i2", "shop/worker", now.Add(-2*time.Minute), docker.IncidentUnhealthy)
-	db := incident("i3", "shop/db", now.Add(-3*time.Minute), docker.IncidentRestarted)
-	old := incident("i4", "shop/worker", now.Add(-time.Hour), docker.IncidentExited)
-	all := []docker.Incident{worker, sick, db, old}
-
-	tests := []struct {
-		name     string
-		service  string
-		services map[string]bool
-		since    time.Time
-		limit    int
-		problems bool
-		want     []string
-	}{
-		{name: "default holds unhealthy back", since: now.Add(-30 * time.Minute), problems: true, want: []string{"i1", "i3"}},
-		{name: "--all keeps it", since: now.Add(-30 * time.Minute), want: []string{"i1", "i2", "i3"}},
-		{name: "an explicit service holds nothing back", service: "shop/worker", since: now.Add(-30 * time.Minute), problems: true, want: []string{"i1", "i2"}},
-		{name: "a host narrows by the services that served it", services: map[string]bool{"shop/db": true}, since: now.Add(-30 * time.Minute), problems: true, want: []string{"i3"}},
-		{name: "since bounds the window", since: now.Add(-90 * time.Second), problems: true, want: []string{"i1"}},
-		{name: "limit keeps the most recent", since: time.Time{}, limit: 1, problems: true, want: []string{"i1"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := selectIncidents(all, tt.service, tt.services, tt.since, tt.limit, tt.problems)
-			if len(got) != len(tt.want) {
-				t.Fatalf("selected %+v, want %v", got, tt.want)
-			}
-			for i, id := range tt.want {
-				if got[i].ID != id {
-					t.Errorf("selected[%d] = %s, want %s", i, got[i].ID, id)
-				}
-			}
-		})
-	}
-}
-
 func TestResolveServiceReportsCandidatesRatherThanChoosing(t *testing.T) {
-	running := []string{"shop/web", "blog/web", "shop/worker"}
+	running := []docker.Service{"shop/web", "blog/web", "shop/worker"}
 	incidents := []docker.Incident{incident("i1", "shop/importer", time.Now(), docker.IncidentExited)}
 
 	if got, err := resolveService("worker", running, incidents); err != nil || got != "shop/worker" {
@@ -151,7 +115,68 @@ func TestNothingFoundForAServiceSaysWhatSilenceMeans(t *testing.T) {
 	if !strings.Contains(out, "shop/worker") || !strings.Contains(out, "no Incident") {
 		t.Errorf("message = %q, want the service and the absence of an Incident named", out)
 	}
-	if !strings.Contains(out, "not the same as nothing being wrong") {
+	if !strings.Contains(out, "not that nothing is wrong") {
 		t.Errorf("message = %q, want it to refuse to read silence as all-clear", out)
+	}
+}
+
+// The debt this closes with: proximo cannot tell an idle consumer from a stuck
+// one, so it reports the readings and says the conclusion is not its to draw.
+// Silence with no readings at all was the thing that let "I have nothing to say"
+// be read as "all fine".
+func TestReadingReportsAndRefusesToJudge(t *testing.T) {
+	var b strings.Builder
+	writeReading(&b, docker.Reading{
+		Container: "shop-worker-1", Running: true,
+		Since:     time.Now().Add(-3 * time.Hour),
+		Health:    "healthy",
+		Restarts:  2,
+		LastWrote: time.Now().Add(-14 * time.Minute),
+	})
+	out := b.String()
+	for _, want := range []string{"shop-worker-1", "running for 3h0m0s", "healthy", "restarted 2 times", "and it last wrote 14m0s ago"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the Reading is missing %q:\n%s", want, out)
+		}
+	}
+	// The refusal is the point: the readings are facts, never a verdict.
+	if !strings.Contains(out, "only the project knows whether work was waiting") {
+		t.Errorf("the Reading draws a conclusion proximo cannot draw:\n%s", out)
+	}
+	if strings.Contains(out, "is stuck") || strings.Contains(out, "looks idle") {
+		t.Errorf("the Reading judges the container:\n%s", out)
+	}
+}
+
+// A container proximo cannot see produces no Reading, and no half-empty one.
+func TestReadingSaysNothingWhenThereIsNothingToRead(t *testing.T) {
+	var b strings.Builder
+	writeReading(&b, docker.Reading{})
+	if b.Len() != 0 {
+		t.Errorf("a Reading for an unseen container = %q, want nothing", b.String())
+	}
+	if readingOrNil(docker.Reading{}) != nil {
+		t.Error("the JSON must omit the reading member rather than carry zero values")
+	}
+	rd := docker.Reading{Container: "shop-worker-1", Running: true}
+	if readingOrNil(rd) == nil {
+		t.Error("a Reading that was taken must reach the JSON")
+	}
+}
+
+// The clause a developer reads for goes last, whatever else the Reading carries.
+func TestReadingEndsOnTheStreamClause(t *testing.T) {
+	rd := docker.Reading{
+		Container: "shop-worker-1", Running: true, Replicas: 3, Restarts: 1,
+		Since: time.Now().Add(-time.Minute), LastWrote: time.Now().Add(-time.Second),
+	}
+	got := rd.Describe()
+	if !strings.HasSuffix(got, "and it last wrote 1s ago") {
+		t.Errorf("Describe() = %q, want the stream clause last", got)
+	}
+	for _, want := range []string{"restarted once", "3 replicas running"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Describe() = %q, missing %q", got, want)
+		}
 	}
 }

@@ -33,6 +33,13 @@ type fakeDocker struct {
 	logs   map[string]string // container ID -> what it wrote
 	tty    map[string]bool
 	logErr map[string]error
+	// state and restarts are what an inspect answers beyond the TTY flag: the
+	// readings a Reading takes from the runtime rather than from the log stream.
+	state    map[string]*container.State
+	restarts map[string]int
+	// inspectErr fails the inspect, so a Reading has to say what it could not read
+	// instead of reporting an absent measurement as zero.
+	inspectErr map[string]error
 	// anyOutput is what an unwindowed read returns: the reader asks a second
 	// time, with no window, to tell "quiet in this window" from "quiet always".
 	anyOutput map[string]string
@@ -48,7 +55,12 @@ func (f *fakeDocker) ContainerList(context.Context, client.ContainerListOptions)
 
 func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 	var r client.ContainerInspectResult
+	if err := f.inspectErr[id]; err != nil {
+		return r, err
+	}
 	r.Container.Config = &container.Config{Tty: f.tty[id]}
+	r.Container.State = f.state[id]
+	r.Container.RestartCount = f.restarts[id]
 	return r, nil
 }
 
@@ -511,5 +523,163 @@ func TestServiceOfBackendResolvesAContainerThatStopped(t *testing.T) {
 	// It is not a candidate for a bare --service, though: nothing is running.
 	if len(r.Services()) != 0 {
 		t.Errorf("Services() = %v, want none — a stopped service is named by its Incident, not by the listing", r.Services())
+	}
+}
+
+// A Reading is what the runtime declares plus the instant a stream last moved —
+// never the line it moved with.
+func TestReadingOfTakesEveryReadingWithoutReadingTheLine(t *testing.T) {
+	started := time.Now().Add(-3 * time.Hour)
+	wrote := time.Now().Add(-14 * time.Minute)
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", started, map[string]string{
+			project: "shop", service: "worker", "proximo.transcript": "true",
+		})},
+		state: map[string]*container.State{"w1": {
+			StartedAt: started.Format(time.RFC3339Nano),
+			Health:    &container.Health{Status: container.Healthy},
+		}},
+		restarts: map[string]int{"w1": 2},
+		// Docker stamps the instant on the line when asked; the reader takes the
+		// stamp and leaves the text alone.
+		anyOutput: map[string]string{"w1": wrote.Format(time.RFC3339Nano) + " worker: picked up job 41871\n"},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd := r.ReadingOf(context.Background(), "shop/worker")
+
+	switch {
+	case rd.Container != "shop-worker-1" || !rd.Running:
+		t.Errorf("reading = %+v, want the running container named", rd)
+	case !rd.Since.Equal(started.Truncate(0)) && rd.Since.Unix() != started.Unix():
+		t.Errorf("Since = %s, want %s — the instant it last started", rd.Since, started)
+	case rd.Health != string(container.Healthy):
+		t.Errorf("Health = %q, want healthy", rd.Health)
+	case rd.Restarts != 2:
+		t.Errorf("Restarts = %d, want 2", rd.Restarts)
+	case !rd.LastWrote.Equal(wrote.Truncate(0)) && rd.LastWrote.Unix() != wrote.Unix():
+		t.Errorf("LastWrote = %s, want %s", rd.LastWrote, wrote)
+	case len(rd.Unread) != 0:
+		t.Errorf("Unread = %v, want nothing: every reading was taken", rd.Unread)
+	}
+	if !f.asked["w1"].Timestamps || f.asked["w1"].Tail != "1" {
+		t.Errorf("read %+v, want one line with its timestamp", f.asked["w1"])
+	}
+	got := rd.Describe()
+	for _, want := range []string{"running for 3h0m0s", "healthcheck says healthy", "restarted 2 times", "and it last wrote 14m0s ago"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Describe() = %q, missing %q", got, want)
+		}
+	}
+	// The line itself is never carried into a Reading.
+	if strings.Contains(got, "41871") {
+		t.Errorf("Describe() = %q, want no part of what the container wrote", got)
+	}
+}
+
+// The three answers a stream can give are never collapsed: they send a developer
+// to three different places.
+func TestReadingOfTellsTheStreamsSilencesApart(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "worker"}
+	born := time.Now().Add(-time.Hour)
+
+	wroteNothing := &fakeDocker{
+		items:     []container.Summary{summary("w1", "shop-worker-1", born, labels)},
+		anyOutput: map[string]string{"w1": ""},
+	}
+	r, _ := NewReader(context.Background(), wroteNothing)
+	rd := r.ReadingOf(context.Background(), "shop/worker")
+	if !rd.WroteNothing || !rd.LastWrote.IsZero() || len(rd.Unread) != 0 {
+		t.Errorf("reading = %+v, want a stream that was read and had nothing in it", rd)
+	}
+	if !strings.Contains(rd.Describe(), "and it has written nothing at all") {
+		t.Errorf("Describe() = %q, want it to say nothing was ever written", rd.Describe())
+	}
+
+	// The bug this closes: a log driver Docker cannot replay is not a container
+	// that wrote nothing, and saying so would send a developer to fix a logger
+	// that is fine.
+	unreadable := &fakeDocker{
+		items:   []container.Summary{summary("w1", "shop-worker-1", born, labels)},
+		tailErr: map[string]error{"w1": errors.New("configured logging driver does not support reading")},
+	}
+	r2, _ := NewReader(context.Background(), unreadable)
+	rd2 := r2.ReadingOf(context.Background(), "shop/worker")
+	if rd2.WroteNothing {
+		t.Error("a stream that cannot be read back must not be reported as one that said nothing")
+	}
+	if len(rd2.Unread) != 1 || !strings.Contains(rd2.Unread[0], "when it last wrote could not be read") {
+		t.Errorf("Unread = %v, want the unreadable stream named", rd2.Unread)
+	}
+	got := rd2.Describe()
+	if strings.Contains(got, "written nothing") {
+		t.Errorf("Describe() = %q, want no claim about what it wrote", got)
+	}
+	if !strings.Contains(got, "could not be read") {
+		t.Errorf("Describe() = %q, want the absence named rather than left as a gap", got)
+	}
+}
+
+// Three of the four readings come from the inspect. When it fails, the Reading
+// says so rather than reporting them as zero.
+func TestReadingOfNamesWhatTheInspectCouldNotAnswer(t *testing.T) {
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", time.Now().Add(-time.Hour), map[string]string{
+			project: "shop", service: "worker",
+		})},
+		inspectErr: map[string]error{"w1": errors.New("no such container")},
+		anyOutput:  map[string]string{"w1": time.Now().Format(time.RFC3339Nano) + " still here\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	rd := r.ReadingOf(context.Background(), "shop/worker")
+
+	if rd.Since.IsZero() != true || rd.Health != "" || rd.Restarts != 0 {
+		t.Errorf("reading = %+v, want no measurements from a failed inspect", rd)
+	}
+	if len(rd.Unread) != 1 || !strings.Contains(rd.Unread[0], "what else the runtime says could not be read") {
+		t.Errorf("Unread = %v, want the failed inspect named", rd.Unread)
+	}
+	if !strings.Contains(rd.Describe(), "could not be read") {
+		t.Errorf("Describe() = %q, want the absence named", rd.Describe())
+	}
+}
+
+func TestReadingOfIsEmptyForAServiceProximoCannotSee(t *testing.T) {
+	r, _ := NewReader(context.Background(), &fakeDocker{})
+	if rd := r.ReadingOf(context.Background(), "shop/ghost"); !rd.Empty() {
+		t.Errorf("reading = %+v, want nothing for a service with no container", rd)
+	}
+}
+
+// A container that has written before is quiet in this window, not silent
+// forever — and one whose stream cannot be read must not be told it logs
+// elsewhere, which is the third silence wearing the second one's words.
+func TestExplainSilenceKeepsTheThreeSilencesApart(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "web"}
+	c := summary("w1", "web-1", requestAt.Add(-time.Hour), labels)
+	e := inspect.Exchange{ID: "x", At: requestAt, Backend: "web-1:8080", Status: 500}
+
+	never := &fakeDocker{items: []container.Summary{c}, logs: map[string]string{"w1": ""}, anyOutput: map[string]string{"w1": ""}}
+	r, _ := NewReader(context.Background(), never)
+	if got := r.JoinOne(context.Background(), e, nil, DefaultLimit).Silence; !strings.Contains(got, "logs elsewhere") {
+		t.Errorf("silence = %q, want the container that never wrote sent to its logger", got)
+	}
+
+	quiet := &fakeDocker{items: []container.Summary{c}, logs: map[string]string{"w1": ""}, anyOutput: map[string]string{"w1": "something, once\n"}}
+	r2, _ := NewReader(context.Background(), quiet)
+	got := r2.JoinOne(context.Background(), e, nil, DefaultLimit).Silence
+	if strings.Contains(got, "logs elsewhere") || !strings.Contains(got, "wrote nothing while this request was live") {
+		t.Errorf("silence = %q, want quiet-in-this-window", got)
+	}
+
+	unreadable := &fakeDocker{
+		items: []container.Summary{c}, logs: map[string]string{"w1": ""},
+		tailErr: map[string]error{"w1": errors.New("driver cannot be read")},
+	}
+	r3, _ := NewReader(context.Background(), unreadable)
+	if got := r3.JoinOne(context.Background(), e, nil, DefaultLimit).Silence; strings.Contains(got, "logs elsewhere") {
+		t.Errorf("silence = %q, want no claim about the logger when nothing was learned", got)
 	}
 }

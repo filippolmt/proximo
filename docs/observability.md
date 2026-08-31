@@ -208,7 +208,8 @@ Nothing here reads the text. An exit code, a restart and an OOM kill are
 statements *Docker* makes about the container; deciding that a line looks like an
 error would mean interpreting the output a Transcript exists to quote. **No
 Incident does not mean no problem** — a worker that is alive and blocked on a
-slow query produces none, and proximo will be silent about it.
+slow query produces none. What proximo answers with in that case is
+[the readings](#readings--what-the-runtime-says-right-now), not silence.
 
 ### Reading them
 
@@ -258,6 +259,48 @@ whatever container answers to that name now.
 
 Incidents are held in memory, so `proximo up` discards them along with the
 Exchange buffer.
+
+## Readings — what the runtime says right now
+
+An Incident is dated history. A **Reading** is the present tense: what the
+runtime says about a container at the moment you ask. It is what
+`proximo errors --service <svc>` answers with when there is nothing else to
+show — because a container that is alive and stuck declares no Incident, and
+silence is the one answer that gets misread as *all fine*.
+
+```console
+$ proximo errors --service worker
+```
+
+```
+Nothing for shop/worker in this window: no Exchange it served, and no Incident the runtime declared about it.
+Widen the window with --since. A container that is alive and stuck declares no Incident, so an empty listing means proximo saw nothing happen — not that nothing is wrong.
+What proximo can see of shop-worker-1 right now: running for 3h12m4s, its healthcheck says healthy, restarted 2 times, and it last wrote 14m2s ago.
+Whether that is wrong is not proximo's to say: a consumer with nothing to do and one blocked on a slow query look the same from outside the container, and only the project knows whether work was waiting.
+```
+
+Each reading is a fact the runtime declares, and nothing else is one:
+
+| Reading | Where it comes from |
+| --- | --- |
+| running, and for how long | the container's state and the instant it last *started* — not when it was created, which would overstate a worker that has been restarted |
+| what the healthcheck says | Docker's healthcheck, if the image declares one |
+| how many times it restarted | Docker's own restart count |
+| how many replicas are running | the containers of that service, when there is more than one |
+| when its output last moved | the timestamp Docker stamps on the last line — **the instant, never the line**: when a stream moved is the runtime's to declare, what it said is the project's |
+
+A reading that could not be taken is *named*, never reported as a zero: a
+container whose log driver Docker cannot replay is told exactly that, rather than
+that it wrote nothing. Those are different facts about different things, and the
+second sends a developer to fix a logger that is fine.
+
+**The last step is deliberately not taken.** proximo does not say "this worker is
+stuck". A consumer waiting on an empty queue and one blocked on a slow query
+produce the same readings — running, healthy, quiet for a while — and telling them
+apart means knowing whether there was work waiting, which is the project's own
+business. Reporting without concluding is the same stance a Check takes: it
+reports, and never repairs. `--json` carries them under `"reading"` so an agent
+gets the facts without the prose.
 
 ## Inspection — what the browser saw
 

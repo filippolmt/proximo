@@ -46,13 +46,12 @@ type Reader struct {
 	// once per container rather than once per read: it cannot change while the
 	// container is running.
 	tty map[string]bool
-	// replicas counts the containers of each compose service, keyed the way
-	// serviceKey keys them.
-	replicas map[string]int
-	// services are the qualified names of the Project services running now — the
-	// candidates a bare --service is resolved against. proximo's own stack is
-	// excluded: it is a Stack, not a Project, and nothing selects it.
-	services map[string]bool
+	// replicas counts the running containers of each Service.
+	replicas map[docker.Service]int
+	// services are the Project services running now — the candidates a bare
+	// --service is resolved against. proximo's own stack is excluded: it is a
+	// Stack, not a Project, and nothing selects it.
+	services map[docker.Service]bool
 	// stackAddrs are the names proximo's own services answer to. Traefik points
 	// an inspected route at the hop by its compose *service* name, while a
 	// project's backend is a container name, so both forms have to be recognised.
@@ -73,8 +72,8 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 		return nil, err
 	}
 	r := &Reader{
-		d: d, byName: map[string]container.Summary{}, replicas: map[string]int{},
-		tty: map[string]bool{}, stackAddrs: map[string]bool{}, services: map[string]bool{},
+		d: d, byName: map[string]container.Summary{}, replicas: map[docker.Service]int{},
+		tty: map[string]bool{}, stackAddrs: map[string]bool{}, services: map[docker.Service]bool{},
 	}
 	for _, c := range res.Items {
 		for _, n := range c.Names {
@@ -84,7 +83,7 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 				r.stackAddrs[name] = true
 			}
 		}
-		if key := serviceKey(c); key != "" && c.State == container.StateRunning {
+		if key := docker.ServiceKey(c); key != "" && c.State == container.StateRunning {
 			r.replicas[key]++
 			if c.Labels[docker.RoleLabel] == "" {
 				r.services[key] = true
@@ -97,12 +96,11 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 	return r, nil
 }
 
-// Services are the qualified names of the Project services running now, sorted.
-// They are the candidates a bare --service is resolved against: what is printed
-// must be what works when pasted back, and a bare name is only accepted when
-// nothing contests it.
-func (r *Reader) Services() []string {
-	out := make([]string, 0, len(r.services))
+// Services are the Project services running now, sorted. They are the candidates
+// a bare --service is resolved against: what is printed must be what works when
+// pasted back, and a bare name is only accepted when nothing contests it.
+func (r *Reader) Services() []docker.Service {
+	out := make([]docker.Service, 0, len(r.services))
 	for svc := range r.services {
 		out = append(out, svc)
 	}
@@ -114,12 +112,12 @@ func (r *Reader) Services() []string {
 // or "" when nothing running answers to it. It is what lets one selector narrow
 // both halves of the listing: the Exchanges a service served, and the Incidents
 // the runtime declared about it.
-func (r *Reader) ServiceOfBackend(backend string) string {
+func (r *Reader) ServiceOfBackend(backend string) docker.Service {
 	c, ok := r.byName[backendName(backend)]
 	if !ok {
 		return ""
 	}
-	return serviceKey(c)
+	return docker.ServiceKey(c)
 }
 
 // backendName is the container or service a backend address names. The address
@@ -128,14 +126,6 @@ func (r *Reader) ServiceOfBackend(backend string) string {
 func backendName(backend string) string {
 	name, _, _ := strings.Cut(backend, ":")
 	return name
-}
-
-// serviceKey names the service a container belongs to. It is docker.ServiceKey
-// so that a replica count, an Incident and a --service selector all name one
-// service the same way — the watcher sees only an event's labels and this sees a
-// container listing, and the two must agree.
-func serviceKey(c container.Summary) string {
-	return docker.ServiceKey(c)
 }
 
 // Access reads the Access records Traefik logged since t. Traefik's operational
@@ -245,7 +235,7 @@ func (r *Reader) quote(ctx context.Context, e inspect.Exchange, limit int) Trans
 	}
 
 	from, to := window(e)
-	return r.readInto(ctx, Transcript{Container: name, Replicas: r.replicas[serviceKey(c)]},
+	return r.readInto(ctx, Transcript{Container: name, Replicas: r.replicas[docker.ServiceKey(c)]},
 		c, from, to, limit, "while this request was live")
 }
 
@@ -271,19 +261,18 @@ func (r *Reader) readInto(ctx context.Context, tr Transcript, c container.Summar
 // from one that has said nothing at all — the second is a fact about the
 // project, and a fixable one.
 func (r *Reader) explainSilence(ctx context.Context, c container.Summary, name, window string) string {
-	// One line answers it. Reading a container's whole history to choose between
-	// two wordings would pull an uncapped project log into memory — the compose
-	// logging anchor bounds proximo's own containers, not a developer's.
-	raw, err := r.readTail(ctx, c)
-	if err != nil {
-		// Nothing was learned. Report only what was: it was quiet in this window.
-		// Saying it logs elsewhere would send a developer to fix a logger that is
-		// fine, which is the third silence wearing the second one's words.
-		return name + " wrote nothing " + window
-	}
-	if len(splitLines(raw)) == 0 {
+	// One line answers it, and it is the same one-line read a Reading takes.
+	// Reading a container's whole history to choose between two wordings would
+	// pull an uncapped project log into memory — the compose logging anchor
+	// bounds proximo's own containers, not a developer's.
+	_, wrote, err := r.lastWrote(ctx, c)
+	if err == nil && !wrote {
 		return name + " has written nothing at all since it started, so it probably logs elsewhere — to a file inside the container, or to a collector. Only what a container writes to stdout or stderr can be quoted here."
 	}
+	// Either it has written before, or nothing was learned. Report only what was:
+	// it was quiet in this window. Saying it logs elsewhere would send a developer
+	// to fix a logger that is fine, which is the third silence wearing the second
+	// one's words.
 	return name + " wrote nothing " + window
 }
 
@@ -320,7 +309,7 @@ func (r *Reader) QuoteIncident(ctx context.Context, inc docker.Incident, all []d
 	if prev, ok := docker.PreviousIncident(inc, all); ok {
 		from = prev.At
 	}
-	return r.readInto(ctx, Transcript{Container: inc.Container, Replicas: r.replicas[serviceKey(c)]},
+	return r.readInto(ctx, Transcript{Container: inc.Container, Replicas: r.replicas[docker.ServiceKey(c)]},
 		c, from, inc.At.Add(grace), limit, "in the window this Incident closes")
 }
 
@@ -328,7 +317,7 @@ func (r *Reader) QuoteIncident(ctx context.Context, inc docker.Incident, all []d
 // the fallback for a service with no Incident to anchor to: the runtime declared
 // nothing, so the only window left is the one the developer asked for — which is
 // still a window fixed outside the text, never a reading of it.
-func (r *Reader) QuoteService(ctx context.Context, service string, from, to time.Time, limit int) Transcript {
+func (r *Reader) QuoteService(ctx context.Context, service docker.Service, from, to time.Time, limit int) Transcript {
 	c, name, ok := r.containerOfService(service)
 	if !ok {
 		return Transcript{Silence: fmt.Sprintf(
@@ -343,10 +332,10 @@ func (r *Reader) QuoteService(ctx context.Context, service string, from, to time
 // container that exited is not — then the first by name, so two invocations quote
 // the same replica of a scaled service rather than alternating between them. The
 // count rides the Transcript, so which one it is stays visible.
-func (r *Reader) containerOfService(service string) (container.Summary, string, bool) {
+func (r *Reader) containerOfService(service docker.Service) (container.Summary, string, bool) {
 	var pick, stopped string
 	for name, c := range r.byName {
-		if serviceKey(c) != service {
+		if docker.ServiceKey(c) != service {
 			continue
 		}
 		if c.State != container.StateRunning {
@@ -390,12 +379,77 @@ func (r *Reader) hasTTY(ctx context.Context, id string) bool {
 	return tty
 }
 
-// readTail returns the last line a container wrote, at any time. It answers one
-// question only: has this container ever written anything?
-func (r *Reader) readTail(ctx context.Context, c container.Summary) ([]byte, error) {
-	return r.read(ctx, c, client.ContainerLogsOptions{
-		ShowStdout: true, ShowStderr: true, Tail: "1",
+// ReadingOf takes the readings for one Service: two bounded questions — one
+// inspect, one one-line log read — asked only when a listing has nothing else to
+// show, so the cost lands where the silence is. The type is docker.Reading
+// because a reading is what the runtime declares, the same as an Incident; taking
+// it lives here because this is where the container listing and the log stream
+// already are.
+func (r *Reader) ReadingOf(ctx context.Context, service docker.Service) docker.Reading {
+	c, name, ok := r.containerOfService(service)
+	if !ok {
+		return docker.Reading{}
+	}
+	rd := docker.Reading{
+		Container: name,
+		Running:   c.State == container.StateRunning,
+		Replicas:  r.replicas[service],
+	}
+	if res, err := r.d.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{}); err != nil {
+		// Named rather than left as a gap: three of the four readings come from
+		// here, and absent ones presented as measurements are how a working
+		// container reads as an idle one.
+		rd.Unread = append(rd.Unread, fmt.Sprintf("what else the runtime says could not be read (%v)", err))
+	} else {
+		rd.Restarts = res.Container.RestartCount
+		if state := res.Container.State; state != nil {
+			if at, err := time.Parse(time.RFC3339Nano, state.StartedAt); err == nil {
+				rd.Since = at
+			}
+			if state.Health != nil {
+				rd.Health = string(state.Health.Status)
+			}
+		}
+	}
+	switch at, wrote, err := r.lastWrote(ctx, c); {
+	case err != nil:
+		// A stream that cannot be read back is not a stream that said nothing.
+		// Conflating the two is the third silence wearing the second one's words.
+		rd.Unread = append(rd.Unread, fmt.Sprintf("when it last wrote could not be read (%v)", err))
+	case !wrote:
+		rd.WroteNothing = true
+	default:
+		rd.LastWrote = at
+	}
+	return rd
+}
+
+// lastWrote answers three things apart: when the container last wrote, that it
+// has written nothing at all, and that the stream could not be read back. They
+// take a developer to three different places, so they are never collapsed.
+//
+// It reads the timestamp Docker stamps on the line and never the line itself:
+// proximo may remember what the runtime declares, and *when* a stream moved is
+// the runtime's to declare.
+func (r *Reader) lastWrote(ctx context.Context, c container.Summary) (at time.Time, wrote bool, err error) {
+	raw, err := r.read(ctx, c, client.ContainerLogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: "1", Timestamps: true,
 	})
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	lines := splitLines(raw)
+	if len(lines) == 0 {
+		return time.Time{}, false, nil
+	}
+	// It wrote; when is a second question. An unparseable stamp is not a reason
+	// to report silence — the line is there.
+	stamp, _, _ := strings.Cut(lines[len(lines)-1], " ")
+	at, parseErr := time.Parse(time.RFC3339Nano, stamp)
+	if parseErr != nil {
+		return time.Time{}, true, nil
+	}
+	return at, true, nil
 }
 
 // readLogs returns what a container wrote between from and to, either bound

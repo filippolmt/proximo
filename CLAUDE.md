@@ -46,6 +46,7 @@ Architecture lives in `docs/`, never here. Whole picture:
 | What a container wrote during a request, and why proximo stores none of it | [docs/observability.md — Transcripts](docs/observability.md#transcripts--what-the-container-said) |
 | What proximo remembers about a container with no route (Incidents), and the label that makes one known | [docs/observability.md — Incidents](docs/observability.md#incidents--what-the-runtime-declared), [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md) |
 | A container that keeps dying but reports no Incident | [docs/troubleshooting.md — proximo errors reports no Incident](docs/troubleshooting.md#proximo-errors-reports-no-incident) |
+| What proximo answers about a live container that may be stuck, and the conclusion it refuses to draw | [docs/observability.md — Readings](docs/observability.md#readings--what-the-runtime-says-right-now) |
 | Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
 | The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
 | Reading a whole Transcript, the window an Incident fixes, and the `--since` instant | [docs/cli.md — proximo errors transcript](docs/cli.md#proximo-errors-transcript) |
