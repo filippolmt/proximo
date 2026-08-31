@@ -171,15 +171,18 @@ another's only one. Every container proximo knows about produces them, routed or
 not; a container with no Route becomes known by asking to be, and being observed
 is a separate thing from being reachable.
 _Avoid_: error, event, crash, failure, fault
-_Debt_: a container that is alive and doing nothing produces no Incident — a
-worker blocked on a slow query is healthy and silent. proximo answers with the
-**Reading** it can take instead of with nothing, and refuses the conclusion: an
-idle consumer and a stuck one are the same picture from outside the container,
+_Debt_: proximo never deduces that a container is stuck. A worker blocked on a
+slow query is running, healthy and silent; an idle consumer is the same picture,
 and telling them apart needs to know whether work was waiting, which only the
-project knows. Closing that last step needs the project to cooperate, which
+project knows. So proximo answers with the **Reading** it can take and refuses
+the conclusion. The project can still declare it — a healthcheck that fails when
+the worker stops advancing makes Docker say *unhealthy*, and that is an Incident
+like any other — but the judgement is the project's, made in the project's own
+terms, and proximo neither defines that contract nor infers one. What stays
+declared rather than filled is the inference itself: it would need proximo to
+become a dependency of the code it observes, which
 [ADR 0006](docs/adr/0006-the-transcript-is-quoted-never-stored.md) rejected with
-its strongest reason — proximo is a thing you switch on, not a dependency of your
-code — so the gap stays open and stays written down: the failure mode of leaving
+its strongest reason. The gap is written down because the failure mode of leaving
 it implicit is a developer reading proximo's silence as *all fine* when it means
 *I have nothing to say*.
 

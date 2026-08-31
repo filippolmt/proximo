@@ -302,6 +302,49 @@ business. Reporting without concluding is the same stance a Check takes: it
 reports, and never repairs. `--json` carries them under `"reading"` so an agent
 gets the facts without the prose.
 
+### Making "not progressing" an Incident
+
+The project can answer the question proximo cannot, and there is a way to say it
+that costs proximo nothing and your code nothing: **a Docker healthcheck**. Have
+the worker touch a marker whenever it advances, and let the healthcheck fail once
+the marker goes stale.
+
+```yaml
+services:
+  worker:
+    healthcheck:
+      # Healthy while the marker is younger than two minutes — "am I still
+      # advancing?", which is the one question only the project can answer.
+      test: ["CMD-SHELL", "[ $(( $(date +%s) - $(stat -c %Y /tmp/progress) )) -lt 120 ]"]
+      interval: 30s
+    labels:
+      - "proximo.transcript=true"
+```
+
+Docker then declares the container **unhealthy**, and an unhealthy transition *is*
+an [Incident](#incidents--what-the-runtime-declared) — so the window it fixes
+quotes exactly what the worker wrote before it stopped:
+
+```console
+$ proximo errors --service worker
+```
+
+```
+12:28:52  5417e9d05379cb21  shop/worker  turned unhealthy
+  container worker
+  transcript of worker:
+      worker: finished job 41871
+      worker: waiting on a lock that will never come
+      whole transcript — `proximo errors transcript 5417e9d05379cb21`
+```
+
+Nothing about that makes proximo a dependency of your code: the healthcheck is a
+Docker feature, the marker is a file the worker already knows how to touch, and
+proximo neither defines the contract nor reads the marker. It only reports what
+the runtime declared. Remember that unhealthy is held back from the default
+listing, so ask for it with `--service` — and see `stalling` in
+`examples/whoami/docker-compose.yml` for a runnable version.
+
 ## Inspection — what the browser saw
 
 Dozzle and Beszel watch containers. Inspection watches **pages**: label a

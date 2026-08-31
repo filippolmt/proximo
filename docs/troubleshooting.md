@@ -315,15 +315,20 @@ work through these in order:
 3. **Is it still in the window?** `--since` defaults to 15 minutes, and the
    watcher keeps a bounded number of Incidents per service. `proximo up` discards
    them all: they are held in memory.
-4. **Is the container alive and simply stuck?** Then there is no Incident to
-   report, and there never will be: a worker blocked on a slow query is healthy
-   and silent — **no Incident does not mean no problem**. What
-   `proximo errors --service <service>` answers with instead is the
-   [readings](observability.md#readings--what-the-runtime-says-right-now):
-   running since when, what the healthcheck says, how many restarts, and when its
-   output last moved. proximo stops there rather than concluding — an idle
-   consumer and a stuck one produce identical readings — so read the output for
-   the window yourself: `proximo errors transcript --service <service> --since 30m`.
+4. **Is the container alive and simply stuck?** Then it declares no Incident by
+   itself: a worker blocked on a slow query is healthy and silent — **no Incident
+   does not mean no problem**. Two things follow, in this order:
+   - `proximo errors --service <service>` answers with the
+     [readings](observability.md#readings--what-the-runtime-says-right-now) —
+     running since when, what the healthcheck says, how many restarts, when its
+     output last moved — and stops there rather than concluding, because an idle
+     consumer and a stuck one read identically. Read the output for the window
+     yourself: `proximo errors transcript --service <service> --since 30m`.
+   - To make it visible *next time*, give the container a healthcheck that fails
+     when it stops advancing:
+     [making "not progressing" an Incident](observability.md#making-not-progressing-an-incident).
+     Docker then declares it unhealthy, and an unhealthy transition is an
+     Incident whose window quotes exactly what the worker wrote before it stalled.
 
 ## A transcript is empty or says the container is gone
 

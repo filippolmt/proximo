@@ -82,6 +82,13 @@ Two rules before you report anything:
   because only the project knows whether work was waiting. Quote them as facts and
   read the output for the window before concluding:
   `proximo errors transcript --service <service> --since 30m`.
+- **Offer the healthcheck.** To make a stuck worker visible next time, the
+  container needs a healthcheck that fails when it stops advancing — the worker
+  touches a marker on every job, the healthcheck fails once the marker is stale.
+  Docker then says *unhealthy*, which is an Incident, and its window quotes
+  exactly what the worker wrote before it stalled. It is the developer's code to
+  change, so propose it and let them decide; proximo neither defines the contract
+  nor reads the marker.
 
 ## When there is nothing to quote
 

@@ -104,6 +104,16 @@ order, an Incident as a differently-shaped row among the Exchanges.
   leaving it unwritten is the worst option: it lets a developer read proximo's
   silence as *all fine* when it means *I have nothing to say*. Every place an
   Incident is documented says so.
+- **The project can declare it, and that needs nothing new.** A healthcheck that
+  fails when a worker stops advancing makes Docker say *unhealthy*, and an
+  unhealthy transition is already an Incident — so the window it fixes quotes
+  exactly what the worker wrote before it stalled. This is deliberately the whole
+  of the answer: the judgement is the project's, expressed in the project's own
+  terms through a Docker feature, and proximo neither defines the contract nor
+  reads the marker. Nothing is added to proximo, and proximo becomes a dependency
+  of nobody's code. What it costs is that the developer has to write the
+  healthcheck, which is the price of the boundary rather than a gap in it, and
+  the docs point at it from the one place a developer arrives with the question.
 - **A fourth silence.** proximo will report that a worker was OOM-killed at 14:02
   and that it can no longer show what the worker wrote, because the container is
   gone or its log has rotated past that window. That is the declared price of
