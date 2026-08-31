@@ -310,7 +310,13 @@ func (r *Reader) QuoteIncident(ctx context.Context, inc docker.Incident, all []d
 		from = prev.At
 	}
 	return r.readInto(ctx, Transcript{Container: inc.Container, Replicas: r.replicas[docker.ServiceKey(c)]},
-		c, from, inc.At.Add(grace), limit, "in the window this Incident closes")
+		// No grace on the right, where an Exchange's window takes one: everything
+		// a dying container wrote precedes the die event by construction, and both
+		// the log timestamp and the event come from the same daemon rather than
+		// from two clocks. A grace here would quote the *next* lifetime — which
+		// for a worker restarting three times a second is every window quoting
+		// every other, the one failure this window exists to avoid.
+		c, from, inc.At, limit, "in the window this Incident closes")
 }
 
 // QuoteService quotes what a service's container wrote in a plain window. It is

@@ -413,8 +413,38 @@ func TestQuoteIncidentWindowsFromThePreviousIncident(t *testing.T) {
 	if asked.Since != prev.At.UTC().Format(time.RFC3339Nano) {
 		t.Errorf("read from %q, want the previous Incident at %s", asked.Since, prev.At)
 	}
-	if asked.Until != inc.At.Add(time.Second).UTC().Format(time.RFC3339Nano) {
-		t.Errorf("read to %q, want the Incident's instant plus the grace", asked.Until)
+	if asked.Until != inc.At.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read to %q, want the Incident's own instant with no grace", asked.Until)
+	}
+}
+
+// A worker that dies three times in one second is the case an Incident-anchored
+// window exists for: each window must hold one container lifetime, so it ends at
+// its own Incident rather than reaching into the next lifetime's output.
+func TestQuoteIncidentWindowsDoNotOverlapInARestartLoop(t *testing.T) {
+	born := requestAt.Add(-time.Hour)
+	f := &fakeDocker{
+		items: []container.Summary{summary("w1", "shop-worker-1", born, map[string]string{
+			project: "shop", service: "worker",
+		})},
+		logs: map[string]string{"w1": "attempt\n"},
+	}
+	r, _ := NewReader(context.Background(), f)
+	first := docker.Incident{ID: "a", Service: "shop/worker", Container: "shop-worker-1", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+	second := docker.Incident{ID: "b", Service: "shop/worker", Container: "shop-worker-1", At: requestAt.Add(200 * time.Millisecond), Kind: docker.IncidentExited, ExitCode: 1}
+	other := docker.Incident{ID: "c", Service: "shop/db", Container: "shop-db-1", At: requestAt.Add(50 * time.Millisecond), Kind: docker.IncidentRestarted}
+
+	all := []docker.Incident{first, second, other}
+
+	r.QuoteIncident(context.Background(), first, all, DefaultLimit)
+	if got, want := f.asked["w1"].Until, first.At.UTC().Format(time.RFC3339Nano); got != want {
+		t.Errorf("read to %q, want %q — 200ms later the next lifetime is already writing", got, want)
+	}
+	// And the next window starts where this one ended, so the two are disjoint.
+	r.QuoteIncident(context.Background(), second, all, DefaultLimit)
+	asked := f.asked["w1"]
+	if asked.Since != first.At.UTC().Format(time.RFC3339Nano) || asked.Until != second.At.UTC().Format(time.RFC3339Nano) {
+		t.Errorf("read %s → %s, want %s → %s", asked.Since, asked.Until, first.At, second.At)
 	}
 }
 
