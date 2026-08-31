@@ -271,30 +271,48 @@ func (s *Store) List(q Query) []Exchange {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	all := make([]Exchange, 0, len(s.items))
+	for _, e := range s.items {
+		item := *e
+		item.HasSnapshot = len(e.Snapshot) > 0
+		item.Snapshot = nil
+		all = append(all, item)
+	}
 	var cutoff time.Time
 	if q.Since > 0 {
 		cutoff = time.Now().Add(-q.Since)
 	}
+	return Select(all, q.Host, cutoff, q.Limit, q.OnlyProblems)
+}
 
-	out := make([]Exchange, 0, len(s.items))
-	for _, e := range s.items {
-		if q.Host != "" && e.Host != q.Host {
+// Select narrows a listing of Exchanges, most recently active first. The Store
+// and the CLI both need it — the CLI's listing is merged from two sources, so it
+// cannot ask the Store to narrow it — and they must narrow it the same way, or
+// the same flags mean two different things depending on where an Exchange came
+// from.
+//
+// The window and the order follow Activity, never the request instant: a page
+// served ten minutes ago that threw a moment ago is fresher news than a request
+// served since. Windowing by the instant would drop exactly the Client report
+// this exists for, and ordering by it would sink that report below every clean
+// request, where a limit cuts it first.
+func Select(all []Exchange, host string, since time.Time, limit int, onlyProblems bool) []Exchange {
+	out := make([]Exchange, 0, len(all))
+	for _, e := range all {
+		if host != "" && e.Host != host {
 			continue
 		}
-		if !cutoff.IsZero() && e.Activity().Before(cutoff) {
+		if !since.IsZero() && e.Activity().Before(since) {
 			continue
 		}
-		if q.OnlyProblems && !e.Interesting() {
+		if onlyProblems && !e.Interesting() {
 			continue
 		}
-		item := *e
-		item.HasSnapshot = len(e.Snapshot) > 0
-		item.Snapshot = nil
-		out = append(out, item)
+		out = append(out, e)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Activity().After(out[j].Activity()) })
-	if q.Limit > 0 && len(out) > q.Limit {
-		out = out[:q.Limit]
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Activity().After(out[j].Activity()) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }

@@ -35,7 +35,10 @@ type fakeDocker struct {
 	// anyOutput is what an unwindowed read returns: the reader asks a second
 	// time, with no window, to tell "quiet in this window" from "quiet always".
 	anyOutput map[string]string
-	asked     map[string]client.ContainerLogsOptions
+	// tailErr fails only the unwindowed read, leaving the windowed one to
+	// succeed: the two are asked for different reasons and can fail apart.
+	tailErr map[string]error
+	asked   map[string]client.ContainerLogsOptions
 }
 
 func (f *fakeDocker) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
@@ -58,6 +61,9 @@ func (f *fakeDocker) ContainerLogs(_ context.Context, id string, o client.Contai
 	}
 	text := f.logs[id]
 	if o.Since == "" && o.Until == "" {
+		if err := f.tailErr[id]; err != nil {
+			return nil, err
+		}
 		text = f.anyOutput[id]
 	}
 	if f.tty[id] {
@@ -335,5 +341,23 @@ func TestExplainingASilenceReadsOnlyOneLine(t *testing.T) {
 	quote(t, f, exchange("web-1:8080"))
 	if got := f.asked["id-web-1"].Tail; got != "1" {
 		t.Errorf("the unwindowed read asked for Tail %q, want \"1\"", got)
+	}
+}
+
+// The three silences must stay three. A tail read that fails says nothing about
+// whether the container logs elsewhere, and answering as if it did sends a
+// developer to fix a logger that is fine.
+func TestAFailedTailReadIsNotEvidenceOfLoggingElsewhere(t *testing.T) {
+	f := &fakeDocker{
+		items:   []container.Summary{summary("id-web-1", "web-1", requestAt.Add(-time.Hour), nil)},
+		logs:    map[string]string{"id-web-1": ""},
+		tailErr: map[string]error{"id-web-1": errors.New("stream closed")},
+	}
+	got := quote(t, f, exchange("web-1:8080")).Silence
+	if strings.Contains(got, "logs elsewhere") {
+		t.Errorf("Silence = %q, but nothing was learned about where it logs", got)
+	}
+	if !strings.Contains(got, "this request") {
+		t.Errorf("Silence = %q, want the one thing that was observed: it was quiet in this window", got)
 	}
 }

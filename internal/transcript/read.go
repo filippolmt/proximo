@@ -3,11 +3,13 @@ package transcript
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/inspect"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -19,10 +21,6 @@ const (
 	// asking "how many replicas" means the containers of one compose service.
 	composeProjectLabel = "com.docker.compose.project"
 	composeServiceLabel = "com.docker.compose.service"
-
-	// roleLabel names a stack service. Traefik's is where Access records are read
-	// from.
-	roleLabel = "proximo.role"
 
 	// grace widens the window at both ends. A framework writes the line that
 	// matters as it is returning, and Traefik's instant and the container's clock
@@ -75,18 +73,26 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 		for _, n := range c.Names {
 			name := strings.TrimPrefix(n, "/")
 			r.byName[name] = c
-			if c.Labels[roleLabel] != "" {
+			if c.Labels[docker.RoleLabel] != "" {
 				r.stackAddrs[name] = true
 			}
 		}
 		if key := serviceKey(c); key != "" {
 			r.replicas[key]++
 		}
-		if c.Labels[roleLabel] != "" && c.Labels[composeServiceLabel] != "" {
+		if c.Labels[docker.RoleLabel] != "" && c.Labels[composeServiceLabel] != "" {
 			r.stackAddrs[c.Labels[composeServiceLabel]] = true
 		}
 	}
 	return r, nil
+}
+
+// backendName is the container or service a backend address names. The address
+// is `host:port` because that is the form Traefik logs a server in; the port is
+// never what a Transcript is looked up by.
+func backendName(backend string) string {
+	name, _, _ := strings.Cut(backend, ":")
+	return name
 }
 
 func serviceKey(c container.Summary) string {
@@ -103,7 +109,7 @@ func serviceKey(c container.Summary) string {
 func (r *Reader) Access(ctx context.Context, since time.Time) ([]inspect.Exchange, error) {
 	traefik, ok := r.stackContainer("traefik")
 	if !ok {
-		return nil, fmt.Errorf("the stack's Traefik is not running, so no Access record can be read (`proximo up`)")
+		return nil, errors.New("the stack's Traefik is not running, so no Access record can be read — `proximo doctor` reports which stack services are missing, with the Remedy")
 	}
 	raw, err := r.readLogs(ctx, traefik, since, time.Time{})
 	if err != nil {
@@ -120,7 +126,7 @@ func (r *Reader) Access(ctx context.Context, since time.Time) ([]inspect.Exchang
 
 func (r *Reader) stackContainer(role string) (container.Summary, bool) {
 	for _, c := range r.byName {
-		if c.Labels[roleLabel] == role {
+		if c.Labels[docker.RoleLabel] == role {
 			return c, true
 		}
 	}
@@ -188,7 +194,7 @@ func (r *Reader) quote(ctx context.Context, e inspect.Exchange, limit int) Trans
 		// the stack's version here would send a developer after the wrong thing.
 		return Transcript{Silence: "no route matched this host, so no container served it and there is nothing to quote — `proximo status` lists the hosts that are routed"}
 	}
-	name, _, _ := strings.Cut(e.Backend, ":")
+	name := backendName(e.Backend)
 	c, ok := r.byName[name]
 	if !ok {
 		return Transcript{Container: name, Silence: fmt.Sprintf(
@@ -227,7 +233,13 @@ func (r *Reader) explainSilence(ctx context.Context, c container.Summary, name s
 	// two wordings would pull an uncapped project log into memory — the compose
 	// logging anchor bounds proximo's own containers, not a developer's.
 	raw, err := r.readTail(ctx, c)
-	if err != nil || len(splitLines(raw)) == 0 {
+	if err != nil {
+		// Nothing was learned. Report only what was: it was quiet in this window.
+		// Saying it logs elsewhere would send a developer to fix a logger that is
+		// fine, which is the third silence wearing the second one's words.
+		return name + " wrote nothing while this request was live"
+	}
+	if len(splitLines(raw)) == 0 {
 		return name + " has written nothing at all since it started, so it probably logs elsewhere — to a file inside the container, or to a collector. Only what a container writes to stdout or stderr can be quoted here."
 	}
 	return name + " wrote nothing while this request was live"
@@ -323,6 +335,5 @@ func (r *Reader) servedByTheStack(backend string) bool {
 	if backend == "" {
 		return false
 	}
-	name, _, _ := strings.Cut(backend, ":")
-	return r.stackAddrs[name]
+	return r.stackAddrs[backendName(backend)]
 }

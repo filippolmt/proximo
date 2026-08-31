@@ -217,9 +217,9 @@ func TestListingStatesTheCredentialRiskOnceAndOnlyWhenQuoting(t *testing.T) {
 	}
 }
 
-// TestSelectExchanges: the store narrowed its own listing; a listing merged from
-// two sources has to be narrowed here, by the same rules.
-func TestSelectExchanges(t *testing.T) {
+// TestSelect: the Store and the CLI narrow by one shared rule, because the same
+// flags must not mean two things.
+func TestSelect(t *testing.T) {
 	now := time.Now()
 	all := []inspect.Exchange{
 		{ID: "new-broken", At: now.Add(-time.Minute), Host: "web.test", Status: 500},
@@ -237,24 +237,24 @@ func TestSelectExchanges(t *testing.T) {
 		ID: "late-report", At: now.Add(-time.Hour), Host: "web.test", Status: 200,
 		Reports: []inspect.Report{{At: now, Message: "boom"}},
 	}
-	if got := selectExchanges(append(all, late), "", cutoff, 0, true); !slices.Contains(ids(got), "late-report") {
+	if got := inspect.Select(append(all, late), "", cutoff, 0, true); !slices.Contains(ids(got), "late-report") {
 		t.Errorf("an Exchange that threw inside the window was dropped for having been served before it: %v", ids(got))
 	}
-	if got := selectExchanges(append(all, late), "", cutoff, 1, true); got[0].ID != "late-report" {
+	if got := inspect.Select(append(all, late), "", cutoff, 1, true); got[0].ID != "late-report" {
 		t.Errorf("ordering must follow the most recent activity, got %v", ids(got))
 	}
 
-	got := selectExchanges(all, "web.test", cutoff, 0, true)
+	got := inspect.Select(all, "web.test", cutoff, 0, true)
 	if len(got) != 1 || got[0].ID != "new-broken" {
 		t.Fatalf("host + window + only-problems selected %+v", ids(got))
 	}
 
-	got = selectExchanges(all, "", cutoff, 0, false)
+	got = inspect.Select(all, "", cutoff, 0, false)
 	if len(got) != 3 {
 		t.Errorf("selected %v, want the three inside the window", ids(got))
 	}
 
-	got = selectExchanges(all, "", cutoff, 2, false)
+	got = inspect.Select(all, "", cutoff, 2, false)
 	if len(got) != 2 || got[0].ID != "new-broken" {
 		t.Errorf("--limit must keep the most recent, got %v", ids(got))
 	}

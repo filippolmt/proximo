@@ -381,7 +381,7 @@ hundreds of kilobytes to grep.
 ```sh
 proximo errors transcript 1f0c9a2b3d4e5f60
 proximo errors transcript 1f0c9a2b3d4e5f60 --since 2h
-proximo errors transcript 1f0c9a2b3d4e5f60 -o /tmp/web-1.log
+proximo errors transcript 1f0c9a2b3d4e5f60 -o /tmp/web-1.transcript.txt
 ```
 
 | Flag | Default | Meaning |

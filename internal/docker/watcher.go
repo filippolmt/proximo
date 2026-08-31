@@ -28,7 +28,10 @@ import (
 
 const (
 	// roleLabel marks the proximo stack's own containers.
-	roleLabel = "proximo.role"
+	// RoleLabel names a stack service, and is exported because the host-side CLI
+	// recognises proximo's own containers by it too.
+	RoleLabel = "proximo.role"
+	roleLabel = RoleLabel
 	// enableLabel opts a container in to routing (Traefik's native label).
 	enableLabel = "traefik.enable"
 	// networkLabel disambiguates which network to use for a multi-network

@@ -340,4 +340,10 @@ func accessLogConfigured(mounts []container.MountPoint, read func(string) ([]byt
 
 // accessLogRe matches the access log key at the top level of Traefik's config,
 // so a mention of it in a comment does not count as having it on.
+//
+// ponytail: a regex, not a YAML parse. It reads a file proximo itself
+// materializes, so the only shapes it can meet are the ones this repo ships; it
+// would be fooled by an `accessLog:` nested under another key, or by a hand-
+// edited `accessLog: {}` that turns it off again. Parse the YAML properly if the
+// stack ever mounts a config proximo did not write.
 var accessLogRe = regexp.MustCompile(`(?m)^accessLog:`)

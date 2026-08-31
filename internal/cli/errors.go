@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,8 +67,18 @@ func newErrorsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			exchanges := selectExchanges(
-				r.Merge(logged, hopExchanges(cutoff)), host, cutoff, limit, !all)
+			// The window is every Exchange the sources hold; the listing is the
+			// subset asked for. Overlaps are counted against the window, because
+			// a request that interleaved its lines with this one did so whether or
+			// not the filter kept it.
+			window := r.Merge(logged, hopExchanges(cutoff))
+			exchanges := inspect.Select(window, host, cutoff, limit, !all)
+			quoted := r.Join(cmd.Context(), quotable(exchanges), window, transcript.DefaultLimit)
+
+			// Both notices apply whether the listing is empty or not, and whether
+			// it is read by a person or parsed: an agent asking with --json is the
+			// reader that will never run `proximo doctor` on its own.
+			notes := listingNotes(cmd.Context(), host, len(exchanges) == 0)
 
 			if asJSON {
 				enc := json.NewEncoder(out)
@@ -77,31 +86,21 @@ func newErrorsCmd() *cobra.Command {
 				return enc.Encode(struct {
 					Exchanges   []inspect.Exchange               `json:"exchanges"`
 					Transcripts map[string]transcript.Transcript `json:"transcripts"`
-				}{exchanges, r.Join(cmd.Context(), quotable(exchanges), exchanges, transcript.DefaultLimit)})
+					Notes       []string                         `json:"notes,omitempty"`
+				}{exchanges, quoted, notes})
+			}
+			for _, n := range notes {
+				fmt.Fprintln(out, n)
 			}
 			if len(exchanges) == 0 {
-				// Asked only here, and only when there is nothing to show: it is a
-				// second Docker round trip, and version skew is the one cause of an
-				// empty listing that has nothing to do with the developer's code.
-				// `proximo doctor` reports it for whoever looks before having a
-				// problem; this line answers the agent asking now, which will never
-				// run `proximo doctor` on its own.
-				if on, err := docker.StackRecordsAccessLog(cmd.Context()); err == nil && !on {
-					fmt.Fprintln(out, "This stack records no access log, so no route produces an Exchange — that is why this is empty, and it is version skew rather than an absence of errors. Run `proximo update`.")
-					return nil
-				}
 				writeNothingFound(out, all, host)
 				return nil
-			}
-			if warning := contestedHostWarning(cmd.Context(), host); warning != "" {
-				fmt.Fprintln(out, warning)
 			}
 			show := warnAndAbove
 			if all {
 				show = everything
 			}
-			writeListing(out, exchanges,
-				r.Join(cmd.Context(), quotable(exchanges), exchanges, transcript.DefaultLimit), show)
+			writeListing(out, exchanges, quoted, show)
 			return nil
 		},
 	}
@@ -296,6 +295,12 @@ func quotable(exchanges []inspect.Exchange) []inspect.Exchange {
 // hasSomethingToSay gates the Transcript. Quoting a healthy container's chatter
 // under every clean request buries the one page that broke, which is the failure
 // the default listing already refuses.
+//
+// It is deliberately narrower than Exchange.Interesting(), which also counts
+// Warnings and decides what the listing *shows*. A warning is about the route —
+// proximo relaxed a policy — so the container's output has nothing to add to it,
+// and quoting one there would be output nobody asked for. Widen this only if a
+// warning ever describes something the container itself did.
 func hasSomethingToSay(e inspect.Exchange) bool {
 	return e.Status >= 400 || len(e.Reports) > 0
 }
@@ -317,20 +322,32 @@ func writeTranscript(w io.Writer, e inspect.Exchange, tr transcript.Transcript) 
 		fmt.Fprintf(w, "      (%s)\n", tr.Silence)
 		return
 	}
-	for _, line := range tr.Head {
-		fmt.Fprintf(w, "      %s\n", line)
-	}
-	if tr.Dropped > 0 {
-		fmt.Fprintf(w, "      … %d line(s) elided …\n", tr.Dropped)
-	}
-	for _, line := range tr.Tail {
-		fmt.Fprintf(w, "      %s\n", line)
-	}
+	writeQuotedLines(w, tr, "      ", "… %d line(s) elided …")
 	if tr.Overlap > 0 {
-		fmt.Fprintf(w, "      ⚠ %d other request(s) overlapped this one on %s — these lines are the window, not this request\n",
-			tr.Overlap, tr.Container)
+		fmt.Fprintf(w, "      %s\n", overlapNote(tr))
 	}
 	fmt.Fprintf(w, "      whole transcript — `proximo errors transcript %s`\n", e.ID)
+}
+
+// writeQuotedLines renders the container's own output: the head, the declared
+// elision, then the tail. Both renderings of a Transcript go through here, so
+// the elision can never be declared in one and dropped from the other.
+func writeQuotedLines(w io.Writer, tr transcript.Transcript, indent, elision string) {
+	for _, line := range tr.Head {
+		fmt.Fprintf(w, "%s%s\n", indent, line)
+	}
+	if tr.Dropped > 0 {
+		fmt.Fprintf(w, "%s"+elision+"\n", indent, tr.Dropped)
+	}
+	for _, line := range tr.Tail {
+		fmt.Fprintf(w, "%s%s\n", indent, line)
+	}
+}
+
+// overlapNote is what proximo says instead of attributing a line.
+func overlapNote(tr transcript.Transcript) string {
+	return fmt.Sprintf("%d other request(s) overlapped this one on %s — these lines are the window, not this request",
+		tr.Overlap, tr.Container)
 }
 
 // transcriptHeading names the container quoted and, when the service has more
@@ -347,6 +364,11 @@ func transcriptHeading(tr transcript.Transcript) string {
 	return "transcript of " + tr.Container + ":"
 }
 
+// credentialNotice is what proximo owes in place of redacting: redacting is
+// interpreting, and a redactor covering most patterns produces false confidence
+// exactly where an unrecognised format slips through.
+const credentialNotice = "A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere."
+
 // writeListing renders every Exchange, and states once — never per Exchange —
 // that a Transcript is raw application output. proximo redacts nothing, and
 // saying so is what it owes instead: a redactor covering most patterns produces
@@ -361,7 +383,7 @@ func writeListing(w io.Writer, exchanges []inspect.Exchange, quoted map[string]t
 		}
 	}
 	if anyQuoted {
-		fmt.Fprintln(w, "A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere.")
+		fmt.Fprintln(w, credentialNotice)
 	}
 }
 
@@ -405,36 +427,6 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	return strconv.FormatInt(d.Milliseconds(), 10) + "ms"
-}
-
-// selectExchanges narrows a listing merged from two sources the way the hop's
-// Store narrows its own: the same host, window, only-what-broke and limit rules,
-// applied once over both.
-//
-// The window and the order follow the most recent activity, never the request
-// instant: a page served ten minutes ago that threw a moment ago is fresher news
-// than a request served since. Windowing by the instant would drop exactly the
-// Client report this command exists for, and ordering by it would sink that
-// report below every clean request, where --limit cuts it first.
-func selectExchanges(all []inspect.Exchange, host string, since time.Time, limit int, onlyProblems bool) []inspect.Exchange {
-	out := make([]inspect.Exchange, 0, len(all))
-	for _, e := range all {
-		if host != "" && e.Host != host {
-			continue
-		}
-		if !since.IsZero() && e.Activity().Before(since) {
-			continue
-		}
-		if onlyProblems && !e.Interesting() {
-			continue
-		}
-		out = append(out, e)
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Activity().After(out[j].Activity()) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
 }
 
 // parseSince turns --since into the instant a window starts at. It takes a
@@ -485,6 +477,31 @@ func hopExchanges(since time.Time) []inspect.Exchange {
 		return nil
 	}
 	return out
+}
+
+// listingNotes are the things a listing has to say about itself, whatever it
+// contains and however it is read. Both are causes a listing cannot show on its
+// own, and both matter most when it is empty — which is exactly where they used
+// to be skipped.
+//
+// Neither carries a Remedy. Only a Report does: `proximo doctor` runs the Checks
+// and prints the command, and `proximo errors` is an inventory. Naming the Check
+// is what an agent needs, since a Remedy that changes the host is the
+// developer's to run in any case.
+func listingNotes(ctx context.Context, host string, empty bool) []string {
+	var notes []string
+	if warning := contestedHostWarning(ctx, host); warning != "" {
+		notes = append(notes, warning)
+	}
+	// Asked only when there is nothing to show: it is a Docker round trip, and
+	// version skew is the one cause of an empty listing that has nothing to do
+	// with the developer's code.
+	if empty {
+		if on, err := docker.StackRecordsAccessLog(ctx); err == nil && !on {
+			notes = append(notes, warnPrefix+"This stack records no access log, so no route produces an Exchange. That is why this is empty — version skew, not an absence of errors. `proximo doctor` reports it as a failed Check, with the Remedy.")
+		}
+	}
+	return notes
 }
 
 // contestedHostWarning says when the bare host asked about is one several
@@ -580,22 +597,13 @@ func writeWholeTranscript(w io.Writer, e inspect.Exchange, tr transcript.Transcr
 		e.At.Local().Format("15:04:05"), e.Method, e.Path, formatStatus(e.Status), formatDuration(e.Duration), e.Host)
 	fmt.Fprintf(w, "# %s\n", transcriptHeading(tr))
 	if tr.Overlap > 0 {
-		fmt.Fprintf(w, "# %d other request(s) overlapped this one on %s — these lines are the window, not this request\n",
-			tr.Overlap, tr.Container)
+		fmt.Fprintf(w, "# %s\n", overlapNote(tr))
 	}
-	fmt.Fprintln(w, "# raw application output, quoted with no redaction — it may carry credentials or personal data")
+	fmt.Fprintln(w, "# "+credentialNotice)
 	if tr.Silence != "" {
 		fmt.Fprintf(w, "\n(%s)\n", tr.Silence)
 		return
 	}
 	fmt.Fprintln(w)
-	for _, line := range tr.Head {
-		fmt.Fprintln(w, line)
-	}
-	if tr.Dropped > 0 {
-		fmt.Fprintf(w, "… %d line(s) elided — raise --limit to see them …\n", tr.Dropped)
-	}
-	for _, line := range tr.Tail {
-		fmt.Fprintln(w, line)
-	}
+	writeQuotedLines(w, tr, "", "… %d line(s) elided — raise --limit to see them …")
 }
