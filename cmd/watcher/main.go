@@ -32,7 +32,13 @@ func main() {
 	apiAddr := getenv("PROXIMO_WATCHER_API_ADDR", ":9002")
 	go func() {
 		log.Printf("proximo watcher: Incident read API on %s", apiAddr)
-		log.Fatal(http.ListenAndServe(apiAddr, docker.IncidentAPI{Store: w.Incidents()}))
+		// Not fatal, deliberately: this listener is a diagnostic, and reconciling
+		// routes is what the watcher is for. A port that will not bind costs
+		// `proximo errors` its Incidents — which the CLI reports, with its
+		// Remedy — and must not cost every route its certificate.
+		if err := http.ListenAndServe(apiAddr, docker.IncidentAPI{Store: w.Incidents()}); err != nil {
+			log.Printf("proximo watcher: the Incident read API stopped: %v; routes are unaffected, `proximo errors` will report it", err)
+		}
 	}()
 
 	log.Println("proximo watcher: started")

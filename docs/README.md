@@ -64,6 +64,7 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo up`](cli.md#proximo-up) ·
 [`proximo down`](cli.md#proximo-down) ·
 [`proximo update`](cli.md#proximo-update) ·
+[`proximo trust`](cli.md#proximo-trust) ·
 [`proximo status`](cli.md#proximo-status) ·
 [`proximo doctor`](cli.md#proximo-doctor) ·
 [`proximo errors`](cli.md#proximo-errors) ·
@@ -102,7 +103,12 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo.port` — usually you can omit it](routing.md#proximoport--usually-you-can-omit-it) ·
 [`proximo.enable` — temporary opt-out](routing.md#proximoenable--temporary-opt-out) ·
 [`proximo.redirect` — opt in to the HTTP→HTTPS redirect](routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) ·
+[`proximo.health` — wait for the container to be healthy](routing.md#proximohealth--wait-for-the-container-to-be-healthy) ·
+[`proximo.path` — split one host across containers](routing.md#proximopath--split-one-host-across-containers) ·
+[proximo middlewares — auth, CORS, custom headers](routing.md#proximo-middlewares--auth-cors-custom-headers) ·
 [`proximo.inspect` — see what the browser saw](routing.md#proximoinspect--see-what-the-browser-saw) ·
+[`proximo.tcp.port` — route TCP services by name (SNI)](routing.md#proximotcpport--route-tcp-services-by-name-sni) ·
+[Round-robin across replicas](routing.md#round-robin-across-replicas) ·
 [What happens behind the scenes](routing.md#what-happens-behind-the-scenes) ·
 [Native Traefik labels (backward compatible)](routing.md#native-traefik-labels-backward-compatible) ·
 [Multiple networks](routing.md#multiple-networks) ·
@@ -138,10 +144,12 @@ Why a design is the way it is, and what was rejected on the way.
 [Port 443 or 80 already in use](troubleshooting.md#port-443-or-80-already-in-use) ·
 [macOS UDP forwarding](troubleshooting.md#macos-udp-forwarding) ·
 [Certificate warnings in Firefox or Chrome](troubleshooting.md#certificate-warnings-in-firefox-or-chrome) ·
+[Traefik logs failed to find any PEM data](troubleshooting.md#traefik-logs-failed-to-find-any-pem-data) ·
 [macOS Gatekeeper blocks the binary](troubleshooting.md#macos-gatekeeper-blocks-the-binary) ·
 [Where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings) ·
 [Container not routed](troubleshooting.md#container-not-routed) ·
 [A host collision is reported](troubleshooting.md#a-host-collision-is-reported) ·
+[502/503 right after a container restarts](troubleshooting.md#502503-right-after-a-container-restarts) ·
 [An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
 [proximo errors shows nothing at all](troubleshooting.md#proximo-errors-shows-nothing-at-all) ·
 [proximo errors reports no Incident](troubleshooting.md#proximo-errors-reports-no-incident) ·

@@ -231,6 +231,8 @@ $ proximo errors --since 15m
       … 96 line(s) elided …
       allocating 2.1 GiB for the import batch
       whole transcript — `proximo errors transcript 9b3e1a7c5d2f8e04`
+
+A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere.
 ```
 
 The window a Transcript is cut to runs from the **previous Incident of the same
@@ -339,6 +341,8 @@ $ proximo errors --service worker
       worker: finished job 41871
       worker: waiting on a lock that will never come
       whole transcript — `proximo errors transcript 5417e9d05379cb21`
+
+A transcript is the application's own output, quoted with no redaction: it may carry credentials or personal data. Check before pasting it anywhere.
 ```
 
 Nothing about that makes proximo a dependency of your code: the healthcheck is a

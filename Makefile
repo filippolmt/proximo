@@ -73,7 +73,7 @@ skill-refs:
 ## check-links: validate Markdown links + anchors (lychee, offline — same as CI)
 check-links:
 	docker run --rm -w /input -v "$(CURDIR)":/input $(LYCHEE_IMAGE) \
-		--offline --include-fragments --no-progress README.md CLAUDE.md CONTEXT.md TRANSCRIPT-PLAN.md docs
+		--offline --include-fragments --no-progress README.md CLAUDE.md CONTEXT.md docs
 
 # ---- Lifecycle (host binary; build first so the arch always matches) ----------
 

@@ -52,6 +52,14 @@ To test the DNS server directly, bypassing the host resolver:
 dig @127.0.0.1 -p 5354 whoami.test
 ```
 
+On macOS, a name looked up *before* `proximo install` wired the resolver can sit
+in the system cache as a failure. Flush it and ask again:
+
+```sh
+sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+scutil --dns | grep -A 3 "domain.*test"        # the resolver is in effect
+```
+
 If that answers `127.0.0.1` but the browser still fails, the host resolver is
 the problem — see also
 [VPN or corporate DNS overrides the resolver](#vpn-or-corporate-dns-overrides-the-resolver).
