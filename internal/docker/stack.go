@@ -116,7 +116,8 @@ func Materialize(tld, certDir, image string) (string, error) {
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
 // __DNSPORT__, __DATADIR__ — the absolute host data-dir path, the observability
 // user email, the observability hub port, the Inspection read-API port, the
-// watcher's Incident read-API port, and the canonical stack image) in an embedded asset. It is deterministic
+// watcher's Incident read-API port, and the canonical stack image) in an
+// embedded asset. It is deterministic
 // so the substitution can be unit tested directly; the Materialize WalkDir
 // closure calls it per file. Data with no sentinel is returned unchanged. The
 // observability email is deterministic from the TLD (its canonical form is

@@ -79,10 +79,19 @@ func newErrorsCmd() *cobra.Command {
 			// a request that interleaved its lines with this one did so whether or
 			// not the filter kept it.
 			window := r.Merge(logged, hopExchanges(cutoff))
-			// The second source. Its failure is reported rather than swallowed:
-			// an absent Incident and an unreachable Incident store look the same
-			// from here, and one of them hides a restart-looping worker.
-			listing, incErr := docker.IncidentsFromStack(cmd.Context(), time.Since(cutoff))
+			// The second source, asked for everything it holds rather than for
+			// --since: the left edge of the window an Incident fixes is the
+			// *previous* Incident of that service, which is very often older than
+			// the window being listed. Fetching only --since would leave the
+			// oldest listed Incident with no predecessor and an unbounded left
+			// edge — for a container the restart policy reuses, that quotes every
+			// earlier lifetime, which is the failure the window exists to prevent.
+			// The listing itself is windowed below, by SelectIncidents.
+			//
+			// Its failure is reported rather than swallowed: an absent Incident and
+			// an unreachable Incident store look the same from here, and one of
+			// them hides a restart-looping worker.
+			listing, incErr := docker.IncidentsFromStack(cmd.Context(), 0)
 			var service docker.Service
 			if serviceWant != "" {
 				if service, err = resolveService(serviceWant, r.Services(), listing.Incidents); err != nil {
@@ -115,6 +124,9 @@ func newErrorsCmd() *cobra.Command {
 			// --json is the reader that will never run `proximo doctor` on its own.
 			notes := listingNotes(cmd.Context(), host, len(rows) == 0)
 			if note := incidentsNote(cmd.Context(), incErr); note != "" {
+				notes = append(notes, note)
+			}
+			if note := watcherRestartNote(listing, len(incidents) == 0); note != "" {
 				notes = append(notes, note)
 			}
 			// The readings for a named service, taken only when the listing has
@@ -621,7 +633,11 @@ func newErrorsTranscriptCmd() *cobra.Command {
 			}
 			defer closeDocker()
 
-			incidents, incErr := docker.IncidentsFromStack(cmd.Context(), time.Since(cutoff))
+			// Everything the store holds: an Incident's window is anchored to the
+			// previous one, and an id a developer pasted is worth resolving for as
+			// long as the watcher remembers it — the store's own retention is the
+			// bound, not --since, which windows the Exchange lookup below.
+			incidents, incErr := docker.IncidentsFromStack(cmd.Context(), 0)
 			var b strings.Builder
 
 			if len(args) == 0 {
@@ -666,8 +682,8 @@ func newErrorsTranscriptCmd() *cobra.Command {
 					return fmt.Errorf("no Exchange %s in the window --since %s covers, and the watcher's Incident store could not be asked (%v) — so an Incident id cannot be found either. Run `proximo doctor`",
 						id, since, incErr)
 				}
-				return fmt.Errorf("no Exchange or Incident %s in the window --since %s covers — widen it, or list them again with `proximo errors` (identities are derived, so they are stable across invocations)",
-					id, since)
+				return fmt.Errorf("no Exchange %s in the window --since %s covers, and no Incident %s the watcher still holds — widen the window, or list them again with `proximo errors` (identities are derived, so they are stable across invocations)",
+					id, since, id)
 			}
 
 			tr := r.JoinOne(cmd.Context(), *found, all, limit)

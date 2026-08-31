@@ -338,6 +338,11 @@ func (r *Reader) QuoteService(ctx context.Context, service docker.Service, from,
 // container that exited is not — then the first by name, so two invocations quote
 // the same replica of a scaled service rather than alternating between them. The
 // count rides the Transcript, so which one it is stays visible.
+//
+// ponytail: one replica of a scaled service, ever. A service running three
+// containers has two whose output nothing here reaches, and the Reading counts
+// them without reading them. Quote every replica only if that turns out to be
+// what a developer asks for, and declare which is which when it does.
 func (r *Reader) containerOfService(service docker.Service) (container.Summary, string, bool) {
 	var pick, stopped string
 	for name, c := range r.byName {
@@ -413,7 +418,7 @@ func (r *Reader) ReadingOf(ctx context.Context, service docker.Service) docker.R
 				rd.Since = at
 			}
 			if state.Health != nil {
-				rd.Health = string(state.Health.Status)
+				rd.Healthcheck = string(state.Health.Status)
 			}
 		}
 	}

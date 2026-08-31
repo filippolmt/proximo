@@ -585,8 +585,8 @@ func TestReadingOfTakesEveryReadingWithoutReadingTheLine(t *testing.T) {
 		t.Errorf("reading = %+v, want the running container named", rd)
 	case !rd.Since.Equal(started.Truncate(0)) && rd.Since.Unix() != started.Unix():
 		t.Errorf("Since = %s, want %s — the instant it last started", rd.Since, started)
-	case rd.Health != string(container.Healthy):
-		t.Errorf("Health = %q, want healthy", rd.Health)
+	case rd.Healthcheck != string(container.Healthy):
+		t.Errorf("Healthcheck = %q, want healthy", rd.Healthcheck)
 	case rd.Restarts != 2:
 		t.Errorf("Restarts = %d, want 2", rd.Restarts)
 	case !rd.LastWrote.Equal(wrote.Truncate(0)) && rd.LastWrote.Unix() != wrote.Unix():
@@ -665,7 +665,7 @@ func TestReadingOfNamesWhatTheInspectCouldNotAnswer(t *testing.T) {
 	r, _ := NewReader(context.Background(), f)
 	rd := r.ReadingOf(context.Background(), "shop/worker")
 
-	if rd.Since.IsZero() != true || rd.Health != "" || rd.Restarts != 0 {
+	if rd.Since.IsZero() != true || rd.Healthcheck != "" || rd.Restarts != 0 {
 		t.Errorf("reading = %+v, want no measurements from a failed inspect", rd)
 	}
 	if len(rd.Unread) != 1 || !strings.Contains(rd.Unread[0], "what else the runtime says could not be read") {

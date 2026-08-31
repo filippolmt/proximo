@@ -189,6 +189,8 @@ e2e-incident: build
 	done
 	@$(BIN) errors --json --service worker | grep -q '"exit_code": 1' \
 		|| { echo "FAIL: no Incident for the worker - the watcher did not record the exit"; exit 1; }
+	# 'nil map' is the worker's own panic line in $(DEMO_COMPOSE): if the window
+	# quotes it, the Incident reached the container's output.
 	@echo "==> the Incident's window quotes what the worker wrote"
 	@$(BIN) errors --json --service worker | grep -q 'nil map' \
 		|| { echo "FAIL: the Incident's Transcript does not quote the worker's own line"; exit 1; }

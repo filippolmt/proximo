@@ -112,10 +112,10 @@ type Reading struct {
 	Running   bool   `json:"running"`
 	// Since is when the container last started (not when it was created): for a
 	// worker that has been restarted, the second would overstate its uptime.
-	Since    time.Time `json:"since,omitzero"`
-	Health   string    `json:"health,omitempty"`
-	Restarts int       `json:"restarts,omitempty"`
-	Replicas int       `json:"replicas,omitempty"`
+	Since       time.Time `json:"since,omitzero"`
+	Healthcheck string    `json:"healthcheck,omitempty"`
+	Restarts    int       `json:"restarts,omitempty"`
+	Replicas    int       `json:"replicas,omitempty"`
 
 	// LastWrote is when the container last wrote a line — the instant, never the
 	// line. WroteNothing is set instead when the stream was read and had nothing
@@ -135,7 +135,7 @@ type Reading struct {
 // Service at all.
 func (rd Reading) Empty() bool { return rd.Container == "" }
 
-// Describe renders the readings in one clause per fact, in the order a developer
+// Describe renders the Reading as one clause per fact, in the order a developer
 // checks them. What could not be read is named rather than left as a gap.
 func (rd Reading) Describe() string {
 	var parts []string
@@ -147,8 +147,8 @@ func (rd Reading) Describe() string {
 	default:
 		parts = append(parts, "running for "+time.Since(rd.Since).Round(time.Second).String())
 	}
-	if rd.Health != "" && rd.Health != string(container.NoHealthcheck) {
-		parts = append(parts, "its healthcheck says "+rd.Health)
+	if rd.Healthcheck != "" && rd.Healthcheck != string(container.NoHealthcheck) {
+		parts = append(parts, "its healthcheck says "+rd.Healthcheck)
 	}
 	switch rd.Restarts {
 	case 0:
@@ -160,9 +160,7 @@ func (rd Reading) Describe() string {
 	if rd.Replicas > 1 {
 		parts = append(parts, fmt.Sprintf("%d replicas running", rd.Replicas))
 	}
-	for _, u := range rd.Unread {
-		parts = append(parts, u)
-	}
+	parts = append(parts, rd.Unread...)
 	// The stream clause goes last: it is the one a developer reads for, and the
 	// "and" that introduces it has to end the sentence.
 	switch {
@@ -251,9 +249,11 @@ func (s *IncidentStore) Observe(msg events.Message) (Incident, bool) {
 	switch msg.Action {
 	case events.ActionOOM:
 		// Not an Incident of its own: it is the reason for the exit that follows,
-		// and two rows for one kill is a question rather than information. Any
-		// entry older than the window is dropped on the way in — a kill with no
-		// exit behind it would otherwise sit in the map for the life of the stack.
+		// and two rows for one kill is a question rather than information. Stale
+		// entries are dropped here, as each new oom arrives — so a kill that never
+		// produced an exit (the kernel took a child, not PID 1) is held until the
+		// next oom on any container. One instant per container is the whole cost,
+		// which is why the prune is not chased any harder than that.
 		for id, when := range s.oom {
 			if at.Sub(when) > oomWindow {
 				delete(s.oom, id)
@@ -366,16 +366,20 @@ type IncidentQuery struct {
 // SelectIncidents narrows a listing of Incidents, most recent first — the way
 // inspect.Select narrows Exchanges, and to the same flags.
 func SelectIncidents(all []Incident, q IncidentQuery) []Incident {
+	// One service named explicitly changes two things at once: it is the only
+	// filter that applies, and it holds nothing back. Asked once here rather than
+	// re-tested in every arm below.
+	named := q.Service != ""
 	out := make([]Incident, 0, len(all))
 	for _, inc := range all {
 		switch {
-		case q.Service != "" && inc.Service != q.Service:
+		case named && inc.Service != q.Service:
 			continue
-		case q.Service == "" && q.Services != nil && !q.Services[inc.Service]:
+		case !named && q.Services != nil && !q.Services[inc.Service]:
 			continue
 		case !q.Since.IsZero() && inc.At.Before(q.Since):
 			continue
-		case q.OnlyProblems && q.Service == "" && !inc.Interesting():
+		case !named && q.OnlyProblems && !inc.Interesting():
 			continue
 		}
 		out = append(out, inc)

@@ -191,6 +191,11 @@ services:
       - "proximo.transcript=true"
 ```
 
+`proximo.transcript` is listed with proximo's other labels in
+[the label table](routing.md#the-proximo-labels), where it is the one entry that
+publishes no route: `proximo.hosts` says how a container is reached, this says it
+can be quoted. Two independent axes.
+
 Four things are Incidents, and that is the whole list:
 
 | Incident | Where it comes from | In the default listing |

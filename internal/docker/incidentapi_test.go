@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -80,5 +81,17 @@ func TestIncidentAPIAbsentIsAskedOfTheErrorNotItsText(t *testing.T) {
 	}
 	if incidentAPIAbsent(errors.New("the watcher's Incident API returned 500 Internal Server Error")) {
 		t.Error("prose must not decide this — the error's own type does")
+	}
+}
+
+// Zero means "everything the store holds", and the CLI depends on it: the left
+// edge of the window an Incident fixes is the previous Incident of that service,
+// which is routinely older than the --since being listed.
+func TestIncidentAPIURLAsksForEverythingOnZero(t *testing.T) {
+	if got := incidentAPIURL(0); strings.Contains(got, "since") {
+		t.Errorf("incidentAPIURL(0) = %q, want no window: an anchor older than --since must still come back", got)
+	}
+	if got := incidentAPIURL(5 * time.Minute); !strings.HasSuffix(got, "?since=5m0s") {
+		t.Errorf("incidentAPIURL(5m) = %q, want the window in the query", got)
 	}
 }

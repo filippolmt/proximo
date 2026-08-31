@@ -65,6 +65,10 @@ compiler will not enforce:
   read; the per-service retention and the derived id):
   [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md),
   `internal/docker/incident.go`
+- Adding a `##` section to a guide in `docs/`: add its row to
+  [docs/README.md](docs/README.md), the canonical section map —
+  `internal/skill/docsindex_test.go` asserts both directions and fails the build
+  otherwise
 - The published Skill: its source is `skills/proximo/`, its `references/` are
   generated from `docs/` (`make skill-refs`, checked in CI), and no link out of
   it may be repository-relative:

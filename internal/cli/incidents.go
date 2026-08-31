@@ -174,6 +174,22 @@ func incidentsNoteFor(stackDown bool) string {
 	return warnPrefix + "This stack records no Incident, so nothing here can say whether a container exited, restarted or was OOM-killed — version skew, not an absence of Incidents. Run `proximo update` (`proximo doctor` reports it as a failed Check too)."
 }
 
+// watcherRestartNote is what an empty Incident listing owes: the store lives in
+// the watcher's memory, so "nothing happened" and "it was all thrown away" are
+// two very different answers and look identical from the output. The hop's
+// listing already says this for Client reports; the same is true here, and
+// `proximo up` is an easy thing to have done by accident.
+func watcherRestartNote(listing docker.IncidentListing, empty bool) string {
+	if !empty || listing.Started.IsZero() {
+		return ""
+	}
+	if uptime := time.Since(listing.Started); uptime < 10*time.Minute {
+		return fmt.Sprintf("%sNo Incident, and the watcher restarted %s ago — the Incidents it held were in memory only. Anything the runtime declared before that is gone.",
+			warnPrefix, uptime.Round(time.Second))
+	}
+	return ""
+}
+
 // writeReading is what proximo says instead of nothing when a service produced
 // neither an Exchange nor an Incident: the Reading it can take, and a refusal to
 // draw the conclusion from it.

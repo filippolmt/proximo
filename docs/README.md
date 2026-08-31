@@ -10,7 +10,9 @@ map** of it — every `##` section of every guide is linked below.
 
 > **Editors:** GitHub anchors are generated from headings, so **renaming a
 > heading breaks links** — and when you add a `##` section to a guide, add it
-> to this map. CI link-checks every anchor.
+> to this map. Both directions are a test, not a habit:
+> `internal/skill/docsindex_test.go` fails when a section is missing from this
+> map or this map links a heading that is gone. CI link-checks every anchor too.
 
 | Guide | Type | What it covers |
 | --- | --- | --- |
@@ -170,6 +172,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Version and image ref](development.md#version-and-image-ref) ·
 [Embedded stack assets](development.md#embedded-stack-assets) ·
 [The published skill (`skills/`)](development.md#the-published-skill-skills) ·
+[The docs section map](development.md#the-docs-section-map) ·
 [The injected agent](development.md#the-injected-agent) ·
 [Releases](development.md#releases)
 

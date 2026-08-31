@@ -109,6 +109,11 @@ func StackRecordsIncidents(ctx context.Context) (bool, error) {
 // It is asked of the error's own type rather than of its text: proximo does not
 // pattern-match prose written for a person, here any more than it does for a
 // Collision.
+//
+// ponytail: one errno. A stack whose watcher is up but wedged answers neither
+// "absent" nor "present" — the dial times out, which stays an error and reports
+// as one. Widen this only if a wedged watcher turns out to be common, and give it
+// its own wording rather than folding it in here.
 func incidentAPIAbsent(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
 }

@@ -128,10 +128,10 @@ func TestReadingReportsAndRefusesToJudge(t *testing.T) {
 	var b strings.Builder
 	writeReading(&b, docker.Reading{
 		Container: "shop-worker-1", Running: true,
-		Since:     time.Now().Add(-3 * time.Hour),
-		Health:    "healthy",
-		Restarts:  2,
-		LastWrote: time.Now().Add(-14 * time.Minute),
+		Since:       time.Now().Add(-3 * time.Hour),
+		Healthcheck: "healthy",
+		Restarts:    2,
+		LastWrote:   time.Now().Add(-14 * time.Minute),
 	})
 	out := b.String()
 	for _, want := range []string{"shop-worker-1", "running for 3h0m0s", "healthy", "restarted 2 times", "and it last wrote 14m0s ago"} {
@@ -178,5 +178,29 @@ func TestReadingEndsOnTheStreamClause(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("Describe() = %q, missing %q", got, want)
 		}
+	}
+}
+
+// The Incident store lives in the watcher's memory, so an empty listing means
+// either that nothing happened or that a restart threw it away. `proximo up` is
+// an easy thing to have done by accident, so the two are told apart.
+func TestWatcherRestartNoteTellsAnEmptyListingApart(t *testing.T) {
+	fresh := docker.IncidentListing{Started: time.Now().Add(-30 * time.Second)}
+	got := watcherRestartNote(fresh, true)
+	if !strings.Contains(got, "the watcher restarted") || !strings.Contains(got, "in memory only") {
+		t.Errorf("note = %q, want the restart named as the reason the listing is empty", got)
+	}
+	// Not when there is something to show: the listing speaks for itself.
+	if note := watcherRestartNote(fresh, false); note != "" {
+		t.Errorf("note = %q, want nothing when the listing is not empty", note)
+	}
+	// Nor for a watcher that has been up a while: then empty means empty.
+	old := docker.IncidentListing{Started: time.Now().Add(-3 * time.Hour)}
+	if note := watcherRestartNote(old, true); note != "" {
+		t.Errorf("note = %q, want nothing when no restart can explain it", note)
+	}
+	// And nothing to say when the store never answered.
+	if note := watcherRestartNote(docker.IncidentListing{}, true); note != "" {
+		t.Errorf("note = %q, want nothing when there is no start instant", note)
 	}
 }
