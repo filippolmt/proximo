@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +55,10 @@ type Reader struct {
 	// replicas counts the containers of each compose service, keyed the way
 	// serviceKey keys them.
 	replicas map[string]int
+	// stackAddrs are the names proximo's own services answer to. Traefik points
+	// an inspected route at the hop by its compose *service* name, while a
+	// project's backend is a container name, so both forms have to be recognised.
+	stackAddrs map[string]bool
 }
 
 // NewReader lists the containers a join resolves against.
@@ -64,13 +67,23 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Reader{d: d, byName: map[string]container.Summary{}, replicas: map[string]int{}, tty: map[string]bool{}}
+	r := &Reader{
+		d: d, byName: map[string]container.Summary{}, replicas: map[string]int{},
+		tty: map[string]bool{}, stackAddrs: map[string]bool{},
+	}
 	for _, c := range res.Items {
 		for _, n := range c.Names {
-			r.byName[strings.TrimPrefix(n, "/")] = c
+			name := strings.TrimPrefix(n, "/")
+			r.byName[name] = c
+			if c.Labels[roleLabel] != "" {
+				r.stackAddrs[name] = true
+			}
 		}
 		if key := serviceKey(c); key != "" {
 			r.replicas[key]++
+		}
+		if c.Labels[roleLabel] != "" && c.Labels[composeServiceLabel] != "" {
+			r.stackAddrs[c.Labels[composeServiceLabel]] = true
 		}
 	}
 	return r, nil
@@ -169,7 +182,11 @@ func window(e inspect.Exchange) (from, to time.Time) {
 // served yields a named silence rather than another container's output.
 func (r *Reader) quote(ctx context.Context, e inspect.Exchange, limit int) Transcript {
 	if e.Backend == "" {
-		return Transcript{Silence: "this Exchange records no backend, so there is nothing to read it back from — the stack that served it predates Transcripts (`proximo update`)"}
+		// Traefik logs an access line for a request no router matched, and for
+		// its own dashboard: both name no server. Nothing was served, so there is
+		// no container whose output could be quoted — and saying anything about
+		// the stack's version here would send a developer after the wrong thing.
+		return Transcript{Silence: "no route matched this host, so no container served it and there is nothing to quote — `proximo status` lists the hosts that are routed"}
 	}
 	name, _, _ := strings.Cut(e.Backend, ":")
 	c, ok := r.byName[name]
@@ -206,7 +223,10 @@ func (r *Reader) quote(ctx context.Context, e inspect.Exchange, limit int) Trans
 // from one that has said nothing at all — the second is a fact about the
 // project, and a fixable one.
 func (r *Reader) explainSilence(ctx context.Context, c container.Summary, name string) string {
-	raw, err := r.readLogs(ctx, c, time.Time{}, time.Time{})
+	// One line answers it. Reading a container's whole history to choose between
+	// two wordings would pull an uncapped project log into memory — the compose
+	// logging anchor bounds proximo's own containers, not a developer's.
+	raw, err := r.readTail(ctx, c)
 	if err != nil || len(splitLines(raw)) == 0 {
 		return name + " has written nothing at all since it started, so it probably logs elsewhere — to a file inside the container, or to a collector. Only what a container writes to stdout or stderr can be quoted here."
 	}
@@ -226,6 +246,14 @@ func (r *Reader) hasTTY(ctx context.Context, id string) bool {
 	return tty
 }
 
+// readTail returns the last line a container wrote, at any time. It answers one
+// question only: has this container ever written anything?
+func (r *Reader) readTail(ctx context.Context, c container.Summary) ([]byte, error) {
+	return r.read(ctx, c, client.ContainerLogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: "1",
+	})
+}
+
 // readLogs returns what a container wrote between from and to, either bound
 // left zero for unbounded. Both streams are read: a stack trace goes to stderr
 // and a request log to stdout, and the one being looked for is whichever the
@@ -238,6 +266,12 @@ func (r *Reader) readLogs(ctx context.Context, c container.Summary, from, to tim
 	if !to.IsZero() {
 		opts.Until = to.UTC().Format(time.RFC3339Nano)
 	}
+	return r.read(ctx, c, opts)
+}
+
+// read runs one log request and returns the bytes, demultiplexed when the
+// container's stream is framed.
+func (r *Reader) read(ctx context.Context, c container.Summary, opts client.ContainerLogsOptions) ([]byte, error) {
 	stream, err := r.d.ContainerLogs(ctx, c.ID, opts)
 	if err != nil {
 		return nil, err
@@ -259,8 +293,10 @@ func (r *Reader) readLogs(ctx context.Context, c container.Summary, from, to tim
 	return out.Bytes(), nil
 }
 
-// Merge folds the Exchanges the hop recorded into the ones Traefik logged, most
-// recent first.
+// Merge folds the Exchanges the hop recorded into the ones Traefik logged.
+// Ordering is the caller's: it follows the most recent activity rather than the
+// request instant, which is a rule about how a listing is read, not about how
+// two sources are joined.
 //
 // A request to an inspected route appears in both sources, and the hop's copy is
 // the one to keep: it names the container behind the hop rather than the hop
@@ -276,18 +312,17 @@ func (r *Reader) Merge(logged, inspected []inspect.Exchange) []inspect.Exchange 
 		}
 		out = append(out, e)
 	}
-	out = append(out, inspected...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
-	return out
+	return append(out, inspected...)
 }
 
 // servedByTheStack reports whether a backend address names one of proximo's own
-// containers — the hop, for an inspected route.
+// services — the hop, for an inspected route. It matches a compose service name
+// as well as a container name: the watcher addresses the hop as `inspector`,
+// which is what Traefik then logs, while a project's backend is a container name.
 func (r *Reader) servedByTheStack(backend string) bool {
 	if backend == "" {
 		return false
 	}
 	name, _, _ := strings.Cut(backend, ":")
-	c, ok := r.byName[name]
-	return ok && c.Labels[roleLabel] != ""
+	return r.stackAddrs[name]
 }

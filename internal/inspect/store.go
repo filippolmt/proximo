@@ -252,10 +252,11 @@ func (e Exchange) Interesting() bool {
 	return len(e.Reports) > 0 || len(e.Warnings) > 0 || e.Status >= 400
 }
 
-// activity is when something last happened on an Exchange. A page served ten
+// Activity is when something last happened on an Exchange. A page served ten
 // minutes ago that threw just now is fresher news than a request served since,
-// so ordering by the Exchange alone would sink it.
-func (e *Exchange) activity() time.Time {
+// so ordering by the Exchange alone would sink it — and windowing by it alone
+// would drop it.
+func (e Exchange) Activity() time.Time {
 	at := e.At
 	for _, r := range e.Reports {
 		if r.At.After(at) {
@@ -280,7 +281,7 @@ func (s *Store) List(q Query) []Exchange {
 		if q.Host != "" && e.Host != q.Host {
 			continue
 		}
-		if !cutoff.IsZero() && e.activity().Before(cutoff) {
+		if !cutoff.IsZero() && e.Activity().Before(cutoff) {
 			continue
 		}
 		if q.OnlyProblems && !e.Interesting() {
@@ -291,7 +292,7 @@ func (s *Store) List(q Query) []Exchange {
 		item.Snapshot = nil
 		out = append(out, item)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].activity().After(out[j].activity()) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Activity().After(out[j].Activity()) })
 	if q.Limit > 0 && len(out) > q.Limit {
 		out = out[:q.Limit]
 	}

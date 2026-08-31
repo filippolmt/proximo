@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -221,12 +222,27 @@ func TestListingStatesTheCredentialRiskOnceAndOnlyWhenQuoting(t *testing.T) {
 func TestSelectExchanges(t *testing.T) {
 	now := time.Now()
 	all := []inspect.Exchange{
-		{ID: "new-broken", At: now, Host: "web.test", Status: 500},
-		{ID: "new-clean", At: now.Add(-time.Minute), Host: "web.test", Status: 200},
-		{ID: "other-host", At: now.Add(-2 * time.Minute), Host: "api.test", Status: 500},
+		{ID: "new-broken", At: now.Add(-time.Minute), Host: "web.test", Status: 500},
+		{ID: "new-clean", At: now.Add(-2 * time.Minute), Host: "web.test", Status: 200},
+		{ID: "other-host", At: now.Add(-3 * time.Minute), Host: "api.test", Status: 500},
 		{ID: "too-old", At: now.Add(-time.Hour), Host: "web.test", Status: 500},
 	}
 	cutoff := now.Add(-15 * time.Minute)
+
+	// A page served an hour ago that threw a moment ago is fresher news than a
+	// request served since. The hop's Store orders and windows by that rule, and
+	// re-filtering the merged listing by the request instant alone would drop the
+	// one Client report this tool exists for.
+	late := inspect.Exchange{
+		ID: "late-report", At: now.Add(-time.Hour), Host: "web.test", Status: 200,
+		Reports: []inspect.Report{{At: now, Message: "boom"}},
+	}
+	if got := selectExchanges(append(all, late), "", cutoff, 0, true); !slices.Contains(ids(got), "late-report") {
+		t.Errorf("an Exchange that threw inside the window was dropped for having been served before it: %v", ids(got))
+	}
+	if got := selectExchanges(append(all, late), "", cutoff, 1, true); got[0].ID != "late-report" {
+		t.Errorf("ordering must follow the most recent activity, got %v", ids(got))
+	}
 
 	got := selectExchanges(all, "web.test", cutoff, 0, true)
 	if len(got) != 1 || got[0].ID != "new-broken" {

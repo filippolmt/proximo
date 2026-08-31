@@ -114,15 +114,19 @@ func takeBack(lines []string, budget int) []string {
 
 // splitLines drops the blank lines a container's output ends with, and the
 // carriage returns a Windows-built image leaves behind. Everything else is
-// quoted exactly as it was written.
+// quoted exactly as it was written — a blank line inside a stack trace is part
+// of the stack trace, and dropping it would be interpreting the text a
+// Transcript exists to quote.
 func splitLines(raw []byte) []string {
-	var out []string
+	out := make([]string, 0, bytes.Count(raw, []byte("\n")))
 	for _, l := range bytes.Split(raw, []byte("\n")) {
-		s := strings.TrimRight(string(l), "\r")
-		if strings.TrimSpace(s) == "" {
-			continue
-		}
-		out = append(out, s)
+		out = append(out, strings.TrimRight(string(l), "\r"))
+	}
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

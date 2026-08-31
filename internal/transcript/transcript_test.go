@@ -86,3 +86,19 @@ func size(tr Transcript) int {
 	}
 	return n
 }
+
+// A blank line inside a stack trace is part of the stack trace. Dropping it
+// would be interpreting the text a Transcript exists to quote — and the count of
+// what was elided would not account for it either.
+func TestCutKeepsBlankLinesInsideTheOutput(t *testing.T) {
+	got := cut([]byte("panic: boom\n\ngoroutine 1 [running]:\n\n\n"), 1<<20)
+	want := []string{"panic: boom", "", "goroutine 1 [running]:"}
+	if len(got.Head) != len(want) {
+		t.Fatalf("Head = %q, want %q", got.Head, want)
+	}
+	for i := range want {
+		if got.Head[i] != want[i] {
+			t.Errorf("Head[%d] = %q, want %q", i, got.Head[i], want[i])
+		}
+	}
+}

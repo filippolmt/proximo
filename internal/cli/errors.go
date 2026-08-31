@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -140,7 +141,9 @@ func newErrorsDOMCmd() *cobra.Command {
 			if out == "" {
 				out = filepath.Join(os.TempDir(), "proximo-dom-"+id+".html")
 			}
-			if err := os.WriteFile(out, body, 0o644); err != nil {
+			// 0600 for the same reason a transcript gets it: a captured DOM holds
+			// whatever the page held, which in development is routinely real data.
+			if err := os.WriteFile(out, body, 0o600); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), out)
@@ -407,13 +410,19 @@ func formatDuration(d time.Duration) string {
 // selectExchanges narrows a listing merged from two sources the way the hop's
 // Store narrows its own: the same host, window, only-what-broke and limit rules,
 // applied once over both.
+//
+// The window and the order follow the most recent activity, never the request
+// instant: a page served ten minutes ago that threw a moment ago is fresher news
+// than a request served since. Windowing by the instant would drop exactly the
+// Client report this command exists for, and ordering by it would sink that
+// report below every clean request, where --limit cuts it first.
 func selectExchanges(all []inspect.Exchange, host string, since time.Time, limit int, onlyProblems bool) []inspect.Exchange {
 	out := make([]inspect.Exchange, 0, len(all))
 	for _, e := range all {
 		if host != "" && e.Host != host {
 			continue
 		}
-		if !since.IsZero() && e.At.Before(since) {
+		if !since.IsZero() && e.Activity().Before(since) {
 			continue
 		}
 		if onlyProblems && !e.Interesting() {
@@ -421,6 +430,7 @@ func selectExchanges(all []inspect.Exchange, host string, since time.Time, limit
 		}
 		out = append(out, e)
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Activity().After(out[j].Activity()) })
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
@@ -462,7 +472,14 @@ func newTranscriptReader(ctx context.Context) (*transcript.Reader, func(), error
 // produces an Access record from Traefik's log, so a hop that is not up costs
 // the Client reports of inspected routes, not the listing.
 func hopExchanges(since time.Time) []inspect.Exchange {
-	q := url.Values{"since": {time.Since(since).String()}, "all": {"1"}}
+	// The hop windows by duration. A --since in the future would invert into a
+	// negative one, which the hop reads as "no bound" — ask for everything and
+	// let selectExchanges apply the real window, which it does by activity anyway.
+	window := time.Since(since)
+	if window < 0 {
+		window = 0
+	}
+	q := url.Values{"since": {window.String()}, "all": {"1"}}
 	var out []inspect.Exchange
 	if err := getJSON("/exchanges?"+q.Encode(), &out); err != nil {
 		return nil
@@ -534,7 +551,7 @@ func newErrorsTranscriptCmd() *cobra.Command {
 				}
 			}
 			if found == nil {
-				return fmt.Errorf("no Exchange %s in the last %s — widen the window with --since, or list them again with `proximo errors` (identities are derived, so they are stable across invocations)",
+				return fmt.Errorf("no Exchange %s in the window --since %s covers — widen it, or list them again with `proximo errors` (identities are derived, so they are stable across invocations)",
 					args[0], since)
 			}
 
@@ -542,7 +559,9 @@ func newErrorsTranscriptCmd() *cobra.Command {
 			var b strings.Builder
 			writeWholeTranscript(&b, *found, tr)
 			if out != "" {
-				return os.WriteFile(out, []byte(b.String()), 0o644)
+				// 0600: this is the project's own output, and the command's own
+				// help says it may carry credentials.
+				return os.WriteFile(out, []byte(b.String()), 0o600)
 			}
 			_, err = io.WriteString(cmd.OutOrStdout(), b.String())
 			return err

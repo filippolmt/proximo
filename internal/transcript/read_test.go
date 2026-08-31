@@ -210,15 +210,6 @@ func TestQuoteNamesAnUnreadableLogDriver(t *testing.T) {
 	}
 }
 
-// An Exchange the stack recorded before backends were named cannot be joined at
-// all, and says so rather than quoting whatever is at hand.
-func TestQuoteWithoutABackend(t *testing.T) {
-	f := &fakeDocker{items: []container.Summary{summary("id-web-1", "web-1", requestAt.Add(-time.Hour), nil)}}
-	if got := quote(t, f, exchange("")).Silence; got == "" {
-		t.Error("an Exchange with no backend produced a silence with no cause")
-	}
-}
-
 // Two Exchanges of one container whose windows overlap interleave their lines,
 // and a temporal cut cannot tell them apart. Report the overlap; never attribute.
 func TestJoinReportsOverlappingExchanges(t *testing.T) {
@@ -284,7 +275,7 @@ func TestAccessReadsTraefiksLog(t *testing.T) {
 func TestMergePrefersTheHopsCopyOfAnInspectedRequest(t *testing.T) {
 	f := &fakeDocker{items: []container.Summary{
 		summary("id-inspector", "proximo-inspector-1", requestAt.Add(-time.Hour),
-			map[string]string{"proximo.role": "inspector"}),
+			map[string]string{"proximo.role": "inspector", project: "proximo", service: "inspector"}),
 		summary("id-web-1", "web-1", requestAt.Add(-time.Hour), nil),
 	}}
 	r, err := NewReader(t.Context(), f)
@@ -292,8 +283,10 @@ func TestMergePrefersTheHopsCopyOfAnInspectedRequest(t *testing.T) {
 		t.Fatalf("NewReader: %v", err)
 	}
 
-	viaHop := exchange("proximo-inspector-1:8080") // what Traefik logged
-	plain := exchange("web-1:8080")                // a route not under Inspection
+	// What Traefik actually logs for an inspected route: the watcher points the
+	// service at the hop by its compose service name, not by a container name.
+	viaHop := exchange("inspector:9000")
+	plain := exchange("web-1:8080") // a route not under Inspection
 	plain.Host = "api.test"
 	plain.ID = inspect.DeriveID(plain)
 	fromHop := inspect.Exchange{
@@ -307,12 +300,40 @@ func TestMergePrefersTheHopsCopyOfAnInspectedRequest(t *testing.T) {
 		t.Fatalf("merged to %d Exchanges, want 2: %+v", len(got), got)
 	}
 	for _, e := range got {
-		if e.Backend == "proximo-inspector-1:8080" {
+		if e.Backend == "inspector:9000" {
 			t.Error("kept Traefik's view of an inspected request, which names the hop instead of the backend")
 		}
 	}
 	// Most recent first, and the hop's copy — the one with the report — survived.
 	if got[0].ID != "minted01" && got[1].ID != "minted01" {
 		t.Errorf("the hop's Exchange was dropped: %+v", got)
+	}
+}
+
+// Traefik logs an access line for a request no router matched, and for its own
+// dashboard: both name no server. Nothing was served, so there is nothing to
+// quote — and nothing about the stack's version to report either.
+func TestQuoteWithoutABackendBlamesNoRouteNotTheStack(t *testing.T) {
+	f := &fakeDocker{items: []container.Summary{summary("id-web-1", "web-1", requestAt.Add(-time.Hour), nil)}}
+	got := quote(t, f, exchange("")).Silence
+	if !strings.Contains(got, "no route matched") {
+		t.Errorf("Silence = %q, want it to say no route matched", got)
+	}
+	if strings.Contains(got, "proximo update") {
+		t.Errorf("a typo'd host was told the stack is out of date: %q", got)
+	}
+}
+
+// Choosing between two wordings must not pull a container's whole log history
+// into memory: a project's log is not bounded by proximo.
+func TestExplainingASilenceReadsOnlyOneLine(t *testing.T) {
+	f := &fakeDocker{
+		items:     []container.Summary{summary("id-web-1", "web-1", requestAt.Add(-time.Hour), nil)},
+		logs:      map[string]string{"id-web-1": ""},
+		anyOutput: map[string]string{"id-web-1": "listening on :8080\n"},
+	}
+	quote(t, f, exchange("web-1:8080"))
+	if got := f.asked["id-web-1"].Tail; got != "1" {
+		t.Errorf("the unwindowed read asked for Tail %q, want \"1\"", got)
 	}
 }
