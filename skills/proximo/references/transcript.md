@@ -45,15 +45,16 @@ same id across invocations.
 ## When there is nothing to quote
 
 proximo never returns an unexplained silence. Each of these is a different
-answer, and only two of them are about the project's code:
+answer, and they send you to different places:
 
 | What it says | What it means |
 | --- | --- |
+| *no route matched this host* | Nothing served the request, so there is no container to quote. `proximo status` lists the hosts that are routed — the usual cause is a typo in the host, or a container without the labels. |
 | *wrote nothing while this request was live* | The container was up and quiet. Look at the Access record's status instead. |
 | *has written nothing at all since it started, so it probably logs elsewhere* | The application logs to a file inside the container, or to a collector. Only stdout and stderr can be quoted. Point its logger at stdout. |
 | *log driver cannot be read back* | The container runs a driver Docker cannot replay (`syslog`, `fluentd`, `gelf`). |
 | *the container that served this request is gone* | It was stopped or replaced, or the address now answers for a container started after the request. proximo refuses to quote whichever container holds the address now. |
-| *this stack records no access log* | Version skew, not an absence of errors. The Remedy is `proximo update`, and it is the developer's to run. |
+| *this stack records no access log* | Version skew, not an absence of errors: no route produces an Exchange at all. `proximo doctor` reports it as a failed Check and carries the Remedy, which is the developer's to run. |
 
 When a Transcript names a replica count — *1 of 3 replicas* — read "it only
 happens sometimes" as a fact about **that** container before reading it as a
