@@ -1,5 +1,29 @@
 # The licence gaps, and self-hosting on Kubernetes
 
+> **Addendum — this research was overtaken by the decision it fed into.**
+> It is a snapshot of what was known when it was written, kept for its evidence and its
+> reasoning, and it is **not current advice**. Two of its conclusions were reversed:
+>
+> - It argues that the **vendor-managed free tier** is the option to adopt. The team turned out
+>   to be six people rather than five, which converts that tier to a paid plan and puts it
+>   outside constraint 2 on
+>   [#75](https://github.com/filippolmt/proximo/issues/75).
+> - It argues that **self-hosting is impractical**. That was established against one deployment
+>   shape — the team's Kubernetes cluster, whose nodes hold no external addresses — and not
+>   against self-hosting as such. The team self-hosts on a VM, where the relay's STUN endpoint is
+>   directly reachable on UDP/3478.
+>
+> It also records, as its own evidence gap, that "the Self-Hosted EULA does not exclude the
+> open-source Community Edition from its scope". That gap is now closed by the repository's own
+> `LICENSE`, which puts `management/`, `signal/` and `relay/` under **AGPLv3** — a licence that
+> affirms unlimited permission to run the unmodified program and forbids further restrictions on
+> that right. The EULA's thirty-day Proof of Concept clause governs the commercially licensed
+> distribution, not the Community Edition.
+>
+> The decision this research informed, with the full reasoning:
+> [The transport we adopt](https://github.com/filippolmt/proximo/issues/84) — **self-hosted
+> NetBird**.
+
 Research for [issue #86](https://github.com/filippolmt/proximo/issues/86), under the
 constraints charted in [issue #75](https://github.com/filippolmt/proximo/issues/75) and
 following the findings of [issue #76](https://github.com/filippolmt/proximo/issues/76).
