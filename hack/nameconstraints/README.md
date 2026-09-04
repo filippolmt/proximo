@@ -45,21 +45,83 @@ per constraint 7 on the map.
 
 The fixtures land in `proof-out/`, which is **not** committed: `root-key.pem` is a CA key.
 
-## The whole thing, on macOS, in four commands
+## Running the proof on macOS
 
 `run.sh` does the manual half — the fixtures, the two `/etc/hosts` lines, the root going into the
 keychain and into every Firefox profile, and taking all of it back out again. Reversal is the part
 worth automating: the root is a real CA in a real trust store until it is removed.
 
 ```sh
-./hack/nameconstraints/run.sh setup      # mint, and make the names resolve
-./hack/nameconstraints/run.sh serve      # leave running in its own terminal
-# read the three URLs with the root NOT installed — the ordinary first-run state
-./hack/nameconstraints/run.sh trust      # install the root, read them again
-./hack/nameconstraints/run.sh teardown   # remove the root, delete the fixtures
+./hack/nameconstraints/run.sh setup      # mint the fixtures, make the names resolve
+./hack/nameconstraints/run.sh serve      # serve the three leaves in the background
+./hack/nameconstraints/run.sh trust      # install the root into the keychain (and Firefox)
+./hack/nameconstraints/run.sh logs       # what each client did at the TLS layer
+./hack/nameconstraints/run.sh stop       # stop serving
+./hack/nameconstraints/run.sh teardown   # stop, remove the root, delete the fixtures
 ```
 
 Ubuntu is not covered by the script; its four trust stores are below.
+
+### If you are an agent on the macOS host
+
+The whole proof except the Chrome reading can be taken without a browser, because macOS exposes
+its own trust evaluator. Work in this order and do not skip the *before* round — it is what makes
+the *after* round mean anything.
+
+1. `./hack/nameconstraints/run.sh teardown` first, unconditionally. It costs nothing on a clean
+   machine and it clears the one trap this proof has: a server still running from an earlier round
+   serves fixtures a later `setup` has already replaced, so the leaves no longer chain to the
+   installed root and *every* case reads as untrusted.
+2. `./hack/nameconstraints/run.sh setup`, then `serve`. `setup` mints fresh keys and serials, so a
+   trust exception left over from an earlier round cannot apply to these leaves.
+3. **Before installing the root**, record the untrusted baseline — the ordinary first-run state a
+   colleague sees, which the documented limits have to describe:
+
+   ```sh
+   security verify-cert -c proof-out/in-subtree.pem -c proof-out/int.pem -p ssl -s app.machine-a.mesh.internal
+   ```
+
+   Expect a failure naming an untrusted root. If this *succeeds*, stop: a stale anchor or a trust
+   exception is still in the keychain, and nothing measured afterwards is a reading.
+4. `./hack/nameconstraints/run.sh trust`, then evaluate all three cases against the system trust
+   store. `security verify-cert` calls the same evaluator Safari does:
+
+   ```sh
+   security verify-cert -c proof-out/in-subtree.pem -c proof-out/int.pem -p ssl -s app.machine-a.mesh.internal
+   security verify-cert -c proof-out/dns-out.pem    -c proof-out/int.pem -p ssl -s out-of-subtree.example.com
+   security verify-cert -c proof-out/ip-san.pem     -c proof-out/int.pem -p ssl -s 127.0.0.1
+   ```
+
+   The amendment predicts the first succeeds and the other two fail. Record the **exact** output of
+   each, success and failure alike. A platform that rejects `dns-out` and silently accepts `ip-san`
+   has not demonstrated the amendment: it is the IP case that proves the explicit exclusions work.
+
+   These commands were written from the `security(1)` interface and have not been run — this
+   repository's Go work happens in a Linux container, which has no Apple evaluator. Treat an
+   unexpected *invocation* error as a command to fix, and an unexpected *verdict* as the finding.
+5. Chrome needs Chrome, and its verdict is not Apple's: since M105 Chrome on macOS verifies with
+   its own code, querying the platform store only for user-added anchors. Check
+   `chrome://version` (must be ≥ 126, since the `EnforceLocalAnchorConstraintsEnabled` policy
+   could disable enforcement until it was removed in 126) and `chrome://policy` (that policy must
+   be unset), then open the three URLs `serve` printed.
+
+   **Do not click through a warning**, and do not ask anyone else to: Safari stores a click-through
+   as a trust exception for that certificate, and Chrome remembers a bypass per host — either one
+   turns every later round into a false accept.
+6. `./hack/nameconstraints/run.sh logs` is the reading that does not depend on interpreting a
+   browser's UI. A case the browser refused appears as
+   `http: TLS handshake error from …: remote error: tls: unknown certificate` (or `bad
+   certificate`) — the browser aborted the handshake. A case the browser accepted produces no
+   error line at all, because the handshake completed and the request was served. So
+   `in-subtree` absent from the log while `dns-out` and `ip-san` are present **is** enforcement.
+
+   A served page body is not by itself evidence: it says the handshake completed, not why.
+7. `./hack/nameconstraints/run.sh teardown`. Then confirm the keychain is clean —
+   `security dump-trust-settings` lists user-domain exceptions — and report.
+
+What to report: for each of the three cases, the `security verify-cert` output before and after
+`trust`, the Chrome verdict with its version, and the `logs` excerpt. Exact text, not a summary:
+the error strings are what the documented limits quote.
 
 ## Serve them to the browsers
 
