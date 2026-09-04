@@ -34,3 +34,4 @@ Thumbs.db
 
 # graphify — local-only knowledge graph tooling, never versioned
 graphify-out/
+proof-out/
