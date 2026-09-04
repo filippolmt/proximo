@@ -45,6 +45,22 @@ per constraint 7 on the map.
 
 The fixtures land in `proof-out/`, which is **not** committed: `root-key.pem` is a CA key.
 
+## The whole thing, on macOS, in four commands
+
+`run.sh` does the manual half — the fixtures, the two `/etc/hosts` lines, the root going into the
+keychain and into every Firefox profile, and taking all of it back out again. Reversal is the part
+worth automating: the root is a real CA in a real trust store until it is removed.
+
+```sh
+./hack/nameconstraints/run.sh setup      # mint, and make the names resolve
+./hack/nameconstraints/run.sh serve      # leave running in its own terminal
+# read the three URLs with the root NOT installed — the ordinary first-run state
+./hack/nameconstraints/run.sh trust      # install the root, read them again
+./hack/nameconstraints/run.sh teardown   # remove the root, delete the fixtures
+```
+
+Ubuntu is not covered by the script; its four trust stores are below.
+
 ## Serve them to the browsers
 
 The names must resolve, and the URL host must match the fixture's SAN — otherwise the reading is
