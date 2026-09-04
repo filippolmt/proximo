@@ -4,8 +4,8 @@ go 1.27.0
 
 require (
 	github.com/miekg/dns v1.1.73
-	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.1
+	github.com/moby/moby/api v1.56.0
+	github.com/moby/moby/client v0.6.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.55.0
 )
