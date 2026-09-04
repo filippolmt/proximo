@@ -16,6 +16,7 @@ MARKER=proximo-nc-proof
 KEYCHAIN=/Library/Keychains/System.keychain
 GO_IMAGE=golang:1.27-alpine
 OUT=proof-out
+CONTAINER=proximo-nc-proof
 
 IN_SUBTREE="app.$MACHINE.$SUFFIX"
 DNS_OUT=out-of-subtree.example.com
@@ -29,6 +30,10 @@ esac
 # ever expanded against a quoted prefix — never through a command substitution,
 # which would split "Application Support" in two.
 FF_PROFILES="$HOME/Library/Application Support/Firefox/Profiles"
+
+stop_server() {
+	docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+}
 
 mint() {
 	docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 "$GO_IMAGE" \
@@ -100,11 +105,18 @@ equally well explained by the root not being trusted at all.
 Chrome first: chrome://version must be 126 or newer, and chrome://policy must
 not set EnforceLocalAnchorConstraintsEnabled. Below 126 the reading proves
 nothing.
+
+Do NOT click through a warning. Record what the browser said and close the tab.
+Safari stores a click-through as a trust exception for that certificate, which
+would make the same case read as accepted on every later round.
 TXT
 }
 
 case "${1-}" in
 setup)
+	# New fixtures mean a new root, so anything still serving the old ones would
+	# be answering with certificates the installed root cannot vouch for.
+	stop_server
 	mint
 	hosts_add
 	urls
@@ -118,22 +130,39 @@ trust)
 	urls
 	;;
 serve)
-	docker run --rm -v "$PWD":/src -w /src -e CGO_ENABLED=0 \
+	stop_server
+	docker run -d --name "$CONTAINER" \
+		-v "$PWD":/src -w /src -e CGO_ENABLED=0 \
 		-p 127.0.0.1:8443:8443 -p 127.0.0.1:8444:8444 -p 127.0.0.1:8445:8445 \
-		"$GO_IMAGE" go run ./hack/nameconstraints -serve -out "/src/$OUT"
+		"$GO_IMAGE" go run ./hack/nameconstraints -serve -out "/src/$OUT" >/dev/null
+	echo "serving in the background as $CONTAINER"
+	urls
+	echo
+	echo "  $0 logs      # what each browser did at the TLS layer"
+	echo "  $0 stop      # stop serving"
+	;;
+logs)
+	docker logs -f "$CONTAINER"
+	;;
+stop)
+	stop_server
+	echo "stopped"
 	;;
 teardown)
+	stop_server
 	trust_remove
 	hosts_remove
 	rm -rf "$OUT"
 	echo "done — the root is out of both stores and the fixtures are deleted"
 	;;
 *)
-	echo "usage: $0 setup | serve | trust | teardown" >&2
+	echo "usage: $0 setup | serve | trust | logs | stop | teardown" >&2
 	echo "  setup     mint the fixtures and make the names resolve" >&2
-	echo "  serve     serve the three leaves (leave running in its own terminal)" >&2
+	echo "  serve     serve the three leaves in the background" >&2
 	echo "  trust     install the root into the keychain and Firefox" >&2
-	echo "  teardown  remove the root from both stores and delete the fixtures" >&2
+	echo "  logs      follow the server log" >&2
+	echo "  stop      stop serving" >&2
+	echo "  teardown  stop, remove the root from both stores, delete the fixtures" >&2
 	exit 1
 	;;
 esac
