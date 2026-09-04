@@ -1,6 +1,6 @@
 module github.com/filippolmt/proximo
 
-go 1.27.0
+go 1.27.1
 
 require (
 	github.com/miekg/dns v1.1.73
