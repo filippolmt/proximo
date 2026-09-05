@@ -138,8 +138,8 @@ proximo update --image <ref>      # same escape hatch as `up --image`
   effect, because then the stack is not running the CLI's image.
 - **Never needs sudo**: Docker operations only — no resolver or CA changes.
 - **Soft no-op**: when Docker is unreachable or no stack is running it reports
-  that the update will apply on the next `proximo up` and exits 0. This is what
-  makes it safe in the Homebrew cask's post-install hook.
+  that the update will apply on the next `proximo up` and exits 0, so calling it
+  from automation cannot fail a build.
 - **Prunes nothing**: superseded images stay on disk, so a downgrade is instant.
   `uninstall` removes them.
 - Shares the convergence code path with `proximo up`, so "update now" and

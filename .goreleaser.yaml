@@ -43,7 +43,9 @@ changelog:
       - "^test:"
       - "^chore:"
 
-# Homebrew cask (not the deprecated `brews` formula), macOS-only.
+# Homebrew cask (not the deprecated `brews` formula). GoReleaser emits an
+# `on_linux` url block and no `depends_on macos:`, so Linuxbrew installs it too
+# — every step below that is macOS-only has to say so itself.
 homebrew_casks:
   - name: proximo
     repository:
@@ -54,24 +56,30 @@ homebrew_casks:
     directory: Casks
     homepage: "https://github.com/filippolmt/proximo"
     description: "Local development reverse proxy with automatic DNS and trusted HTTPS"
-    # The stack is no longer built on the host, so the hook below converges it
-    # itself: what used to be heavy work Homebrew discourages is now a pull.
-    # The caveat covers the one case the hook cannot: Docker down at upgrade time.
+    # Converging the stack is the caveat's job, not the cask's: a steps block
+    # runs under a sandbox with a throwaway $HOME, so `proximo update` would
+    # neither reach Docker Desktop's socket (a symlink into the real
+    # `~/.docker`) nor refresh the Skill copies it finds under the real home.
+    # A step that silently does nothing is worse than one that is not there.
     caveats: |
-      The running stack is converged to this CLI version on install. If Docker
-      was not running, it converges on the next `proximo up` — or run
-      `proximo update` yourself; it never needs sudo.
-    hooks:
-      post:
-        install: |
-          # The binary is unsigned; strip the quarantine attribute so macOS
-          # Gatekeeper does not refuse to run it with an "is damaged" alert.
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/proximo"]
-          end
-          # `proximo update` is a soft no-op that exits 0 when Docker is
-          # unreachable or no stack is running, so it is safe in a hook. It is
-          # not allowed to fail the upgrade either way: a stack that cannot
-          # converge now converges on the next `proximo up`.
-          system_command "#{staged_path}/proximo", args: ["update"],
-                         must_succeed: false, print_stdout: true
+      Run `proximo update` after upgrading: it converges the running stack to
+      this CLI version and refreshes the agent Skill. It never needs sudo, and
+      `proximo up` converges the stack too if you would rather just restart.
+    # `postflight_steps`, not the `postflight do ... end` block that
+    # `hooks.post.install` is the only way to emit — Homebrew deprecated it and
+    # warns on every `brew` command that loads the tap. No GoReleaser field
+    # emits the new stanza, so it goes through `custom_block`, verbatim.
+    # `{{staged_path}}` is a Homebrew install-time token and must survive
+    # GoReleaser's own templating, hence the escaping.
+    custom_block: |
+      postflight_steps do
+        # The binary is unsigned; strip the quarantine attribute so macOS
+        # Gatekeeper does not refuse to run it with an "is damaged" alert.
+        # `on_macos` is the declarative `if OS.mac?`, and it is not optional:
+        # under Linuxbrew a `run` that cannot find `/usr/bin/xattr` defaults to
+        # `must_succeed: true` and fails the install instead of doing nothing.
+        on_macos do
+          run "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/proximo"]
+        end
+      end
