@@ -51,3 +51,44 @@ jobs:
 
       - name: Test
         run: go test ./... -count=1
+
+  # `goreleaser check` validates the schema only — it reports a bare, unescaped
+  # `{{staged_path}}` as valid config. Rendering is the only thing that catches
+  # a cask mistake, and without this job the first render is the release tag.
+  # No secrets: `--skip=publish` means `{{ .Env.HOMEBREW_TAP_TOKEN }}` is never
+  # templated.
+  cask:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Render the cask
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish,validate
+
+      - name: Check the rendered cask
+        run: |
+          cask=dist/homebrew/Casks/proximo.rb
+          cat "$cask"
+          # The deprecated block is what this cask exists to avoid.
+          ! grep -qE '^[[:space:]]*postflight do' "$cask"
+          grep -qx '  postflight_steps do' "$cask"
+          # Linuxbrew installs this cask, and `run` defaults to
+          # `must_succeed: true`: without the guard, a Linux install aborts on
+          # the missing /usr/bin/xattr.
+          grep -qx '    on_macos do' "$cask"
+          # A Homebrew install-time token, not a GoReleaser one: it has to
+          # reach the cask unexpanded.
+          grep -qF '"{{staged_path}}/proximo"' "$cask"

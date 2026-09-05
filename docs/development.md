@@ -186,6 +186,13 @@ Push a `vX.Y.Z` tag → `.github/workflows/release.yml` runs GoReleaser
 `.github/workflows/ci.yml` ([the checks listed above](#build-and-test)) and
 `.github/workflows/docs.yml` (Markdown link + anchor check).
 
+`ci.yml` also carries a `cask` job that renders the Homebrew cask with
+`goreleaser release --snapshot --skip=publish,validate` and greps the result.
+It exists because `goreleaser check` validates the schema only: it reports a
+`.goreleaser.yaml` whose `{{staged_path}}` is unescaped as valid, and without
+the job the first render of the cask would be the release tag itself. Change
+the `custom_block` and read that job's assertions.
+
 ### The stack image
 
 `image.yml` builds the root `Dockerfile` for `linux/amd64` and `linux/arm64`
