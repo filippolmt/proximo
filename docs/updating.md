@@ -35,8 +35,8 @@ proximo update
 - **Never needs sudo** — it performs only Docker operations (no resolver/CA
   changes), so it is the safe escape hatch for any stack problem.
 - **Soft no-op** — when Docker is unreachable or no stack is running it prints
-  that the update will apply on the next `proximo up` and exits 0 (so it is safe
-  to call from automated hooks — the Homebrew cask calls it on install).
+  that the update will apply on the next `proximo up` and exits 0, so it is safe
+  to call from automation.
 - **Re-pulls Traefik** — the pinned Traefik image is re-pulled on every converge
   (best-effort, so an offline host still converges from what it has), because
   upstream moves that tag for security patches.
@@ -99,7 +99,7 @@ thing.
 | `proximo update` | Converge now (the manual path). |
 | `proximo up` | Applies any pending convergence on start — same code path as `update`. So a stack that was stopped at upgrade time is brought to the installed CLI version when next started. |
 | [`proximo doctor`](cli.md#proximo-doctor) | **Read-only.** Reports a stack version differing from the CLI, and an `--image` override in effect, each with its remedy. It never converges. |
-| Homebrew upgrade | The cask's post-install hook runs `proximo update`, so the stack converges with the CLI. It cannot fail the upgrade: if Docker was down, the caveat says it applies on the next `proximo up`. |
+| Homebrew upgrade | Upgrades the CLI only. The cask's install steps run under a sandbox with a throwaway `$HOME`, where `proximo update` would reach neither Docker Desktop's socket nor your Skill copies — so the cask does not run it, and its caveat asks you to. Until you do, `proximo up` converges the stack too. |
 
 Outside Homebrew this is deliberately **not** push auto-update: after a CLI
 upgrade the stack stays on the old version until you run `proximo update` or
