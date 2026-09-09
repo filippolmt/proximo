@@ -52,6 +52,8 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0008 — proximo measures, the project concludes](adr/0008-proximo-measures-the-project-concludes.md)
 
+[0009 — The stack declares its own address space](adr/0009-the-stack-declares-its-own-address-space.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·

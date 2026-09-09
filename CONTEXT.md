@@ -16,6 +16,14 @@ The set of long-running services proximo itself manages — `traefik`, `dns`,
 it owns `:80`, `:443`, the DNS port, and the compose project name `proximo`.
 _Avoid_: proxy, infrastructure, services (when the user's containers are meant)
 
+**Stack network**:
+The single Docker network the Stack's own services share, and the address space
+it occupies on the host. proximo declares it rather than accepting one, because
+an address space it did not choose can silently shadow a route the host already
+has. A Project's containers are never on it: the Stack joins *their* networks to
+reach them.
+_Avoid_: bridge, docker0, the proximo network
+
 **Project**:
 A developer's own set of containers, the things proximo routes *to*. Never part
 of the stack. Identified by its Docker Compose project name.
