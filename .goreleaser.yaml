@@ -65,19 +65,37 @@ homebrew_casks:
       Run `proximo update` after upgrading: it converges the running stack to
       this CLI version and refreshes the agent Skill. It never needs sudo, and
       `proximo up` converges the stack too if you would rather just restart.
-    # `postflight_steps`, not the `postflight do ... end` block that
-    # `hooks.post.install` is the only way to emit — Homebrew deprecated it and
+    commit_msg_template: "Update {{ .ProjectName }} to {{ .Tag }}"
+    # Shell completions, emitted at install time by the staged binary itself —
+    # cobra's own `completion` command, so nothing here can drift from the
+    # command surface. The default shells (bash, zsh, fish) are all cobra
+    # generates without an argument it would reject.
+    generate_completions_from_executable:
+      args:
+        - completion
+    # `preflight_steps`, not the `preflight do ... end` block that
+    # `hooks.pre.install` is the only way to emit — Homebrew deprecated it and
     # warns on every `brew` command that loads the tap. No GoReleaser field
     # emits the new stanza, so it goes through `custom_block`, verbatim.
     # `{{staged_path}}` is a Homebrew install-time token and must survive
     # GoReleaser's own templating, hence the escaping.
     custom_block: |
-      postflight_steps do
+      preflight_steps do
         # The binary is unsigned; strip the quarantine attribute so macOS
         # Gatekeeper does not refuse to run it with an "is damaged" alert.
+        #
+        # It has to be *pre*flight: `generate_completions_from_executable`
+        # runs the staged binary, and Gatekeeper kills a quarantined one
+        # before it can emit a single completion script. Homebrew orders cask
+        # artifacts by class, not by position in the file — `PreflightSteps`
+        # is first in that order, `GeneratedCompletion` near the last — so
+        # this stanza holds the constraint and `postflight_steps` would break
+        # it.
+        #
         # `on_macos` is the declarative `if OS.mac?`, and it is not optional:
-        # under Linuxbrew a `run` that cannot find `/usr/bin/xattr` defaults to
-        # `must_succeed: true` and fails the install instead of doing nothing.
+        # under Linuxbrew a `run` that cannot find `/usr/bin/xattr` defaults
+        # to `must_succeed: true` and fails the install instead of doing
+        # nothing.
         on_macos do
           run "/usr/bin/xattr",
               args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/proximo"]
