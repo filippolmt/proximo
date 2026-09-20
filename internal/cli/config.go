@@ -79,9 +79,7 @@ func runConfigTLD(cmd *cobra.Command, raw string) error {
 	if err := checks.DockerReachable(cmd.Context()); err != nil {
 		return err
 	}
-	if err := platform.SudoPrime("update the host resolver for the new TLD"); err != nil {
-		return err
-	}
+	platform.SudoPrime("update the host resolver for the new TLD")
 
 	fmt.Fprintf(out, "==> Switching TLD: .%s -> .%s\n", oldTLD, newTLD)
 	if err := dns.RemoveResolver(defaultRunner, oldTLD); err != nil {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // OS identifies a supported operating system.
@@ -144,7 +145,8 @@ func OutputContext(ctx context.Context, name string, args ...string) (string, er
 	return string(out), err
 }
 
-func isRoot() bool { return os.Geteuid() == 0 }
+// isRoot is a var so tests can run the unprivileged path as root.
+var isRoot = func() bool { return os.Geteuid() == 0 }
 
 // Sudo runs a command with elevated privileges, prompting once if needed.
 // When already running as root it executes the command directly.
@@ -158,14 +160,35 @@ func Sudo(args ...string) error {
 	return Run("sudo", args...)
 }
 
+// sudoProbeTimeout bounds the non-interactive sudo calls below. Under `-n` sudo
+// never waits for a human, but its auth backend (LDAP, sssd) can hang, and
+// priming — an optimization — must not be what blocks a command forever.
+const sudoProbeTimeout = 5 * time.Second
+
 // SudoPrime primes the sudo credential cache so subsequent privileged calls do
-// not each prompt for a password. It is a no-op when already root.
-func SudoPrime(reason string) error {
+// not each prompt for a password. It is best-effort and never fatal: `sudo -v`
+// demands a password unless *every* sudoers entry matching the user is NOPASSWD,
+// so where sudo itself asks nothing it would still prompt — and without a TTY
+// fail — an install every later `sudo <cmd>` would have completed. The
+// non-interactive probe settles that without asking, and only the privileged
+// calls themselves can say whether the host is usable.
+func SudoPrime(purpose string) {
 	if isRoot() || !Has("sudo") {
-		return nil
+		return
 	}
-	fmt.Fprintf(os.Stderr, "proximo needs administrator privileges to %s.\n", reason)
-	return Run("sudo", "-v")
+	ctx, cancel := context.WithTimeout(context.Background(), sudoProbeTimeout)
+	defer cancel()
+	if _, err := OutputContext(ctx, "sudo", "-n", "true"); err == nil {
+		// Nothing to ask for. Extend the credential timestamp if there is one,
+		// so a step further down is not left to prompt when it expires; where
+		// no password is ever needed this fails, harmlessly and silently.
+		_, _ = OutputContext(ctx, "sudo", "-n", "-v")
+		return
+	}
+	fmt.Fprintf(os.Stderr, "proximo needs administrator privileges to %s.\n", purpose)
+	if err := Run("sudo", "-v"); err != nil {
+		fmt.Fprintln(os.Stderr, "sudo could not be primed; continuing — the privileged commands will ask for themselves.")
+	}
 }
 
 // WriteFilePrivileged writes content to a root-owned path, creating parent

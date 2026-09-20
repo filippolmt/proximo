@@ -73,7 +73,9 @@ This runs, in order:
    anything else stops the command before it touches your host, and says which
    command names the holder.
 2. **Prime sudo** — prompts once so the following privileged steps don't each
-   ask for a password.
+   ask for a password. It is skipped where sudo already runs without asking, and
+   a prompt that fails (no terminal to ask on) does not stop the install: the
+   privileged steps below decide that for themselves.
 3. **Generate the local CA** — a P-256 ECDSA CA created on first run and reused
    afterwards, stored under your [state home](#state-home-proximo).
 4. **Configure the host resolver** — routes `*.<tld>` lookups to the local DNS
