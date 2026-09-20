@@ -74,7 +74,6 @@ jobs:
       - name: Render the cask
         uses: goreleaser/goreleaser-action@v7
         with:
-          distribution: goreleaser
           version: "~> v2"
           args: release --snapshot --clean --skip=publish,validate
 
@@ -82,9 +81,14 @@ jobs:
         run: |
           cask=dist/homebrew/Casks/proximo.rb
           cat "$cask"
-          # The deprecated block is what this cask exists to avoid.
-          ! grep -qE '^[[:space:]]*postflight do' "$cask"
-          grep -qx '  postflight_steps do' "$cask"
+          # The deprecated blocks are what this cask exists to avoid.
+          ! grep -qE '^[[:space:]]*(pre|post)flight do' "$cask"
+          grep -qx '  preflight_steps do' "$cask"
+          # Stripping quarantine has to precede the stanza that runs the staged
+          # binary, or Gatekeeper kills it before it emits a completion script.
+          # Homebrew orders by artifact class, so this asserts the classes, not
+          # the line order: preflight_steps present, completions generated.
+          grep -qF 'generate_completions_from_executable "proximo", "completion"' "$cask"
           # Linuxbrew installs this cask, and `run` defaults to
           # `must_succeed: true`: without the guard, a Linux install aborts on
           # the missing /usr/bin/xattr.

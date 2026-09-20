@@ -8,14 +8,27 @@ on:
 permissions:
   contents: write
 
+# The same tag can be pushed twice in close succession; without cancellation the
+# parallel runs race GoReleaser's asset upload and the loser 422s on
+# `already_exists`. Cancel the older run so exactly one GoReleaser invocation
+# reaches the GitHub Releases API per tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # GoReleaser authenticates through GITHUB_TOKEN and HOMEBREW_TAP_TOKEN
+          # passed as env. Don't leave the checkout-injected credential in
+          # `.git/config`, where a subprocess could pick it up.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -25,7 +38,6 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
-          distribution: goreleaser
           version: "~> v2"
           args: release --clean
         env:
