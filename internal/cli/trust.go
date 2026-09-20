@@ -41,9 +41,7 @@ func runTrust(cmd *cobra.Command) error {
 	if _, _, err := tls.EnsureCA(); err != nil {
 		return err
 	}
-	if err := platform.SudoPrime("trust the local CA"); err != nil {
-		return err
-	}
+	platform.SudoPrime("trust the local CA")
 	if err := applyTrust(out, defaultRunner); err != nil {
 		return err
 	}

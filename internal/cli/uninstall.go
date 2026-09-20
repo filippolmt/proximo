@@ -36,9 +36,7 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	if err := platform.SudoPrime("remove the host resolver and untrust the local CA"); err != nil {
-		return err
-	}
+	platform.SudoPrime("remove the host resolver and untrust the local CA")
 
 	if err := stopAndCleanStack(out); err != nil {
 		return err
