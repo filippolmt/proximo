@@ -45,6 +45,19 @@ type PeerNames struct {
 	Suffix  string `json:"suffix"`
 }
 
+// Name derives the peer name of a local host, for a reader outside this
+// package; see name.
+func (p PeerNames) Name(host, tld string) (string, bool) { return p.name(host, tld) }
+
+// Holds reports whether host is one of this machine's peer names. The zero
+// value holds none.
+func (p PeerNames) Holds(host string) bool {
+	if p.Machine == "" || p.Suffix == "" {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(host), "."+tls.MachineSubtree(p.Machine, p.Suffix))
+}
+
 // name derives the peer name of a local host: the host with .<tld> replaced by
 // .<machine>.<suffix>. It refuses a host outside the TLD, and a name DNS could
 // not carry — longer than 253 octets or with a label longer than 63.

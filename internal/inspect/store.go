@@ -70,6 +70,12 @@ type Exchange struct {
 	// return something for this Exchange. Set by List.
 	HasSnapshot bool `json:"has_snapshot"`
 
+	// Peer marks an Exchange that arrived on a peer name — a colleague's
+	// request. Set by the CLI, which knows the Peer suffix; the hop never does.
+	// An agent reading the JSON knows neither the TLD nor the suffix, so it
+	// could not classify Host without a second command.
+	Peer bool `json:"peer,omitempty"`
+
 	// Snapshot is the page's DOM as it stood when the first Client report was
 	// raised. It is never rendered inline, and never serialized with the rest:
 	// the CLI asks for it separately and writes it to a file.
