@@ -24,8 +24,12 @@ const (
 	intermediateName = "intermediate.pem"
 )
 
+// MachineSubtree is the peer subtree one machine answers and its intermediate
+// is constrained to: <machine>.<suffix>.
+func MachineSubtree(machine, suffix string) string { return machine + "." + suffix }
+
 // MachineCSR returns the certificate signing request for this machine's
-// intermediate, for <machine>.<suffix>. The machine key is created only if
+// intermediate, for its MachineSubtree. The machine key is created only if
 // none exists, and never replaced. The CSR is kept, so a second run prints the
 // same bytes; a new label or suffix is a new request for the same key.
 func MachineCSR(machine, suffix string) ([]byte, error) {
@@ -50,17 +54,17 @@ func MachineCSR(machine, suffix string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	zone := machine + "." + suffix
+	subtree := MachineSubtree(machine, suffix)
 	if data, err := os.ReadFile(csrPath); err == nil {
 		if block, _ := pem.Decode(data); block != nil {
 			if csr, err := x509.ParseCertificateRequest(block.Bytes); err == nil &&
-				csr.Subject.CommonName == zone && key.PublicKey.Equal(csr.PublicKey) {
+				csr.Subject.CommonName == subtree && key.PublicKey.Equal(csr.PublicKey) {
 				return data, nil
 			}
 		}
 	}
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: zone},
+		Subject: pkix.Name{CommonName: subtree},
 	}, key)
 	if err != nil {
 		return nil, err
@@ -142,9 +146,9 @@ func signIntermediate(rootPEM, rootKeyPEM, csrPEM []byte, machine, suffix string
 	if err := csr.CheckSignature(); err != nil {
 		return nil, fmt.Errorf("CSR: %w", err)
 	}
-	zone := machine + "." + suffix
-	if csr.Subject.CommonName != zone {
-		return nil, fmt.Errorf("CSR is for %q, not %q", csr.Subject.CommonName, zone)
+	subtree := MachineSubtree(machine, suffix)
+	if csr.Subject.CommonName != subtree {
+		return nil, fmt.Errorf("CSR is for %q, not %q", csr.Subject.CommonName, subtree)
 	}
 	serial, err := randomSerial()
 	if err != nil {
@@ -153,7 +157,7 @@ func signIntermediate(rootPEM, rootKeyPEM, csrPEM []byte, machine, suffix string
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: zone},
+		Subject:               pkix.Name{CommonName: subtree},
 		PublicKey:             csr.PublicKey,
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(5, 0, 0),
@@ -162,7 +166,7 @@ func signIntermediate(rootPEM, rootKeyPEM, csrPEM []byte, machine, suffix string
 		IsCA:                  true,
 		MaxPathLenZero:        true,
 	}
-	constrain(tmpl, zone)
+	constrain(tmpl, subtree)
 	if edit != nil {
 		edit(tmpl)
 	}
@@ -173,13 +177,13 @@ func signIntermediate(rootPEM, rootKeyPEM, csrPEM []byte, machine, suffix string
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
 }
 
-// constrain permits the subdomains of zone, critically, and excludes every
+// constrain permits the subdomains of subtree, critically, and excludes every
 // other name type: under RFC 5280 a type absent from the permitted subtrees is
 // unrestricted.
-func constrain(c *x509.Certificate, zone string) {
+func constrain(c *x509.Certificate, subtree string) {
 	_, v4, _ := net.ParseCIDR("0.0.0.0/0")
 	_, v6, _ := net.ParseCIDR("::/0")
-	c.PermittedDNSDomains = []string{"." + zone}
+	c.PermittedDNSDomains = []string{"." + subtree}
 	c.PermittedDNSDomainsCritical = true
 	c.ExcludedIPRanges = []*net.IPNet{v4, v6}
 	c.ExcludedEmailAddresses = []string{""}
@@ -199,18 +203,27 @@ func ValidateIntermediate(intPEM, rootPEM []byte, machine, suffix string) error 
 	if err != nil {
 		return fmt.Errorf("team root: %w", err)
 	}
-	zone := machine + "." + suffix
+	subtree := MachineSubtree(machine, suffix)
 	var faults []string
-	roots := x509.NewCertPool()
-	roots.AddCert(root)
-	if _, err := c.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
-		faults = append(faults, fmt.Sprintf("it does not chain to the configured team root (%v)", err))
+	// The team root signs every intermediate directly, so the chain is one
+	// signature; checking it apart from the validity window keeps "expired"
+	// from reading as "not ours".
+	if err := c.CheckSignatureFrom(root); err != nil {
+		faults = append(faults, "it is not signed by the configured team root")
+	}
+	if now := time.Now(); now.After(c.NotAfter) {
+		faults = append(faults, fmt.Sprintf("it expired on %s", c.NotAfter.Format("2006-01-02")))
+	} else if now.Before(c.NotBefore) {
+		faults = append(faults, fmt.Sprintf("it is not valid before %s", c.NotBefore.Format("2006-01-02")))
+	}
+	if len(c.IPAddresses)+len(c.EmailAddresses)+len(c.URIs) > 0 {
+		faults = append(faults, "it carries an IP address, email or URI name, outside every peer name")
 	}
 	if !c.IsCA {
 		faults = append(faults, "it is not a CA")
 	}
-	if len(c.PermittedDNSDomains) != 1 || strings.ToLower(strings.TrimPrefix(c.PermittedDNSDomains[0], ".")) != zone {
-		faults = append(faults, fmt.Sprintf("its permitted DNS subtree is %v, not exactly %s", c.PermittedDNSDomains, zone))
+	if len(c.PermittedDNSDomains) != 1 || strings.ToLower(strings.TrimPrefix(c.PermittedDNSDomains[0], ".")) != subtree {
+		faults = append(faults, fmt.Sprintf("its permitted DNS subtree is %v, not exactly %s", c.PermittedDNSDomains, subtree))
 	}
 	if !c.BasicConstraintsValid || c.MaxPathLen != 0 || !c.MaxPathLenZero {
 		faults = append(faults, "its MaxPathLen is not 0, so this machine could mint a further CA")
@@ -239,6 +252,18 @@ func InstallIntermediate(intPEM []byte) error {
 		return err
 	}
 	return os.WriteFile(path, intPEM, 0o644)
+}
+
+// IntermediateFor reports the subtree the installed intermediate is
+// constrained to, and whether that is this machine's MachineSubtree. With no
+// intermediate installed it returns "", false.
+func IntermediateFor(machine, suffix string) (subtree string, ok bool) {
+	c, err := Intermediate()
+	if err != nil || c == nil || len(c.PermittedDNSDomains) != 1 {
+		return "", false
+	}
+	subtree = strings.ToLower(strings.TrimPrefix(c.PermittedDNSDomains[0], "."))
+	return subtree, subtree == MachineSubtree(machine, suffix)
 }
 
 // Intermediate returns the installed intermediate, or nil when there is none.

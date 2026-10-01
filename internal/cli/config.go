@@ -217,6 +217,11 @@ func newConfigIntermediateCmd() *cobra.Command {
 			if err := requirePeerValues(cfg, "machine", "peer-suffix", "team-root"); err != nil {
 				return err
 			}
+			// The root is judged again: the file may have changed since config
+			// team-root accepted it, and the intermediate inherits its reach.
+			if err := checkTeamRoot(cfg.TeamRoot, cfg.PeerSuffix); err != nil {
+				return err
+			}
 			data, err := os.ReadFile(args[0])
 			if err != nil {
 				return err
@@ -235,8 +240,8 @@ func newConfigIntermediateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Saved intermediate for %s.%s, valid until %s\n",
-				cfg.Machine, cfg.PeerSuffix, c.NotAfter.Format("2006-01-02"))
+			fmt.Fprintf(cmd.OutOrStdout(), "Saved intermediate for %s, valid until %s\n",
+				tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), c.NotAfter.Format("2006-01-02"))
 			return nil
 		},
 	}
@@ -258,11 +263,7 @@ func requirePeerValues(cfg config.Config, names ...string) error {
 // warnIntermediate reports an installed intermediate that a new machine label
 // or Peer suffix leaves behind: it is constrained to the old one.
 func warnIntermediate(cmd *cobra.Command, machine, suffix string) {
-	c, err := tls.Intermediate()
-	if err != nil || c == nil || len(c.PermittedDNSDomains) != 1 {
-		return
-	}
-	if old := strings.TrimPrefix(c.PermittedDNSDomains[0], "."); old != machine+"."+suffix {
+	if old, ok := tls.IntermediateFor(machine, suffix); old != "" && !ok {
 		fmt.Fprintf(cmd.OutOrStdout(), "%sthe installed intermediate is constrained to %s, so it no longer signs this machine's peer names.\n    Remedy: proximo config csr\n", warnPrefix, old)
 	}
 }
