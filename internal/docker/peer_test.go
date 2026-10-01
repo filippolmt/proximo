@@ -42,17 +42,22 @@ func TestPeerHosts(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, outside := tc.rc.peerHosts("test", testPeer)
+			got, outside, _ := tc.rc.peerHosts("test", testPeer)
 			if !slices.Equal(got, tc.want) || !slices.Equal(outside, tc.outside) {
 				t.Errorf("peerHosts = %v, %v; want %v, %v", got, outside, tc.want, tc.outside)
 			}
 		})
 	}
+	// A name DNS cannot carry is reported, not silently dropped.
+	long := strings.Repeat(strings.Repeat("a", 60)+".", 4) + "test"
+	if _, _, tooLong := sharedRoute([]string{long}, "").peerHosts("test", testPeer); !slices.Equal(tooLong, []string{long}) {
+		t.Errorf("tooLong = %v, want [%s]", tooLong, long)
+	}
 	// A container that lost its Bare host to a Collision keeps only what it
 	// still serves.
 	rc := sharedRoute([]string{"api.test"}, "shop")
 	rc.hosts = []string{"api.shop.test"}
-	if got, _ := rc.peerHosts("test", testPeer); !slices.Equal(got, []string{"api.shop.studio-01.mesh.internal"}) {
+	if got, _, _ := rc.peerHosts("test", testPeer); !slices.Equal(got, []string{"api.shop.studio-01.mesh.internal"}) {
 		t.Errorf("after a lost Collision, peerHosts = %v", got)
 	}
 }
@@ -64,7 +69,7 @@ func TestRenderRouterPeer(t *testing.T) {
 	rc.redirect = true
 	rc.mw = middlewareSet{cors: &corsSpec{allowAll: true}}
 	local := string(renderRouter(rc))
-	rc.peer, _ = rc.peerHosts("test", testPeer)
+	rc.peer, _, _ = rc.peerHosts("test", testPeer)
 	out := string(renderRouter(rc))
 
 	if !strings.HasPrefix(out, strings.Split(local, "  middlewares:")[0]) {
@@ -135,7 +140,7 @@ func peerWatcher(t *testing.T) (*Watcher, *x509.Certificate) {
 func TestSyncCertsPeerLeaf(t *testing.T) {
 	w, root := peerWatcher(t)
 	rc := sharedRoute([]string{"api.test"}, "shop")
-	rc.peer, _ = rc.peerHosts("test", w.peer.names)
+	rc.peer, _, _ = rc.peerHosts("test", w.peer.names)
 	w.syncCerts([]routedContainer{rc})
 
 	certsDir := filepath.Join(w.dynamicDir, "certs")
@@ -169,6 +174,12 @@ func TestSyncCertsPeerLeaf(t *testing.T) {
 	tlsYAML, _ := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
 	if !strings.Contains(string(tlsYAML), "- certFile: "+leafFile) {
 		t.Errorf("the peer leaf is not listed:\n%s", tlsYAML)
+	}
+	// With the peer values set, the default store is still the nameless
+	// certificate and the local leaf is still listed (Acceptance 10).
+	if !strings.Contains(string(tlsYAML), "defaultCertificate:\n        certFile: "+filepath.Join(certsDir, defaultCertFile)) ||
+		!strings.Contains(string(tlsYAML), "- certFile: "+filepath.Join(certsDir, "api.crt")) {
+		t.Errorf("the local TLS config changed with sharing on:\n%s", tlsYAML)
 	}
 
 	// Removing proximo.share withdraws the peer leaf at the next reconcile
@@ -262,5 +273,17 @@ func TestServedRoutesCarryPeerNames(t *testing.T) {
 		if r.Container == "api" && (!r.Share || r.Peer != "") {
 			t.Errorf("unserved shared row = %+v", r)
 		}
+	}
+}
+
+// A replica set is shared as one route: replicas merge whatever their
+// proximo.share says, and the route is shared when any of them asks.
+func TestReplicasMergeAcrossShare(t *testing.T) {
+	a := sharedRoute([]string{"api.test"}, "shop")
+	b := a
+	b.name, b.share = "api-2", false
+	res := resolveRoutes([]routedContainer{b, a})
+	if len(res.kept) != 1 || len(res.collisions) != 0 || !res.kept[0].share || len(res.kept[0].backends()) != 2 {
+		t.Fatalf("kept = %+v, collisions = %+v", res.kept, res.collisions)
 	}
 }

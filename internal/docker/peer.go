@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,8 +68,9 @@ func (p PeerNames) name(host, tld string) (string, bool) {
 // peerHosts derives the peer names of the hosts rc serves, in order. Called on
 // a resolved route, it carries the local Collision over: a host rc lost has no
 // peer name either. outside lists the hosts that produce none because they lie
-// outside the TLD — a label fault the watcher reports.
-func (rc routedContainer) peerHosts(tld string, p PeerNames) (hosts, outside []string) {
+// outside the TLD, and tooLong those whose peer name DNS could not carry —
+// label faults the watcher reports.
+func (rc routedContainer) peerHosts(tld string, p PeerNames) (hosts, outside, tooLong []string) {
 	for _, h := range rc.hosts {
 		if !strings.HasSuffix(h, "."+tld) {
 			outside = append(outside, h)
@@ -76,9 +78,11 @@ func (rc routedContainer) peerHosts(tld string, p PeerNames) (hosts, outside []s
 		}
 		if n, ok := p.name(h, tld); ok {
 			hosts = append(hosts, n)
+		} else {
+			tooLong = append(tooLong, h)
 		}
 	}
-	return hosts, outside
+	return hosts, outside, tooLong
 }
 
 // PeerMissing lists the values a shared route needs that this machine lacks,
@@ -168,16 +172,34 @@ func loadPeerMaterial(caDir string) *peerMaterial {
 	if json.Unmarshal(raw, &names) != nil || names.Machine == "" || names.Suffix == "" {
 		return nil
 	}
-	intPEM, err := os.ReadFile(filepath.Join(caDir, peerIntermediateFile))
-	if err != nil {
-		return nil
-	}
 	intermediate, key, err := tls.LoadCA(filepath.Join(caDir, peerIntermediateFile), filepath.Join(caDir, peerKeyFile))
 	if err != nil {
 		return nil
 	}
 	return &peerMaterial{
-		names: names, intermediate: intermediate, intPEM: intPEM, key: key,
+		names: names, intermediate: intermediate, key: key,
+		intPEM:      pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: intermediate.Raw}),
 		fingerprint: fmt.Sprintf("%X", sha1.Sum(intermediate.Raw)),
 	}
+}
+
+// SyncPeer brings a materialized stack's peer material in line with the
+// configuration, so a value set while the stack runs takes effect at the
+// watcher's next reconcile — and `proximo status`, which reads the
+// configuration, never reports names the watcher does not serve. A host with
+// no materialized stack has nothing to sync.
+func SyncPeer(cfg config.Config) error {
+	dir, err := StackDir()
+	if err != nil {
+		return err
+	}
+	caDir := filepath.Join(dir, "ca")
+	if _, err := os.Stat(caDir); err != nil {
+		return nil
+	}
+	certDir, err := tls.Dir()
+	if err != nil {
+		return err
+	}
+	return copyPeer(caDir, certDir, cfg)
 }

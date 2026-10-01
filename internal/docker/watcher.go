@@ -270,7 +270,9 @@ type Watcher struct {
 	// dashboard self-route host traefik.<tld>.
 	tld string
 	// lastHosts caches the last-issued host set per container (keyed by safe
-	// name) so certs are reissued only when a container's hosts change.
+	// name) so certs are reissued only when a container's hosts change. A
+	// peer leaf is keyed "peer:"+safe (":" is never in a safe name) and caches
+	// the intermediate's fingerprint with its peer names.
 	lastHosts map[string]string
 	// caDir is the stack's ca directory, which also carries the peer material
 	// when this machine shares; peer is what was read from it this reconcile,
@@ -501,10 +503,13 @@ func (w *Watcher) sharePeers(routed []routedContainer) {
 		if !rc.share || rc.isTCP() || rc.internal {
 			continue
 		}
-		var outside []string
-		rc.peer, outside = rc.peerHosts(w.tld, w.peer.names)
+		var outside, tooLong []string
+		rc.peer, outside, tooLong = rc.peerHosts(w.tld, w.peer.names)
 		for _, h := range outside {
 			log.Printf("proximo watcher: container %s: %s is outside .%s, so it has no peer name; its other hosts are still shared", rc.name, h, w.tld)
+		}
+		for _, h := range tooLong {
+			log.Printf("proximo watcher: container %s: the peer name of %s would exceed 253 octets or a 63-octet label; not served on it", rc.name, h)
 		}
 	}
 }
@@ -1481,7 +1486,7 @@ func replicaKey(rc routedContainer) string {
 	// projects claiming the same bare host, but a declared host outside the TLD
 	// is never qualified, so the Namespace joins the key explicitly rather than
 	// leaving that one case able to merge across projects by accident.
-	return string(renderRouter(norm)) + "\x00" + rc.ns + "\x00" + strconv.FormatBool(rc.share)
+	return string(renderRouter(norm)) + "\x00" + rc.ns
 }
 
 // routeMerge names a proximo container merged into an existing route as a
@@ -1551,6 +1556,9 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 		key := replicaKey(rc)
 		if g, ok := byKey[key]; ok {
 			g.servers = append(g.servers, rc.name)
+			// A replica set is shared as one route: the peer names point at the
+			// service, so it is shared when any replica asks.
+			g.share = g.share || rc.share
 			merges = append(merges, routeMerge{rep: g.name, member: rc.name, host: g.hosts[0]})
 			continue
 		}

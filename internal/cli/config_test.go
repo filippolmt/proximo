@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/filippolmt/proximo/internal/config"
+	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/tls"
 )
 
@@ -284,5 +285,39 @@ func TestConfigIntermediateNeedsItsValues(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if _, err := runConfig(t, "intermediate", "/nonexistent.crt"); err == nil || !strings.Contains(err.Error(), "Remedy: proximo config machine") {
 		t.Fatalf("err = %v, want a Remedy naming config machine", err)
+	}
+}
+
+// A value set while the stack runs reaches it at once: the watcher re-reads
+// the peer material each reconcile, so status and the watcher never disagree.
+func TestConfigIntermediateSyncsARunningStack(t *testing.T) {
+	rootPEM, rootKeyPEM, csr := enrol(t)
+	stack, err := docker.StackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(stack, "ca"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	intPEM, err := tls.SignIntermediate(rootPEM, rootKeyPEM, csr, "studio-01", "mesh.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "intermediate.crt")
+	if err := os.WriteFile(file, intPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, "intermediate", file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stack, "ca", "peer.json")); err != nil {
+		t.Errorf("the stack was not given the peer material: %v", err)
+	}
+	// A new label withdraws it until a new intermediate arrives.
+	if _, err := runConfig(t, "machine", "studio-02"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stack, "ca", "peer.json")); err == nil {
+		t.Error("the stack kept peer material for the old label")
 	}
 }
