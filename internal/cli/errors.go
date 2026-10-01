@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -99,6 +100,17 @@ func newErrorsCmd() *cobra.Command {
 				}
 			}
 
+			// Whether an Exchange arrived on a peer name is read off this
+			// machine's subtree; nothing about the client is read. Unconfigured,
+			// nothing is one.
+			// A configuration that cannot be read degrades to no peer names:
+			// this command serves .test, and sharing must never break it.
+			var peer docker.PeerNames
+			cfg, cfgErr := config.Peek()
+			if cfgErr == nil {
+				peer = docker.PeerNames{Machine: cfg.Machine, Suffix: cfg.PeerSuffix}
+			}
+			markPeer(window, peer)
 			exchanges := inspect.Select(window, host, cutoff, limit, !all)
 			grouped := byService(r, exchanges)
 			if service != "" {
@@ -124,6 +136,19 @@ func newErrorsCmd() *cobra.Command {
 			// whether it is read by a person or parsed: an agent asking with
 			// --json is the reader that will never run `proximo doctor` on its own.
 			notes := listingNotes(cmd.Context(), host, len(rows) == 0)
+			if host != "" {
+				serviceOf := func(ex []inspect.Exchange) []string {
+					var names []string
+					for s := range byService(r, ex) {
+						names = append(names, string(s))
+					}
+					slices.Sort(names)
+					return names
+				}
+				if note := peerExclusionNote(window, host, cfg.TLD, peer, cutoff, all, serviceOf); note != "" {
+					notes = append(notes, note)
+				}
+			}
 			if note := incidentsNote(cmd.Context(), incErr); note != "" {
 				notes = append(notes, note)
 			}
@@ -314,8 +339,14 @@ var noisyBreadcrumb = map[string]bool{"debug": true, "info": true, "log": true, 
 // writeExchange renders one Exchange as a fixed-order block. The shape is stable
 // on purpose: it is read as often by an agent as by a person.
 func writeExchange(w io.Writer, e inspect.Exchange, tr transcript.Transcript, show detail) {
-	fmt.Fprintf(w, "%s  %s  %s %s  →  %s  %s\n",
-		e.At.Local().Format("15:04:05"), e.ID, e.Method, e.Path, formatStatus(e.Status), formatDuration(e.Duration))
+	// The host the request arrived on is appended only when it is a peer name:
+	// a local row is unchanged, and a colleague's request says so.
+	arrived := ""
+	if e.Peer {
+		arrived = "  " + e.Host
+	}
+	fmt.Fprintf(w, "%s  %s  %s %s  →  %s  %s%s\n",
+		e.At.Local().Format("15:04:05"), e.ID, e.Method, e.Path, formatStatus(e.Status), formatDuration(e.Duration), arrived)
 
 	for _, warn := range e.Warnings {
 		fmt.Fprintf(w, "  %s%s\n", warnPrefix, warn)
@@ -747,4 +778,42 @@ func writeWhole(w io.Writer, heading []string, tr transcript.Transcript) {
 	}
 	fmt.Fprintln(w)
 	writeQuotedLines(w, tr, "", "… %d line(s) elided — raise --limit to see them …")
+}
+
+// markPeer marks every Exchange that arrived on one of this machine's peer
+// names. The Transcript carries no such marker, ever: proximo authors nothing
+// inside it.
+func markPeer(exchanges []inspect.Exchange, p docker.PeerNames) {
+	for i := range exchanges {
+		exchanges[i].Peer = p.IsPeerName(exchanges[i].Host)
+	}
+}
+
+// peerExclusionNote says how many Exchanges --host left out because they
+// arrived on the named host's peer name, and names the command that includes
+// them: --service, which unions local and peer Exchanges because it selects by
+// backend. --host itself stays an exact match. When several services served
+// them, every candidate is named rather than one chosen.
+func peerExclusionNote(window []inspect.Exchange, host, tld string, p docker.PeerNames, cutoff time.Time, all bool, servicesOf func([]inspect.Exchange) []string) string {
+	if !p.Configured() {
+		return ""
+	}
+	peerHost, ok := p.Name(host, tld)
+	if !ok {
+		return ""
+	}
+	excluded := inspect.Select(window, peerHost, cutoff, 0, !all)
+	if len(excluded) == 0 {
+		return ""
+	}
+	services := servicesOf(excluded)
+	if len(services) == 0 {
+		services = []string{"<service>"}
+	}
+	cmds := make([]string, len(services))
+	for i, s := range services {
+		cmds[i] = "`proximo errors --service " + s + "`"
+	}
+	return fmt.Sprintf("%d Exchange(s) arrived on %s, its peer name, and are not listed: --host is an exact match. %s, without --host, includes them.",
+		len(excluded), peerHost, strings.Join(cmds, " or "))
 }

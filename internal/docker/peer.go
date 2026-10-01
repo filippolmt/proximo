@@ -45,10 +45,20 @@ type PeerNames struct {
 	Suffix  string `json:"suffix"`
 }
 
-// name derives the peer name of a local host: the host with .<tld> replaced by
+// Configured reports whether there is a machine label and a Peer suffix to
+// derive peer names from.
+func (p PeerNames) Configured() bool { return p.Machine != "" && p.Suffix != "" }
+
+// IsPeerName reports whether host is one of this machine's peer names, by the
+// same exact comparison --host makes. The zero value has none.
+func (p PeerNames) IsPeerName(host string) bool {
+	return p.Configured() && strings.HasSuffix(host, "."+tls.MachineSubtree(p.Machine, p.Suffix))
+}
+
+// Name derives the peer name of a local host: the host with .<tld> replaced by
 // .<machine>.<suffix>. It refuses a host outside the TLD, and a name DNS could
 // not carry — longer than 253 octets or with a label longer than 63.
-func (p PeerNames) name(host, tld string) (string, bool) {
+func (p PeerNames) Name(host, tld string) (string, bool) {
 	base, ok := strings.CutSuffix(host, "."+tld)
 	if !ok {
 		return "", false
@@ -76,7 +86,7 @@ func (rc routedContainer) peerHosts(tld string, p PeerNames) (hosts, outside, to
 			outside = append(outside, h)
 			continue
 		}
-		if n, ok := p.name(h, tld); ok {
+		if n, ok := p.Name(h, tld); ok {
 			hosts = append(hosts, n)
 		} else {
 			tooLong = append(tooLong, h)
