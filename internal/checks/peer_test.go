@@ -93,7 +93,7 @@ func TestPeerRoutes(t *testing.T) {
 		}, nil
 	}
 	r := outcomes(env)[IDPeerRoutes]
-	if r.Status != Fail || r.Remedy != "docker inspect db api" || !strings.Contains(r.Detail, "TCP") || !strings.Contains(r.Detail, "api.example.com") {
+	if r.Status != Fail || r.Remedy != "docker inspect --format '{{json .Config.Labels}}' db api" || !strings.Contains(r.Detail, "TCP") || !strings.Contains(r.Detail, "api.example.com") {
 		t.Errorf("peer-routes = %+v", r)
 	}
 }
@@ -124,5 +124,28 @@ func TestMeshRemedy(t *testing.T) {
 	env.Peer.MeshRemedy = "meshctl status"
 	if r := outcomes(env)[IDMesh]; r.Remedy != "meshctl status" {
 		t.Errorf("mesh remedy = %q, want the configured one", r.Remedy)
+	}
+}
+
+// A configuration that cannot be read says so, rather than claiming a value
+// is unset.
+func TestPeerChecksNameAnUnreadableConfig(t *testing.T) {
+	env := healthyEnv()
+	env.PeerErr = errors.New("invalid character 'x'")
+	got := outcomes(env)
+	for _, id := range []string{IDPeerIntermediate, IDPeerRoutes, IDPeerDNS} {
+		if got[id].Status != Skip || !strings.Contains(got[id].Detail, "could not be read") {
+			t.Errorf("%s = %+v", id, got[id])
+		}
+	}
+}
+
+func TestPeerIntermediateWithoutASingleSubtree(t *testing.T) {
+	env := sharingEnv()
+	env.Intermediate = func() (*x509.Certificate, error) {
+		return &x509.Certificate{NotAfter: time.Now().AddDate(1, 0, 0)}, nil
+	}
+	if r := outcomes(env)[IDPeerIntermediate]; r.Status != Fail || !strings.Contains(r.Detail, "not constrained to a single subtree") {
+		t.Errorf("peer-intermediate = %+v", r)
 	}
 }

@@ -87,6 +87,9 @@ type Env struct {
 	// Peer holds the peer-sharing values; on a machine that has not opted in
 	// they are empty and every peer Check is Skipped.
 	Peer config.Config
+	// PeerErr is why the configuration holding them could not be read, if it
+	// could not: the peer Checks then say so rather than claim a value is unset.
+	PeerErr error
 	// Intermediate returns the installed intermediate, nil when there is none.
 	Intermediate func() (*x509.Certificate, error)
 	// QueryAt asks a DNS server (host:port) directly for a name's A record.
@@ -114,10 +117,11 @@ func DefaultEnv(tld string) (Env, error) {
 
 	// A configuration that cannot be read leaves the peer values empty: the
 	// peer Checks are then Skipped, and every other Check is unaffected.
-	peer, _ := config.Peek()
+	peer, peerErr := config.Peek()
 
 	return Env{
 		Peer:                peer,
+		PeerErr:             peerErr,
 		Intermediate:        tls.Intermediate,
 		QueryAt:             dns.QueryAt,
 		InterfaceAddrs:      net.InterfaceAddrs,

@@ -2,12 +2,12 @@
 
 [← back to docs index](../README.md)
 
-> **Status: not built.** This document describes a capability the binary does
-> not have. Nothing in it is honoured today: `proximo.share` is not a label,
-> and the `config` subcommands, Checks and columns below do not exist. It lives
+> **Status: being built** ([#131](https://github.com/filippolmt/proximo/issues/131)).
+> Until the last slice lands, the capability is not one to use: `proximo.share`
+> is not in the label table and the `config` subcommands are hidden. It lives
 > outside the guides on purpose — the label table in `docs/routing.md` is copied
 > into the published Skill, and a row written there now would tell every agent
-> to use a label the binary ignores.
+> to use a capability that is not finished.
 >
 > **Every section below is headed by the guide it lands in.** Building the
 > capability means moving each section into that guide, not rewriting it. The

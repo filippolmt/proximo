@@ -579,8 +579,8 @@ distributed to — see
 
 `mesh` resolves the machine's own names, so a publishing machine outside the
 resolving peers fails it even while colleagues reach it. Being a resolving peer
-is a requirement for publishing ([taking part](specs/peer-sharing.md#taking-part)):
-add the machine to the set the subtrees are distributed to.
+is a requirement for publishing: add the machine to the set the subtrees are
+distributed to.
 
 ## The machine's intermediate is about to expire
 

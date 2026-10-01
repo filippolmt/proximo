@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,21 @@ const (
 // would see.
 const intermediateMargin = 30 * 24 * time.Hour
 
+// peerSkip is the Skip a peer Check returns when a value it needs is unset,
+// or when the configuration could not be read at all; ok means it may run.
+func peerSkip(env Env, needAddress bool) (Result, bool) {
+	p := env.Peer
+	switch {
+	case env.PeerErr != nil:
+		return Skipped("the configuration could not be read: %v", env.PeerErr), false
+	case needAddress && (p.Machine == "" || p.PeerSuffix == "" || p.Address == ""):
+		return Skipped("machine, peer-suffix or address is not configured"), false
+	case p.Machine == "" || p.PeerSuffix == "":
+		return Skipped("machine or peer-suffix is not configured"), false
+	}
+	return Result{}, true
+}
+
 func peerChecks(env Env) []Check {
 	p := env.Peer
 	subtree := tls.MachineSubtree(p.Machine, p.PeerSuffix)
@@ -36,8 +52,8 @@ func peerChecks(env Env) []Check {
 			Name: "The machine's intermediate is valid for at least 30 more days",
 			Doc:  "the-machines-intermediate-is-about-to-expire",
 			Run: func(context.Context) Result {
-				if p.Machine == "" || p.PeerSuffix == "" {
-					return Skipped("machine or peer-suffix is not configured")
+				if skip, ok := peerSkip(env, false); !ok {
+					return skip
 				}
 				c, err := env.Intermediate()
 				switch {
@@ -46,7 +62,10 @@ func peerChecks(env Env) []Check {
 				case c == nil:
 					return Skipped("no intermediate is installed")
 				}
-				if got := tls.IntermediateSubtree(c); got != subtree {
+				switch got := tls.IntermediateSubtree(c); {
+				case got == "":
+					return Failed("proximo config csr", "the installed intermediate is not constrained to a single subtree")
+				case got != subtree:
 					return Failed("proximo config csr", "the installed intermediate is constrained to %s, not %s", got, subtree)
 				}
 				day := c.NotAfter.Format("2006-01-02")
@@ -65,8 +84,8 @@ func peerChecks(env Env) []Check {
 			Doc:   "a-shared-route-is-not-served-on-its-peer-names",
 			Needs: []string{IDStack},
 			Run: func(ctx context.Context) Result {
-				if p.Machine == "" || p.PeerSuffix == "" {
-					return Skipped("machine or peer-suffix is not configured")
+				if skip, ok := peerSkip(env, false); !ok {
+					return skip
 				}
 				routes, err := env.Routes(ctx)
 				if err != nil {
@@ -86,12 +105,12 @@ func peerChecks(env Env) []Check {
 					default:
 						continue
 					}
-					if !containsString(containers, r.Container) {
+					if !slices.Contains(containers, r.Container) {
 						containers = append(containers, r.Container)
 					}
 				}
 				if len(faults) > 0 {
-					return Failed("docker inspect "+strings.Join(containers, " "), "%s", strings.Join(faults, "; "))
+					return Failed("docker inspect --format '{{json .Config.Labels}}' "+strings.Join(containers, " "), "%s", strings.Join(faults, "; "))
 				}
 				if shared == 0 {
 					return Passed("no route is shared")
@@ -105,8 +124,8 @@ func peerChecks(env Env) []Check {
 			Doc:   "proximo-does-not-answer-on-the-mesh-address",
 			Needs: []string{IDStack},
 			Run: func(ctx context.Context) Result {
-				if p.Machine == "" || p.PeerSuffix == "" || p.Address == "" {
-					return Skipped("machine, peer-suffix or address is not configured")
+				if skip, ok := peerSkip(env, true); !ok {
+					return skip
 				}
 				server := fmt.Sprintf("%s:%d", p.Address, config.PeerDNSPort)
 				addr, err := env.QueryAt(ctx, server, sentinel)
@@ -147,13 +166,4 @@ func peerChecks(env Env) []Check {
 			},
 		},
 	}
-}
-
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

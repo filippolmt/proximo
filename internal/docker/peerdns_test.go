@@ -201,3 +201,11 @@ func TestConvergeRemovesAStalePeerDNS(t *testing.T) {
 		t.Errorf("ran %v, want %v", c.cmds, want)
 	}
 }
+
+// The peer DNS service is not a core service: a stack without it is whole, so
+// stopping it leaves `stack` passing (Acceptance 13).
+func TestPeerDNSIsNotACoreRole(t *testing.T) {
+	if missing := (StackInfo{Running: true, Roles: []string{"traefik", "dns", "watcher"}}).MissingRoles(); len(missing) != 0 {
+		t.Errorf("a stack without %s is missing %v", peerDNSRole, missing)
+	}
+}
