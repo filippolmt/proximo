@@ -446,7 +446,7 @@ the problem is resolver precedence, not proximo's DNS server.
 A mesh nameserver configured as the machine's **primary** resolver is one more
 such cause. It captures every query no rule matches, `.test` included, and it
 breaks every local route on the machine. The mesh's nameserver configuration must
-never be primary (constraint 6).
+never be primary ([constraint 6](sharing.md#constraints)).
 
 ## Degraded stack
 

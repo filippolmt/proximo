@@ -1,5 +1,5 @@
 // Command team-ca is the custodian's half of the peer-sharing ceremony
-// (docs/sharing.md, "The team root and the intermediates"). It mints
+// (docs/sharing.md#the-team-root-and-the-intermediates). It mints
 // the team root and signs machine intermediates in exactly the shape proximo's
 // config team-root and config intermediate accept. It names no suffix and no
 // machine: both are arguments. Run it through team-ca.sh, which needs only

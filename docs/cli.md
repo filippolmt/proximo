@@ -107,8 +107,9 @@ to the trusted https host. Off by default: a plain `up` starts neither. `down` /
 `uninstall` tear them down too. See [Dev-time observability](observability.md).
 
 **Peer sharing.** When the peer DNS service cannot start, `up` succeeds, prints a
-warning naming `peer-dns` and the cause (the address is held by no
-interface), and exits 0, because `.test` works. A peer-side failure never fails
+warning naming `peer-dns` and, when it is the one it can see, the cause — the
+address is held by no interface of this machine — and exits 0, because `.test`
+works. A peer-side failure never fails
 the command that serves `.test`.
 
 ## proximo down
@@ -401,7 +402,7 @@ touches. Both print only what failed.
 Four Checks. On a machine
 that has not opted in, every one of them is Skipped, and `dns-server` and
 `dns-resolver` return exactly the Result they return on a machine that never
-configured a peer value (constraint 9).
+configured a peer value ([constraint 9](sharing.md#constraints)).
 
 | Check | Statement | `Needs` | Skipped when | Remedy |
 | --- | --- | --- | --- | --- |
@@ -647,12 +648,12 @@ All of the configuration below is persisted in `config.json` beside the TLD, has
 **no default**, and is set one value per subcommand, the way
 [`proximo config tld`](#proximo-config-tld) is. Partial configuration is a
 legitimate state, not an error: `status` and `doctor` report what is missing.
-A value takes effect at once: a running stack's watcher picks it up at its next
-reconcile, with no `up`. [`proximo config unset`](#proximo-config-unset) returns
+A value reaches the peer routes and peer certificates at once: a running stack's
+watcher picks it up at its next reconcile, with no `up`. The peer DNS service is
+the exception — it is added, changed or removed by the next `proximo up`. [`proximo config unset`](#proximo-config-unset) returns
 one to its unconfigured state.
 
-The validation rule is the same everywhere, and it is the one the next value
-added must follow: **proximo refuses what the machine can decide, reports what
+The validation rule is the same for every value: **proximo refuses what the machine can decide, reports what
 it cannot, and does both when a person sets the value** — not at reconcile, and
 not as a refusal to start. A label is read with nobody watching, so a bad label
 degrades with a watcher warning; a configuration value is typed by a person who
@@ -701,7 +702,7 @@ Set the Peer suffix every peer name lives under.
      the mesh configures.** `.local` fails this: mDNS answers it first on macOS
      and Linux.
   2. **No Public Suffix List entry can reclassify it underneath a shipped
-     design.** `home.arpa` is the precedent. Constraint 8 is what makes a future
+     design.** `home.arpa` is the precedent. [Constraint 8](sharing.md#constraints) is what makes a future
      listing survivable.
   3. **Nobody can delegate it in the future.** A single unreserved label works on
      the day it is chosen and stops resolving the day someone registers it.
@@ -743,7 +744,7 @@ distributed however the team likes — never from this repository.
 second anchor beside the local CA, and `uninstall` removes it.
 
 - **Refused, hard** — the one value whose rule is checked completely, and the
-  most consequential (constraint 7): a certificate whose permitted DNS subtree
+  most consequential ([constraint 7](sharing.md#constraints)): a certificate whose permitted DNS subtree
   does not cover the configured Peer suffix, whose name constraints are not
   marked critical, or which lacks exclusions for every IP address (`0.0.0.0/0`,
   `::/0`), every email address and every URI. Constraining `dNSName` alone leaves
@@ -808,7 +809,8 @@ proximo config unset <machine|peer-suffix|address|team-root|intermediate|mesh-re
 ```
 
 Return one peer-sharing value to its unconfigured state; a materialized stack
-follows at its next reconcile, as it does when a value is set. `intermediate`
+follows as it does when a value is set: the peer routes at its next reconcile,
+the peer DNS service at the next `proximo up`. `intermediate`
 removes the installed intermediate and keeps the machine key, the one thing a new
 intermediate must match. `team-root` leaves the anchor in the trust stores:
 removing it needs `sudo`, and `uninstall` removes what was trusted.

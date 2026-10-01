@@ -33,8 +33,8 @@ control plane, and rewriting response bodies.
 
 ## Constraints
 
-Each part of the guides that implements sharing cites the constraints that bound it. Each is a
-property the implementation must keep, not a description of how it keeps it.
+Each is a property proximo keeps, stated without the mechanism that currently
+keeps it; the guides cite them by number where they bound a behaviour.
 
 1. **A colleague reaches a route by a peer-qualified name, never by the local
    one.** `.test` cannot be delegated, proximo's DNS server answers every name
@@ -98,7 +98,7 @@ an unshared name and an invented one.
 ## What the mesh must provide
 
 These are requirements on whatever transport the team runs, stated as
-properties. [Appendix — one transport that satisfies them](#appendix--one-transport-that-satisfies-them)
+properties. [Appendix — one transport that satisfies the requirements](#appendix--one-transport-that-satisfies-the-requirements)
 maps them onto one product.
 
 1. **A layer-3 mesh.** Each machine holds an address the others can reach, and
@@ -195,7 +195,7 @@ tools/team-ca/team-ca.sh sign <suffix> <machine> team-root.crt team-root.key mac
 - The intermediate expires after five years; `peer-intermediate` fails 30 days
   ahead.
 
-## Appendix — one transport that satisfies them
+## Appendix — one transport that satisfies the requirements
 
 NetBird, self-hosted, verified
 end to end between two machines, one of them relayed. It is one transport that

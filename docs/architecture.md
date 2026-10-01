@@ -275,7 +275,7 @@ With `proximo.redirect` it gets the same redirect on `web`.
   container stops being shared. The certificate file presents the intermediate
   after the leaf, since a colleague's machine holds only the root. Traefik reads
   them through the same file provider. SNI selects between a route's two leaves.
-- **No wildcard**, at any level (constraint 8).
+- **No wildcard**, at any level ([constraint 8](sharing.md#constraints)).
 - **The default certificate is nameless.** Traefik has one TLS store and one
   default certificate, served whenever no leaf matches the SNI. proximo writes a
   certificate with **no SAN at all**, signed by the local CA, as that default —

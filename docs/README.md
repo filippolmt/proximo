@@ -169,7 +169,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Taking part](sharing.md#taking-part) ·
 [The team root and the intermediates](sharing.md#the-team-root-and-the-intermediates) ·
 [Limits for whoever runs the team](sharing.md#limits-for-whoever-runs-the-team) ·
-[Appendix — one transport that satisfies them](sharing.md#appendix--one-transport-that-satisfies-them)
+[Appendix — one transport that satisfies the requirements](sharing.md#appendix--one-transport-that-satisfies-the-requirements)
 
 ### [Troubleshooting](troubleshooting.md)
 
