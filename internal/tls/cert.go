@@ -36,10 +36,10 @@ func IssueHostCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, hosts []st
 }
 
 // IssueDefaultCert generates the certificate Traefik serves when no leaf
-// matches the SNI: signed by the CA, with no SAN at all. Naming nothing, it
-// cannot tell an unserved name from an invented one, and it names none of the
-// machine's routes. The CommonName is not a hostname, so no client that still
-// falls back to it can match it either.
+// matches the SNI: signed by the CA, with no SAN at all. Naming nothing, it is
+// the same certificate for an unserved name and an invented one, and it names
+// none of the machine's routes. The CommonName is not a DNS name, so no client
+// that still falls back to it can match it either.
 func IssueDefaultCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (certPEM, keyPEM []byte, err error) {
 	return issueLeaf(caCert, caKey, "proximo default certificate", nil)
 }

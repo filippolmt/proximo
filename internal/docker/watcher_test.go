@@ -498,7 +498,10 @@ func TestSyncCertsDefaultIsNameless(t *testing.T) {
 			t.Errorf("default certificate not signed by the local CA: %v", err)
 		}
 	}
-	tlsYAML, _ := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	tlsYAML, err := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(tlsYAML), "- certFile: "+filepath.Join(certsDir, "app.crt")) {
 		t.Errorf("the route's leaf is no longer listed:\n%s", tlsYAML)
 	}
@@ -1991,5 +1994,31 @@ func TestReconcileServesQualifiedHost(t *testing.T) {
 	}
 	if !slices.Contains(cert.DNSNames, "api.test") || !slices.Contains(cert.DNSNames, "api.shop.test") {
 		t.Errorf("cert SANs = %v, want both the bare and the qualified host", cert.DNSNames)
+	}
+}
+
+// When the default cannot be issued, the store falls back to a route's leaf —
+// the behaviour before the default existed, a trusted issuer — never to a
+// leftover default from an earlier run, nor to Traefik's self-signed one.
+func TestSyncCertsDefaultFallsBackToALeaf(t *testing.T) {
+	w := testWatcher(t)
+	certsDir := filepath.Join(w.dynamicDir, "certs")
+	// A directory where the default certificate goes makes its write fail,
+	// while a leftover key from an earlier run is still there.
+	if err := os.MkdirAll(filepath.Join(certsDir, defaultCertFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certsDir, defaultKeyFile), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := routedContainer{name: "app", safe: "app", hosts: []string{"app.test"}, proximo: true}
+	w.syncCerts([]routedContainer{app})
+	tlsYAML, err := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "defaultCertificate:\n        certFile: " + filepath.Join(certsDir, "app.crt") + "\n"
+	if !strings.Contains(string(tlsYAML), want) || strings.Contains(string(tlsYAML), defaultKeyFile) {
+		t.Errorf("default store should fall back to the app leaf:\n%s", tlsYAML)
 	}
 }

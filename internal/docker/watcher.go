@@ -1071,26 +1071,31 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 }
 
 // syncDefaultCert issues the nameless default certificate once per watcher
-// start, and again should its files disappear. It reports whether the files
-// exist, so the TLS config never references a certificate that is not there.
+// start, and again should its files disappear. It reports whether this process
+// wrote them: a leftover pair from an earlier run may chain to a CA since
+// replaced, so a failed issuance never falls back to it.
 func (w *Watcher) syncDefaultCert(certsDir string) bool {
 	crt := filepath.Join(certsDir, defaultCertFile)
 	pkey := filepath.Join(certsDir, defaultKeyFile)
 	if w.defaultIssued && fileExists(crt) && fileExists(pkey) {
 		return true
 	}
+	w.defaultIssued = false
 	certPEM, keyPEM, err := tls.IssueDefaultCert(w.caCert, w.caKey)
-	if err == nil {
-		err = atomicWrite(pkey, keyPEM, 0o600)
-	}
-	if err == nil {
-		err = atomicWrite(crt, certPEM, 0o644)
-	}
 	if err != nil {
 		log.Printf("proximo watcher: issue default certificate: %v", err)
-		return fileExists(crt) && fileExists(pkey)
+		return false
+	}
+	if err := atomicWrite(crt, certPEM, 0o644); err != nil {
+		log.Printf("proximo watcher: write default certificate: %v", err)
+		return false
+	}
+	if err := atomicWrite(pkey, keyPEM, 0o600); err != nil {
+		log.Printf("proximo watcher: write default key: %v", err)
+		return false
 	}
 	w.defaultIssued = true
+	log.Printf("proximo watcher: issued the default certificate")
 	return true
 }
 
@@ -1121,8 +1126,9 @@ func (w *Watcher) removeStaleCerts(certsDir string, active map[string]bool) {
 // certificate. The default store holds the nameless default certificate, never
 // a route's leaf: a name this machine does not serve gets a certificate that
 // names nothing, rather than another route's names or Traefik's built-in
-// self-signed default. sniStrict is not used: it is global, and would turn
-// local clients without SNI into handshake failures.
+// self-signed default. Should the default be missing, the first (sorted) leaf
+// backs the store instead, keeping a trusted issuer. sniStrict is not used: it
+// is global, and would turn local clients without SNI into handshake failures.
 func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer, hasDefault bool) {
 	tlsPath := filepath.Join(w.dynamicDir, "proximo-tls.yml")
 	if len(entries) == 0 && !hasDefault {
@@ -1131,13 +1137,16 @@ func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer, has
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].safe < entries[j].safe })
 
+	defCrt, defKey := defaultCertFile, defaultKeyFile
+	if !hasDefault {
+		log.Printf("proximo watcher: no default certificate; the default store falls back to %s's", entries[0].safe)
+		defCrt, defKey = entries[0].safe+".crt", entries[0].safe+".key"
+	}
 	var b strings.Builder
 	b.WriteString("tls:\n")
-	if hasDefault {
-		b.WriteString("  stores:\n    default:\n      defaultCertificate:\n")
-		fmt.Fprintf(&b, "        certFile: %s\n", filepath.Join(certsDir, defaultCertFile))
-		fmt.Fprintf(&b, "        keyFile: %s\n", filepath.Join(certsDir, defaultKeyFile))
-	}
+	b.WriteString("  stores:\n    default:\n      defaultCertificate:\n")
+	fmt.Fprintf(&b, "        certFile: %s\n", filepath.Join(certsDir, defCrt))
+	fmt.Fprintf(&b, "        keyFile: %s\n", filepath.Join(certsDir, defKey))
 	if len(entries) > 0 {
 		b.WriteString("  certificates:\n")
 	}
