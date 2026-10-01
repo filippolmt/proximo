@@ -68,8 +68,14 @@ func TestComposeIsTodaysWithoutPeerValues(t *testing.T) {
 func TestComposeGainsThePeerDNSService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	today := materializedCompose(t)
 	savePeerDNSConfig(t)
 	got := materializedCompose(t)
+	// Everything already there is untouched — the loopback dns service
+	// included — and the peer DNS service is appended after it.
+	if !strings.HasPrefix(got, today) {
+		t.Error("the peer DNS service changed the services already in the Compose file")
+	}
 	for _, want := range []string{
 		"\n  peer-dns:\n",
 		"profiles: [" + peerProfile + "]",
@@ -144,5 +150,54 @@ func TestWatcherRestartsPeerDNS(t *testing.T) {
 	w.restartPeerDNS(context.Background())
 	if len(f.started) != 0 {
 		t.Errorf("started a running peer DNS service: %v", f.started)
+	}
+}
+
+// An address the peer DNS service could not answer — an IPv6 value saved
+// before config address refused one, or a hand-edited file — produces no
+// service rather than one that crash-loops.
+func TestComposeSkipsAnUnservableAddress(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := config.Default()
+	cfg.Machine, cfg.PeerSuffix, cfg.Address = "studio-01", "mesh.internal", "fd7a:115c:a1e0::1"
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(materializedCompose(t), "peer-dns") {
+		t.Error("a peer DNS service for an IPv6 address")
+	}
+}
+
+// Unsetting a value removes the peer DNS service the previous Compose file
+// still describes, before that file is rewritten without it.
+func TestConvergeRemovesAStalePeerDNS(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	savePeerDNSConfig(t)
+	img := "ghcr.io/filippolmt/proximo:v0.1.0"
+	if err := convergeWith(&recordComposer{}, "test", "", ConvergeOpts{Image: img}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Load()
+	cfg.Address = ""
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordComposer{}
+	if err := convergeWith(c, "test", "", ConvergeOpts{Image: img}); err != nil {
+		t.Fatal(err)
+	}
+	want := append([][]string{peerDNSRemoveCmd}, composeConvergeCmds(img, false)...)
+	if !slices.EqualFunc(c.cmds, want, slices.Equal[[]string]) {
+		t.Errorf("ran %v, want %v", c.cmds, want)
+	}
+	// Once gone, nothing more runs.
+	c = &recordComposer{}
+	if err := convergeWith(c, "test", "", ConvergeOpts{Image: img}); err != nil {
+		t.Fatal(err)
+	}
+	if want := composeConvergeCmds(img, false); !slices.EqualFunc(c.cmds, want, slices.Equal[[]string]) {
+		t.Errorf("ran %v, want %v", c.cmds, want)
 	}
 }

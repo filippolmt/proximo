@@ -54,24 +54,23 @@ func StackDir() (string, error) {
 // copies the TLS material from certDir into the stack, writes the compose
 // environment file pinning the stack image, and returns the stack directory.
 func Materialize(tld, certDir, image string) (string, error) {
-	dir, _, err := materialize(tld, certDir, image)
-	return dir, err
-}
-
-// materialize is Materialize returning the configuration it materialized
-// from, so the converge knows whether the peer DNS service is there to start.
-func materialize(tld, certDir, image string) (string, config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return "", cfg, err
+		return "", err
 	}
+	return materialize(tld, certDir, image, cfg)
+}
+
+// materialize is Materialize from a configuration the caller already holds,
+// which decides the peer material and the peer DNS service.
+func materialize(tld, certDir, image string, cfg config.Config) (string, error) {
 	dir, err := StackDir()
 	if err != nil {
-		return "", cfg, err
+		return "", err
 	}
 	dataDir, err := config.DataDir()
 	if err != nil {
-		return "", cfg, err
+		return "", err
 	}
 	// Create the bind-mount sources so `docker compose` resolves the mounts and
 	// the host dirs are owned by the user (not root-created by the daemon, which
@@ -81,7 +80,7 @@ func materialize(tld, certDir, image string) (string, config.Config, error) {
 	// dir is harmless when it is not).
 	for _, sub := range []string{"traefik", "beszel"} {
 		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o755); err != nil {
-			return "", cfg, err
+			return "", err
 		}
 	}
 	walkErr := fs.WalkDir(assets, "assets", func(path string, d fs.DirEntry, err error) error {
@@ -110,28 +109,28 @@ func materialize(tld, certDir, image string) (string, config.Config, error) {
 		return os.WriteFile(dest, data, 0o644)
 	})
 	if walkErr != nil {
-		return "", cfg, walkErr
+		return "", walkErr
 	}
 	if err := copyCA(dir, certDir); err != nil {
-		return "", cfg, err
+		return "", err
 	}
 	// The peer material rides the ca mount the watcher already has, so the
 	// Compose file is the same whether or not this machine shares.
 	if err := copyPeer(filepath.Join(dir, "ca"), certDir, cfg); err != nil {
-		return "", cfg, err
+		return "", err
 	}
 	if err := writeEnv(dir, tld, image); err != nil {
-		return "", cfg, err
+		return "", err
 	}
 	if err := writeDevOverride(dir, image); err != nil {
-		return "", cfg, err
+		return "", err
 	}
 	if peerDNSConfigured(cfg) {
 		if err := appendPeerDNS(dir, cfg); err != nil {
-			return "", cfg, err
+			return "", err
 		}
 	}
-	return dir, cfg, nil
+	return dir, nil
 }
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
@@ -406,7 +405,19 @@ func convergeWith(c Composer, tld, certDir string, opts ConvergeOpts) error {
 // image has nothing to do with them failing.
 func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, error) {
 	image := opts.EffectiveImage()
-	dir, cfg, err := materialize(tld, certDir, image)
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	// A value unset since the last converge leaves a peer DNS service that only
+	// the previous Compose file still describes: remove it before that file is
+	// rewritten. A machine that never configured one runs nothing here.
+	if stack, err := StackDir(); err == nil && composeHasPeerDNS(stack) && !peerDNSConfigured(cfg) {
+		if err := c.Compose(stack, peerDNSRemoveCmd...); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ %s: could not remove the peer DNS service: %v\n", peerDNSRole, err)
+		}
+	}
+	dir, err := materialize(tld, certDir, image, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -416,8 +427,7 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 		}
 	}
 	if peerDNSConfigured(cfg) {
-		cfg.TLD = tld
-		startPeerDNS(c, dir, cfg)
+		startPeerDNS(c, dir, tld, cfg)
 	}
 	return dir, nil
 }
@@ -548,8 +558,8 @@ func composeConvergeCmds(image string, force bool) [][]string {
 // Down stops and removes the whole stack — core services plus the opt-in
 // observability dashboards — without touching host configuration. A plain
 // `docker compose down` leaves profile-gated services running, so the
-// observability profile must be enabled (and --remove-orphans added) for the
-// dashboards to be torn down together with the core stack.
+// observability and peer profiles must be enabled (and --remove-orphans added)
+// for the dashboards and the peer DNS service to be torn down with the core.
 func Down() error {
 	return downWith(defaultComposer)
 }
