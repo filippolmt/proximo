@@ -168,7 +168,10 @@ func ParseAddress(raw string) (string, error) {
 	if ip == nil {
 		return "", fmt.Errorf("invalid address %q: not an IP address", raw)
 	}
-	return ip.String(), nil
+	if ip.To4() == nil {
+		return "", fmt.Errorf("invalid address %q: the peer DNS service answers A records, so the address must be IPv4", raw)
+	}
+	return ip.To4().String(), nil
 }
 
 // AddressRule is printed on every `config address`: the held-by-an-interface

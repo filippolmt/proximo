@@ -229,7 +229,8 @@ func TestParseAddress(t *testing.T) {
 	if got, err := ParseAddress(" 100.89.88.2 "); err != nil || got != "100.89.88.2" {
 		t.Fatalf("ParseAddress = %q, %v", got, err)
 	}
-	for _, raw := range []string{"", "100.89.88", "studio-01.mesh.internal", "100.89.88.2/8"} {
+	// IPv6 is refused: the peer DNS service answers A records only.
+	for _, raw := range []string{"", "100.89.88", "studio-01.mesh.internal", "100.89.88.2/8", "fd7a:115c:a1e0::1"} {
 		if _, err := ParseAddress(raw); err == nil {
 			t.Errorf("ParseAddress(%q) accepted", raw)
 		}

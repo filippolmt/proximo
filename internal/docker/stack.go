@@ -54,13 +54,24 @@ func StackDir() (string, error) {
 // copies the TLS material from certDir into the stack, writes the compose
 // environment file pinning the stack image, and returns the stack directory.
 func Materialize(tld, certDir, image string) (string, error) {
+	dir, _, err := materialize(tld, certDir, image)
+	return dir, err
+}
+
+// materialize is Materialize returning the configuration it materialized
+// from, so the converge knows whether the peer DNS service is there to start.
+func materialize(tld, certDir, image string) (string, config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", cfg, err
+	}
 	dir, err := StackDir()
 	if err != nil {
-		return "", err
+		return "", cfg, err
 	}
 	dataDir, err := config.DataDir()
 	if err != nil {
-		return "", err
+		return "", cfg, err
 	}
 	// Create the bind-mount sources so `docker compose` resolves the mounts and
 	// the host dirs are owned by the user (not root-created by the daemon, which
@@ -70,7 +81,7 @@ func Materialize(tld, certDir, image string) (string, error) {
 	// dir is harmless when it is not).
 	for _, sub := range []string{"traefik", "beszel"} {
 		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o755); err != nil {
-			return "", err
+			return "", cfg, err
 		}
 	}
 	walkErr := fs.WalkDir(assets, "assets", func(path string, d fs.DirEntry, err error) error {
@@ -99,27 +110,28 @@ func Materialize(tld, certDir, image string) (string, error) {
 		return os.WriteFile(dest, data, 0o644)
 	})
 	if walkErr != nil {
-		return "", walkErr
+		return "", cfg, walkErr
 	}
 	if err := copyCA(dir, certDir); err != nil {
-		return "", err
+		return "", cfg, err
 	}
 	// The peer material rides the ca mount the watcher already has, so the
 	// Compose file is the same whether or not this machine shares.
-	cfg, err := config.Load()
-	if err != nil {
-		return "", err
-	}
 	if err := copyPeer(filepath.Join(dir, "ca"), certDir, cfg); err != nil {
-		return "", err
+		return "", cfg, err
 	}
 	if err := writeEnv(dir, tld, image); err != nil {
-		return "", err
+		return "", cfg, err
 	}
 	if err := writeDevOverride(dir, image); err != nil {
-		return "", err
+		return "", cfg, err
 	}
-	return dir, nil
+	if peerDNSConfigured(cfg) {
+		if err := appendPeerDNS(dir, cfg); err != nil {
+			return "", cfg, err
+		}
+	}
+	return dir, cfg, nil
 }
 
 // replaceSentinels substitutes the materialization sentinels (__TLD__,
@@ -394,7 +406,7 @@ func convergeWith(c Composer, tld, certDir string, opts ConvergeOpts) error {
 // image has nothing to do with them failing.
 func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, error) {
 	image := opts.EffectiveImage()
-	dir, err := Materialize(tld, certDir, image)
+	dir, cfg, err := materialize(tld, certDir, image)
 	if err != nil {
 		return "", err
 	}
@@ -402,6 +414,10 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 		if err := c.Compose(dir, args...); err != nil {
 			return "", remedyFor(image, err)
 		}
+	}
+	if peerDNSConfigured(cfg) {
+		cfg.TLD = tld
+		startPeerDNS(c, dir, cfg)
 	}
 	return dir, nil
 }
@@ -594,7 +610,8 @@ func downWith(c Composer) error {
 		// Nothing materialized; nothing to tear down.
 		return nil
 	}
-	return c.Compose(dir, "--profile", observabilityProfile, "down", "--remove-orphans")
+	// Both profiles, or their services outlive the core stack.
+	return c.Compose(dir, "--profile", observabilityProfile, "--profile", peerProfile, "down", "--remove-orphans")
 }
 
 // DownObservability stops and removes only the opt-in observability services,

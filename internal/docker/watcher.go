@@ -256,6 +256,7 @@ type dockerAPI interface {
 	NetworkConnect(context.Context, string, client.NetworkConnectOptions) (client.NetworkConnectResult, error)
 	NetworkDisconnect(context.Context, string, client.NetworkDisconnectOptions) (client.NetworkDisconnectResult, error)
 	Events(context.Context, client.EventsListOptions) client.EventsResult
+	ContainerStart(context.Context, string, client.ContainerStartOptions) (client.ContainerStartResult, error)
 }
 
 // Watcher keeps Traefik attached to the Docker networks of routed containers and
@@ -415,6 +416,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	}
 	containers := result.Items
 	w.noteHealthy(containers)
+	w.restartPeerDNS(ctx)
 
 	traefikID, traefikNets := findStackContainer(containers, "traefik")
 	if traefikID == "" {

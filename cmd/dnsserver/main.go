@@ -6,6 +6,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -26,7 +27,17 @@ func main() {
 	}
 
 	srv := &dns.Server{TLD: tld, Addr: addr, Upstream: upstream}
-	log.Printf("proximo dns: serving *.%s -> 127.0.0.1 on %s", tld, addr)
+	// The peer DNS service runs this binary too, as its own Compose service.
+	if subtree := os.Getenv("PROXIMO_PEER_SUBTREE"); subtree != "" {
+		ip := net.ParseIP(os.Getenv("PROXIMO_PEER_ADDRESS"))
+		if ip == nil || ip.To4() == nil {
+			log.Fatalf("proximo dns: PROXIMO_PEER_ADDRESS %q is not an IPv4 address", os.Getenv("PROXIMO_PEER_ADDRESS"))
+		}
+		srv = &dns.Server{Addr: addr, PeerSubtree: subtree, PeerAddress: ip}
+		log.Printf("proximo dns: serving *.%s -> %s on %s, refusing every other name", subtree, ip, addr)
+	} else {
+		log.Printf("proximo dns: serving *.%s -> 127.0.0.1 on %s", tld, addr)
+	}
 	if err := srv.Run(); err != nil {
 		log.Fatalf("proximo dns: %v", err)
 	}

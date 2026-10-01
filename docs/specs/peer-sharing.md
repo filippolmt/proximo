@@ -329,7 +329,8 @@ proximo config address <ip>
 Set the address proximo answers this machine's peer names with — this machine's
 own address on the mesh.
 
-- **Refused**: anything that is not a parsable IP address.
+- **Refused**: anything that is not a parsable IPv4 address. The peer DNS
+  service answers `A` records only, so an IPv6 address could never be served.
 - **Warned at set time, never refused**: an address that no interface of this
   machine currently holds. The check compares the **exact** address against the
   addresses of **every** interface: a subnet test would assert nearly nothing,

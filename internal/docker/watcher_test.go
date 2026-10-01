@@ -517,6 +517,7 @@ type fakeDocker struct {
 
 	connected    []string // network IDs traefik was connected to
 	disconnected []string // network IDs traefik was disconnected from
+	started      []string // container IDs ContainerStart was called on
 	listN        int      // ContainerList call count
 	eventsN      int      // Events subscription count
 
@@ -537,6 +538,13 @@ func (f *fakeDocker) ContainerList(context.Context, client.ContainerListOptions)
 	defer f.mu.Unlock()
 	f.listN++
 	return client.ContainerListResult{Items: f.containers}, nil
+}
+
+func (f *fakeDocker) ContainerStart(_ context.Context, id string, _ client.ContainerStartOptions) (client.ContainerStartResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.started = append(f.started, id)
+	return client.ContainerStartResult{}, nil
 }
 
 func (f *fakeDocker) ContainerInspect(_ context.Context, id string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
