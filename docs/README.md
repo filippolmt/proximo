@@ -184,7 +184,12 @@ names, the team root, and the peer DNS listener
 [Degraded stack](troubleshooting.md#degraded-stack) ·
 [The stack runs an overridden image](troubleshooting.md#the-stack-runs-an-overridden-image) ·
 [The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled) ·
-[The agent skill is out of date](troubleshooting.md#the-agent-skill-is-out-of-date)
+[The agent skill is out of date](troubleshooting.md#the-agent-skill-is-out-of-date) ·
+[A shared route is not served on its peer names](troubleshooting.md#a-shared-route-is-not-served-on-its-peer-names) ·
+[proximo does not answer on the mesh address](troubleshooting.md#proximo-does-not-answer-on-the-mesh-address) ·
+[This machine's peer names do not resolve](troubleshooting.md#this-machines-peer-names-do-not-resolve) ·
+[A publishing machine is not a resolving peer](troubleshooting.md#a-publishing-machine-is-not-a-resolving-peer) ·
+[The machine's intermediate is about to expire](troubleshooting.md#the-machines-intermediate-is-about-to-expire)
 
 ### [Development](development.md)
 

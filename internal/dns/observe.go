@@ -32,13 +32,20 @@ const queryTimeout = 5 * time.Second
 // This is the half of the DNS answer that says whether the server itself is
 // alive; SystemResolves is the half that says whether the host uses it.
 func QueryLocal(ctx context.Context, name string) (string, error) {
+	return QueryAt(ctx, fmt.Sprintf("127.0.0.1:%d", config.DNSPort), name)
+}
+
+// QueryAt asks the DNS server at server (host:port) directly for name's A
+// record, and returns the address it answered with (empty when it answered
+// nothing) — the peer listener on the mesh address, or the loopback one.
+func QueryAt(ctx context.Context, server, name string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), dns.TypeA)
 	c := &dns.Client{Timeout: queryTimeout}
-	resp, _, err := c.ExchangeContext(ctx, m, fmt.Sprintf("127.0.0.1:%d", config.DNSPort))
+	resp, _, err := c.ExchangeContext(ctx, m, server)
 	if err != nil {
 		return "", err
 	}

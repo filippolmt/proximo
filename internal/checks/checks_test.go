@@ -77,7 +77,13 @@ func brokenEnv() Env {
 
 func TestHealthyMachineFailsNothing(t *testing.T) {
 	rep := Run(context.Background(), All(healthyEnv()))
+	// A healthy machine that has not opted in to sharing skips the peer
+	// Checks; TestPeerChecksSkippedUnconfigured asserts they pass on one that has.
+	peer := map[string]bool{IDPeerIntermediate: true, IDPeerRoutes: true, IDPeerDNS: true, IDMesh: true}
 	for _, o := range rep.Outcomes {
+		if peer[o.Check.ID] {
+			continue
+		}
 		if o.Result.Status != Pass {
 			t.Errorf("%s = %s (%s), want pass", o.Check.ID, o.Result.Status, o.Result.Detail)
 		}

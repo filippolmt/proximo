@@ -23,6 +23,11 @@ const (
 	// avoided because macOS mDNSResponder (Bonjour) already binds it.
 	DNSPort = 5354
 
+	// PeerDNSPort is the port the peer DNS service answers on, on this
+	// machine's mesh address — the port a mesh routes the peer subtree to. It
+	// shares the loopback port's number, on another address.
+	PeerDNSPort = 5354
+
 	// ObsHubPort is the loopback TCP host port the metrics hub is published on
 	// (only when the observability profile is active) so the one-shot bootstrap
 	// can reach the hub API directly, without depending on DNS/Traefik/TLS being
@@ -267,6 +272,20 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	return load(p)
+}
+
+// Peek is Load for a reader that must never write the host — a Check: it
+// creates no state home on a machine that has none.
+func Peek() (Config, error) {
+	home, err := HomePath()
+	if err != nil {
+		return Config{}, err
+	}
+	return load(filepath.Join(home, "config.json"))
+}
+
+func load(p string) (Config, error) {
 	data, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return Default(), nil

@@ -22,6 +22,7 @@ var unverifiable = map[string]string{
 	"an-inspected-route-404s-on-part-of-my-app":              "a property of the project's own paths, which proximo does not know",
 	"502503-right-after-a-container-restarts":                "cured by adding a healthcheck; until one exists there is nothing to read",
 	"the-stack-image-cannot-be-pulled":                       "carried by the converge that fails, which prints the Remedy itself",
+	"a-publishing-machine-is-not-a-resolving-peer":           "which machines the mesh distributes a nameserver group to is visible only from the mesh; this machine sees it as mesh failing, whose section points here",
 	"a-transcript-is-empty-or-says-the-container-is-gone":    "each outcome is a fact about one Exchange or Incident, named by `proximo errors` as it prints it; there is nothing about the host to state up front",
 }
 

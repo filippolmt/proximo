@@ -2,12 +2,14 @@ package checks
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/docker"
 	"github.com/filippolmt/proximo/internal/platform"
@@ -81,6 +83,20 @@ type Env struct {
 	// registry can tell a copy that is level with this binary from one that is
 	// behind it and one it may not touch.
 	AgentSkill func() ([]skill.Copy, error)
+
+	// Peer holds the peer-sharing values; on a machine that has not opted in
+	// they are empty and every peer Check is Skipped.
+	Peer config.Config
+	// PeerErr is why the configuration holding them could not be read, if it
+	// could not: the peer Checks then say so rather than claim a value is unset.
+	PeerErr error
+	// Intermediate returns the installed intermediate, nil when there is none.
+	Intermediate func() (*x509.Certificate, error)
+	// QueryAt asks a DNS server (host:port) directly for a name's A record.
+	QueryAt func(ctx context.Context, server, name string) (string, error)
+	// InterfaceAddrs lists every interface address of this machine, so a
+	// failed peer DNS bind can say whether the mesh address is held at all.
+	InterfaceAddrs func() ([]net.Addr, error)
 }
 
 // DefaultEnv wires the checks to the real host. It fails only where proximo
@@ -99,7 +115,16 @@ func DefaultEnv(tld string) (Env, error) {
 		return Env{}, err
 	}
 
+	// A configuration that cannot be read leaves the peer values empty: the
+	// peer Checks are then Skipped, and every other Check is unaffected.
+	peer, peerErr := config.Peek()
+
 	return Env{
+		Peer:                peer,
+		PeerErr:             peerErr,
+		Intermediate:        tls.Intermediate,
+		QueryAt:             dns.QueryAt,
+		InterfaceAddrs:      net.InterfaceAddrs,
 		TLD:                 tld,
 		CLIVersion:          version.Version,
 		CanonicalImage:      docker.CanonicalImage(),
