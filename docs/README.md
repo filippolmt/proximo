@@ -54,6 +54,24 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0009 — The stack declares its own address space](adr/0009-the-stack-declares-its-own-address-space.md)
 
+[0010 — Peer certificates come from a name-constrained team root](adr/0010-peer-certificates-come-from-a-name-constrained-team-root.md) *(proposed)*
+
+[0011 — A shared route answers on two peer names, derived from its local hosts](adr/0011-a-shared-route-answers-on-two-derived-peer-names.md) *(proposed)*
+
+[0012 — A peer host is answered without rewriting `Host`](adr/0012-a-peer-host-is-answered-without-rewriting-host.md) *(proposed)*
+
+[0013 — proximo's DNS server answers the peer subtree](adr/0013-proximo-answers-the-peer-subtree.md) *(proposed)*
+
+### [Specifications](specs/)
+
+Capabilities designed and not yet built. Nothing in them is honoured by the
+binary; each section is headed by the guide it moves into when it is built, and
+the document is deleted once it has been emptied. A *(proposed)* decision record
+belongs to one of them.
+
+[Sharing a route with colleagues](specs/peer-sharing.md) — `proximo.share`, peer
+names, the team root, and the peer DNS listener
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·
