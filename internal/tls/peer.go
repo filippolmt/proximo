@@ -19,13 +19,9 @@ import (
 // from the permitted subtrees is unrestricted — so every IP range, every email
 // address and every URI must be excluded too.
 func ValidateTeamRoot(pemBytes []byte, suffix string) error {
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return errors.New("not a PEM certificate")
-	}
-	c, err := x509.ParseCertificate(block.Bytes)
+	c, err := parseCertPEM(pemBytes)
 	if err != nil {
-		return fmt.Errorf("parse certificate: %w", err)
+		return err
 	}
 	var missing []string
 	if !c.IsCA {
@@ -36,9 +32,6 @@ func ValidateTeamRoot(pemBytes []byte, suffix string) error {
 	if strings.Contains(strings.ToLower(c.Subject.CommonName), strings.ToLower(caCommonName)) {
 		missing = append(missing, fmt.Sprintf("its common name contains %q, the local CA's", caCommonName))
 	}
-	if !c.PermittedDNSDomainsCritical {
-		missing = append(missing, "its name constraints are not marked critical")
-	}
 	covered, outside := permittedSubtrees(c.PermittedDNSDomains, suffix)
 	if !covered {
 		missing = append(missing, fmt.Sprintf("its permitted DNS subtree does not cover %s", suffix))
@@ -46,19 +39,43 @@ func ValidateTeamRoot(pemBytes []byte, suffix string) error {
 	if len(outside) > 0 {
 		missing = append(missing, fmt.Sprintf("it permits %s, outside %s", strings.Join(outside, ", "), suffix))
 	}
-	if !excludesAll(c.ExcludedIPRanges, "0.0.0.0/0") || !excludesAll(c.ExcludedIPRanges, "::/0") {
-		missing = append(missing, "it does not exclude every IP address (0.0.0.0/0 and ::/0)")
-	}
-	if !slices.Contains(c.ExcludedEmailAddresses, "") {
-		missing = append(missing, "it does not exclude every email address")
-	}
-	if !slices.Contains(c.ExcludedURIDomains, "") {
-		missing = append(missing, "it does not exclude every URI")
-	}
+	missing = append(missing, nameTypeFaults(c)...)
 	if len(missing) > 0 {
 		return fmt.Errorf("refused: %s", strings.Join(missing, "; "))
 	}
 	return nil
+}
+
+// nameTypeFaults lists what leaves a CA's name constraints open: constraints
+// not marked critical, and any name type — IP, email, URI — not excluded
+// entirely. The team root and every intermediate are held to it alike.
+func nameTypeFaults(c *x509.Certificate) []string {
+	var faults []string
+	if !c.PermittedDNSDomainsCritical {
+		faults = append(faults, "its name constraints are not marked critical")
+	}
+	if !excludesAll(c.ExcludedIPRanges, "0.0.0.0/0") || !excludesAll(c.ExcludedIPRanges, "::/0") {
+		faults = append(faults, "it does not exclude every IP address (0.0.0.0/0 and ::/0)")
+	}
+	if !slices.Contains(c.ExcludedEmailAddresses, "") {
+		faults = append(faults, "it does not exclude every email address")
+	}
+	if !slices.Contains(c.ExcludedURIDomains, "") {
+		faults = append(faults, "it does not exclude every URI")
+	}
+	return faults
+}
+
+func parseCertPEM(data []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, errors.New("not a PEM certificate")
+	}
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	return c, nil
 }
 
 // permittedSubtrees reports whether one permitted DNS subtree is the suffix

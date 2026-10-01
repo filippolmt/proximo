@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/filippolmt/proximo/internal/config"
+	"github.com/filippolmt/proximo/internal/tls"
 )
 
 // TestConfigCAPathPrintsWithoutSideEffects asserts `config ca-path` prints the
@@ -176,5 +177,112 @@ func TestConfigRefusals(t *testing.T) {
 				t.Errorf("config = %+v, %v; want the default", cfg, err)
 			}
 		})
+	}
+}
+
+// enrol configures a machine up to its CSR and returns the team root's
+// files, so a test can play the custodian.
+func enrol(t *testing.T) (rootPEM, rootKeyPEM, csrPEM []byte) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	rootPEM, rootKeyPEM, err := tls.NewTeamRoot("mesh.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "team-root.crt")
+	if err := os.WriteFile(root, rootPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"peer-suffix", "mesh.internal"}, {"machine", "studio-01"}, {"team-root", root},
+	} {
+		if _, err := runConfig(t, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := runConfig(t, "csr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rootPEM, rootKeyPEM, []byte(out)
+}
+
+// config csr prints the CSR and nothing else, since it is redirected to a file.
+func TestConfigCSRPrintsOnlyTheRequest(t *testing.T) {
+	_, _, csr := enrol(t)
+	if !strings.HasPrefix(string(csr), "-----BEGIN CERTIFICATE REQUEST-----") || !strings.HasSuffix(string(csr), "-----END CERTIFICATE REQUEST-----\n") {
+		t.Errorf("output = %q", csr)
+	}
+}
+
+func TestConfigCSRNeedsTheMachineAndSuffix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := runConfig(t, "csr"); err == nil || !strings.Contains(err.Error(), "Remedy: proximo config machine") {
+		t.Fatalf("err = %v, want a Remedy naming config machine", err)
+	}
+	if _, err := runConfig(t, "machine", "studio-01"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, "csr"); err == nil || !strings.Contains(err.Error(), "Remedy: proximo config peer-suffix") {
+		t.Fatalf("err = %v, want a Remedy naming config peer-suffix", err)
+	}
+}
+
+func TestConfigIntermediate(t *testing.T) {
+	rootPEM, rootKeyPEM, csr := enrol(t)
+	intPEM, err := tls.SignIntermediate(rootPEM, rootKeyPEM, csr, "studio-01", "mesh.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "intermediate.crt")
+	if err := os.WriteFile(file, intPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runConfig(t, "intermediate", file)
+	if err != nil || !strings.Contains(out, "Saved intermediate") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	if c, err := tls.Intermediate(); err != nil || c == nil {
+		t.Fatalf("Intermediate() = %v, %v", c, err)
+	}
+
+	// The intermediate is constrained to the old label: renaming the machine
+	// says so, and names the ceremony.
+	out, err = runConfig(t, "machine", "studio-02")
+	if err != nil || !strings.Contains(out, "Remedy: proximo config csr") {
+		t.Errorf("out = %q, err = %v; want a warning naming config csr", out, err)
+	}
+}
+
+func TestConfigIntermediateRefusesAnotherMachines(t *testing.T) {
+	rootPEM, rootKeyPEM, _ := enrol(t)
+	// A CSR for the same name, from a key this machine does not hold.
+	home := os.Getenv("HOME")
+	t.Setenv("HOME", t.TempDir())
+	other, err := tls.MachineCSR("studio-01", "mesh.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	intPEM, err := tls.SignIntermediate(rootPEM, rootKeyPEM, other, "studio-01", "mesh.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "intermediate.crt")
+	if err := os.WriteFile(file, intPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, "intermediate", file); err == nil || !strings.Contains(err.Error(), "machine key") {
+		t.Fatalf("err = %v, want a refusal naming the machine key", err)
+	}
+	if c, _ := tls.Intermediate(); c != nil {
+		t.Error("a refused intermediate was installed")
+	}
+}
+
+func TestConfigIntermediateNeedsItsValues(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := runConfig(t, "intermediate", "/nonexistent.crt"); err == nil || !strings.Contains(err.Error(), "Remedy: proximo config machine") {
+		t.Fatalf("err = %v, want a Remedy naming config machine", err)
 	}
 }
