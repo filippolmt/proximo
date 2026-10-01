@@ -118,7 +118,7 @@ maps them onto one product.
 
 1. Be enrolled in the mesh, and be a resolving peer.
 2. `proximo config peer-suffix <suffix>`, then `proximo config team-root <path>`,
-   then `sudo proximo trust`. Fully restart the browser.
+   then `proximo trust`, which asks for `sudo` itself. Fully restart the browser.
 3. Use Chrome 126 or later, or Firefox.
 
 **To share your own routes** — additionally, in this order:
