@@ -28,6 +28,8 @@ func newConfigCmd() *cobra.Command {
 	cmd.AddCommand(newConfigAddressCmd())
 	cmd.AddCommand(newConfigTeamRootCmd())
 	cmd.AddCommand(newConfigMeshRemedyCmd())
+	cmd.AddCommand(newConfigCSRCmd())
+	cmd.AddCommand(newConfigIntermediateCmd())
 	return cmd
 }
 
@@ -51,6 +53,11 @@ func newConfigMachineCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			warnIntermediate(cmd, m, cfg.PeerSuffix)
 			return savePeerValue(cmd, "machine", m, func(c *config.Config) { c.Machine = m }, config.MachineRule)
 		},
 	}
@@ -86,6 +93,7 @@ func newConfigPeerSuffixCmd() *cobra.Command {
 					fmt.Fprintf(cmd.OutOrStdout(), "%s%v\n    Remedy: proximo config team-root <path>\n", warnPrefix, err)
 				}
 			}
+			warnIntermediate(cmd, cfg.Machine, s)
 			return savePeerValue(cmd, "peer-suffix", s, func(c *config.Config) { c.PeerSuffix = s }, "")
 		},
 	}
@@ -165,6 +173,98 @@ func newConfigMeshRemedyCmd() *cobra.Command {
 			r := args[0]
 			return savePeerValue(cmd, "mesh-remedy", r, func(c *config.Config) { c.MeshRemedy = r }, "")
 		},
+	}
+}
+
+func newConfigCSRCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "csr",
+		Short:  "Print the certificate signing request for this machine's intermediate",
+		Hidden: true,
+		Long: "Print, on stdout and nothing else, the CSR a custodian signs into this\n" +
+			"machine's intermediate. The machine key is created only if none exists\n" +
+			"and never leaves the machine; run again, the same CSR is printed.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if err := requirePeerValues(cfg, "machine", "peer-suffix"); err != nil {
+				return err
+			}
+			csr, err := tls.MachineCSR(cfg.Machine, cfg.PeerSuffix)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(csr)
+			return err
+		},
+	}
+}
+
+func newConfigIntermediateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "intermediate <file>",
+		Short:  "Install the intermediate a custodian signed from this machine's CSR",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if err := requirePeerValues(cfg, "machine", "peer-suffix", "team-root"); err != nil {
+				return err
+			}
+			// The root is judged again: the file may have changed since config
+			// team-root accepted it, and the intermediate inherits its reach.
+			if err := checkTeamRoot(cfg.TeamRoot, cfg.PeerSuffix); err != nil {
+				return err
+			}
+			data, err := os.ReadFile(args[0])
+			if err != nil {
+				return err
+			}
+			root, err := os.ReadFile(cfg.TeamRoot)
+			if err != nil {
+				return err
+			}
+			if err := tls.ValidateIntermediate(data, root, cfg.Machine, cfg.PeerSuffix); err != nil {
+				return fmt.Errorf("intermediate %s: %w", args[0], err)
+			}
+			if err := tls.InstallIntermediate(data); err != nil {
+				return err
+			}
+			c, err := tls.Intermediate()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Saved intermediate for %s, valid until %s\n",
+				tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), c.NotAfter.Format("2006-01-02"))
+			return nil
+		},
+	}
+}
+
+// requirePeerValues refuses, with a Remedy, when one of the named values is
+// unset — the first missing one, in the order they are set.
+func requirePeerValues(cfg config.Config, names ...string) error {
+	set := map[string]string{"machine": cfg.Machine, "peer-suffix": cfg.PeerSuffix, "team-root": cfg.TeamRoot}
+	arg := map[string]string{"machine": "<label>", "peer-suffix": "<suffix>", "team-root": "<path>"}
+	for _, n := range names {
+		if set[n] == "" {
+			return fmt.Errorf("%s is not configured\n    Remedy: proximo config %s %s", n, n, arg[n])
+		}
+	}
+	return nil
+}
+
+// warnIntermediate reports an installed intermediate that a new machine label
+// or Peer suffix leaves behind: it is constrained to the old one.
+func warnIntermediate(cmd *cobra.Command, machine, suffix string) {
+	if old, ok := tls.IntermediateFor(machine, suffix); old != "" && !ok {
+		fmt.Fprintf(cmd.OutOrStdout(), "%sthe installed intermediate is constrained to %s, so it no longer signs this machine's peer names.\n    Remedy: proximo config csr\n", warnPrefix, old)
 	}
 }
 
