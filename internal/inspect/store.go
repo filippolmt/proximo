@@ -71,7 +71,7 @@ type Exchange struct {
 	HasSnapshot bool `json:"has_snapshot"`
 
 	// Peer marks an Exchange that arrived on a peer name — a colleague's
-	// request. Set by the CLI, which knows the Peer suffix; the hop never does.
+	// browser asked. Set by the CLI, which knows the Peer suffix; the hop never does.
 	// An agent reading the JSON knows neither the TLD nor the suffix, so it
 	// could not classify Host without a second command.
 	Peer bool `json:"peer,omitempty"`

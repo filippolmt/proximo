@@ -209,7 +209,7 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 		if !rc.share || peer == (PeerNames{}) || h == "" {
 			return ""
 		}
-		n, _ := peer.name(h, tld)
+		n, _ := peer.Name(h, tld)
 		return n
 	}
 	var routes []Route

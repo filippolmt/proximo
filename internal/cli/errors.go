@@ -103,11 +103,13 @@ func newErrorsCmd() *cobra.Command {
 			// Whether an Exchange arrived on a peer name is read off this
 			// machine's subtree; nothing about the client is read. Unconfigured,
 			// nothing is one.
-			cfg, err := config.Load()
-			if err != nil {
-				return err
+			// A configuration that cannot be read degrades to no peer names:
+			// this command serves .test, and sharing must never break it.
+			var peer docker.PeerNames
+			cfg, cfgErr := config.Peek()
+			if cfgErr == nil {
+				peer = docker.PeerNames{Machine: cfg.Machine, Suffix: cfg.PeerSuffix}
 			}
-			peer := docker.PeerNames{Machine: cfg.Machine, Suffix: cfg.PeerSuffix}
 			markPeer(window, peer)
 			exchanges := inspect.Select(window, host, cutoff, limit, !all)
 			grouped := byService(r, exchanges)
@@ -135,16 +137,13 @@ func newErrorsCmd() *cobra.Command {
 			// --json is the reader that will never run `proximo doctor` on its own.
 			notes := listingNotes(cmd.Context(), host, len(rows) == 0)
 			if host != "" {
-				serviceOf := func(ex []inspect.Exchange) string {
+				serviceOf := func(ex []inspect.Exchange) []string {
 					var names []string
 					for s := range byService(r, ex) {
 						names = append(names, string(s))
 					}
 					slices.Sort(names)
-					if len(names) == 0 {
-						return ""
-					}
-					return names[0]
+					return names
 				}
 				if note := peerExclusionNote(window, host, cfg.TLD, peer, cutoff, all, serviceOf); note != "" {
 					notes = append(notes, note)
@@ -786,16 +785,17 @@ func writeWhole(w io.Writer, heading []string, tr transcript.Transcript) {
 // inside it.
 func markPeer(exchanges []inspect.Exchange, p docker.PeerNames) {
 	for i := range exchanges {
-		exchanges[i].Peer = p.Holds(exchanges[i].Host)
+		exchanges[i].Peer = p.IsPeerName(exchanges[i].Host)
 	}
 }
 
 // peerExclusionNote says how many Exchanges --host left out because they
 // arrived on the named host's peer name, and names the command that includes
 // them: --service, which unions local and peer Exchanges because it selects by
-// backend. --host itself stays an exact match.
-func peerExclusionNote(window []inspect.Exchange, host, tld string, p docker.PeerNames, cutoff time.Time, all bool, serviceOf func([]inspect.Exchange) string) string {
-	if p.Machine == "" || p.Suffix == "" {
+// backend. --host itself stays an exact match. When several services served
+// them, every candidate is named rather than one chosen.
+func peerExclusionNote(window []inspect.Exchange, host, tld string, p docker.PeerNames, cutoff time.Time, all bool, servicesOf func([]inspect.Exchange) []string) string {
+	if !p.Configured() {
 		return ""
 	}
 	peerHost, ok := p.Name(host, tld)
@@ -806,9 +806,14 @@ func peerExclusionNote(window []inspect.Exchange, host, tld string, p docker.Pee
 	if len(excluded) == 0 {
 		return ""
 	}
-	n, service := len(excluded), serviceOf(excluded)
-	if service == "" {
-		service = "<service>"
+	services := servicesOf(excluded)
+	if len(services) == 0 {
+		services = []string{"<service>"}
 	}
-	return fmt.Sprintf("%d Exchange(s) arrived on %s, its peer name, and are not listed: --host is an exact match. `proximo errors --service %s` includes them.", n, peerHost, service)
+	cmds := make([]string, len(services))
+	for i, s := range services {
+		cmds[i] = "`proximo errors --service " + s + "`"
+	}
+	return fmt.Sprintf("%d Exchange(s) arrived on %s, its peer name, and are not listed: --host is an exact match. %s, without --host, includes them.",
+		len(excluded), peerHost, strings.Join(cmds, " or "))
 }

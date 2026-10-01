@@ -61,14 +61,19 @@ func TestPeerExclusionNote(t *testing.T) {
 		{Host: "api.studio-01.mesh.internal", At: now, Status: 500},
 		{Host: "api.studio-01.mesh.internal", At: now, Status: 502},
 	}
-	note := peerExclusionNote(window, "api.test", "test", errorsPeer, now.Add(-time.Hour), false, func([]inspect.Exchange) string { return "shop/api" })
+	note := peerExclusionNote(window, "api.test", "test", errorsPeer, now.Add(-time.Hour), false, func([]inspect.Exchange) []string { return []string{"shop/api"} })
 	if !strings.Contains(note, "2 Exchange") || !strings.Contains(note, "api.studio-01.mesh.internal") || !strings.Contains(note, "--service shop/api") {
 		t.Errorf("note = %q", note)
 	}
-	if n := peerExclusionNote(window[:1], "api.test", "test", errorsPeer, now.Add(-time.Hour), false, func([]inspect.Exchange) string { return "shop/api" }); n != "" {
+	// Several services: every candidate, none chosen.
+	both := peerExclusionNote(window, "api.test", "test", errorsPeer, now.Add(-time.Hour), false, func([]inspect.Exchange) []string { return []string{"blog/api", "shop/api"} })
+	if !strings.Contains(both, "--service blog/api` or `proximo errors --service shop/api") {
+		t.Errorf("note = %q", both)
+	}
+	if n := peerExclusionNote(window[:1], "api.test", "test", errorsPeer, now.Add(-time.Hour), false, func([]inspect.Exchange) []string { return []string{"shop/api"} }); n != "" {
 		t.Errorf("a note with no peer Exchange: %q", n)
 	}
-	if n := peerExclusionNote(window, "api.test", "test", docker.PeerNames{}, now.Add(-time.Hour), false, func([]inspect.Exchange) string { return "" }); n != "" {
+	if n := peerExclusionNote(window, "api.test", "test", docker.PeerNames{}, now.Add(-time.Hour), false, func([]inspect.Exchange) []string { return nil }); n != "" {
 		t.Errorf("a note on an unconfigured machine: %q", n)
 	}
 }
