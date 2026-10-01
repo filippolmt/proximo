@@ -35,9 +35,17 @@ hack/netbird-lab/ceremony.sh studio-01 mesh.internal <A-ip>
 It mints a throwaway team root under `mesh.internal` with
 [`tools/team-ca/team-ca.sh`](../../tools/team-ca/team-ca.sh), sets `peer-suffix`, `machine`,
 `address` and `team-root`, signs the CSR into an intermediate, removes the plaintext root
-key, runs `sudo proximo trust` and `proximo up`, then `proximo doctor`. Expected:
+key, runs `proximo trust` and `proximo up`, then `proximo doctor`. Expected:
 `peer-intermediate`, `peer-routes` and `peer-dns` pass; `mesh` fails, because nothing routes
 the subtree yet.
+
+On macOS with NetBird, `peer-dns` fails with an i/o timeout although the service works: the
+machine cannot reach its own mesh address ([#144](https://github.com/filippolmt/proximo/issues/144)).
+Query it from B instead, and treat that answer as the gate for the nameserver group:
+
+```sh
+dig @<A-ip> -p 5354 proximo-doctor.studio-01.mesh.internal +short   # <A-ip>
+```
 
 Then label one app that has a real login with `proximo.share=true`. `proximo status` shows
 its two peer names in the `PEER` column.
@@ -66,12 +74,16 @@ binary of the same version. Then:
 ```sh
 proximo config peer-suffix mesh.internal
 proximo config team-root ~/team-root.crt
-sudo proximo trust
+proximo trust
 resolvectl query proximo-doctor.studio-01.mesh.internal   # answers <A-ip>
 resolvectl query proximo-doctor.nobody.mesh.internal      # control: no answer
 ```
 
-`trust` mints B's own local CA too; it is harmless and needs no Docker. Fully restart Chrome.
+Run `trust` **without** `sudo`: it asks for `sudo` itself. Under `sudo`, Ubuntu sets
+`HOME=/root`, so proximo reads root's configuration, finds no team root and silently installs
+only a local CA of root's. `trust` mints B's own local CA too; it is harmless and needs no
+Docker. Chrome's NSS store, `~/.pki/nssdb`, exists only once Chrome has run: start and quit
+Chrome once before `trust`, then fully restart it.
 A snap Chromium or Firefox keeps its own NSS store: use the deb Chrome.
 
 ## 4. The acceptance items
@@ -81,9 +93,10 @@ Each item is ticked on the issue with what was seen, including the connection ty
 1. **The Qualified peer name in a browser.** On B, open `https://<app>.<project>.studio-01.mesh.internal`:
    no certificate warning, log in, navigate, reload — the session holds. Compare with the
    Bare name `https://<app>.studio-01.mesh.internal`.
-2. **A session survives `Login required`.** Set the account's peer login expiration to its
-   minimum and wait until A's `netbird status` reads `Login required`. Record what B sees
-   meanwhile. Log A in again with `netbird up`, then reload on B: the same session, no new
+2. **A session survives `Login required`.** Enable the account's peer login expiration at its
+   minimum, and the per-peer expiration on A only. The API reports A `login_expired`; the
+   client itself keeps saying `Connected` and `netbird up` answers `Already connected`. Record what B sees
+   meanwhile. Log A in again with `netbird down` then `netbird up`, then reload on B: the same session, no new
    login.
 3. **The mesh address under `Login required`.** During item 2, on A:
    `ifconfig | grep <A-ip>`. Repeat after a deliberate `netbird down`. Record both: held or

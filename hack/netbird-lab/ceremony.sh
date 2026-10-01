@@ -29,7 +29,7 @@ proximo config csr > machine.csr
 proximo config intermediate "$lab/intermediate.crt"
 rm -f team-root.key
 
-sudo proximo trust
+proximo trust
 proximo up
 proximo doctor || true
 
