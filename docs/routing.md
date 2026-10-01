@@ -21,6 +21,7 @@ keep working for advanced cases.
 | `proximo.cors` | no | — | Add CORS response headers. `true` for permissive CORS, or a comma-separated allowed-origin list. A blank value is skipped with a warning. |
 | `proximo.header.<Name>` | no | — | Add a custom response header `<Name>: <value>`. Repeatable; an invalid header name is skipped with a warning. |
 | `proximo.inspect` | no | `false` | Serve the container's HTTP routes through the Inspection hop, which injects a reporting agent into HTML responses and records what the browser reports. Truthy: `true`/`1`/`yes`. HTTP-only; ignored on TCP routes and on replica sets. See [Inspection](observability.md#inspection--what-the-browser-saw). |
+| `proximo.share` | no | `false` | Also serve the container's HTTP routes on their [peer names](#proximoshare--share-a-route-with-colleagues), for colleagues on the team's mesh. Truthy: `true`/`1`/`yes`. Declares intent, not reachability. HTTP-only; ignored with a warning on TCP routes. |
 | `proximo.tcp.port` | no | — | Route the container's hosts over **TCP-over-TLS by SNI** on the given backend port (for DBs, gRPC, MQTT, HTTPS backends). Invalid values are skipped with a warning. |
 | `proximo.tcp.ports` | no | — | Comma-separated form of `proximo.tcp.port`. Note: SNI routes by host only, so several ports on one host cannot be told apart — give each TCP service its own host. |
 | `proximo.tcp.tls` | no | `terminate` | TLS mode for TCP routes: `terminate` (proxy terminates with the per-host proximo cert, forwards plaintext) or `passthrough` (proxy routes the raw TLS stream by SNI; the backend terminates). |
@@ -358,6 +359,127 @@ backend; scale the service to one replica to inspect it.
 Read [Inspection](observability.md#inspection--what-the-browser-saw) for what is
 captured, what is deliberately not, and where the data lives.
 
+## proximo.share — share a route with colleagues
+
+*[Constraints](sharing.md#constraints) 1, 2, 3.*
+
+`proximo.share` is a **pure switch**: not required, default `false`, truthy
+`true`/`1`/`yes` (case-insensitive), anything else leaves sharing off — the
+grammar of `proximo.redirect`, `proximo.inspect` and `proximo.transcript`. It
+carries no name, no list of people and no suffix:
+
+- **No name.** The peer names are derived. A label that could set one would let
+  two routes on one machine claim the same peer name.
+- **No policy.** The mesh grants access to a *machine*, never to a route
+  ([who can reach a shared route](sharing.md#who-can-reach-a-shared-route)), and proximo
+  holds no identity a list could be matched against. A list in the label would
+  look enforced and would not be. A route that must be narrower than its machine
+  carries [`proximo.auth`](#proximo-middlewares--auth-cors-custom-headers).
+- **No suffix.** The machine label, the Peer suffix and the certificates are
+  machine configuration ([`docs/cli.md`](cli.md#proximo-config-machine)).
+
+A shared route keeps its Bare and Qualified `.test` hosts, unchanged in name and
+in meaning. It **gains two peer names**, always both:
+
+| | Derivation | `api.test` in project `shop` |
+| --- | --- | --- |
+| **Bare peer name** | the declared host, with `.<tld>` replaced by `.<machine>.<suffix>` | `api.<machine>.<suffix>` |
+| **Qualified peer name** | the Qualified host, with `.<tld>` replaced by `.<machine>.<suffix>` | `api.shop.<machine>.<suffix>` |
+
+The rule is the local one with a longer suffix, so it holds wherever the local
+rule holds:
+
+- **A multi-label declared host keeps its whole base.** `api.v2.test` in project
+  `shop` answers at `api.v2.<machine>.<suffix>` and
+  `api.v2.shop.<machine>.<suffix>`.
+- **A route whose host already carries its Namespace** (`api.shop.test` in
+  project `shop`) has no Qualified host, so it gets one peer name,
+  `api.shop.<machine>.<suffix>`.
+- **A container outside a Compose project** has no Namespace and gets the Bare
+  peer name only — the same missing safety net
+  [the two hosts every route gets](#the-two-hosts-every-route-gets)
+  already declares.
+- **A declared host outside the TLD** (`api.example.com`) produces no peer names,
+  with a watcher warning. The route's other hosts are still shared.
+- **A container that loses a Collision** for its Bare host keeps only its
+  Qualified peer name: there is no Bare host to derive the other from. A
+  Collision between peer names on one machine is the local Collision carried
+  over, reported by the same machinery. Two machines never collide: the machine
+  label separates them.
+- **A peer name longer than 253 octets, or with a label longer than 63**, is not
+  served, with a watcher warning — a label fault, like every other.
+
+Everything else about the route travels with it unchanged. The peer names go to
+the **same service** through the **same middleware chain** — `proximo.auth`,
+`proximo.cors`, `proximo.header.*` and `proximo.inspect` included — so a
+colleague's request is the request a local browser makes, through another name.
+`proximo.redirect` applies to the peer names with identical semantics: opt-in,
+`302`, and no `:80` route without it. **Replica sets are shared normally**: the
+peer names point at the service, not at one backend.
+
+`proximo.share` is per container, so a host split across containers with
+`proximo.path` is shared per container. Sharing only the container that serves
+`/api` gives a peer name that answers `404` at its root and serves `/api`. That
+is the contract working: a peer name is the union of the routes that opted in,
+not a proxy for the whole site.
+
+**TCP routes are not shared.** A route declaring `proximo.tcp.port` is routed by
+SNI and has no HTTP layer, and a `passthrough` backend could not present a peer
+certificate anyway. The label is ignored, with a watcher warning and a
+[`proximo status`](cli.md#the-peer-column) row.
+
+**The label declares intent, never reachability.**
+
+> `proximo.share` declares that this route is to be served on its peer names.
+> Whether a colleague can actually reach it additionally depends on this
+> machine's machine label, Peer suffix, team root and intermediate being
+> configured, and on the mesh being up — none of which the label controls.
+
+With any of the four missing, proximo emits no peer route: the label is set,
+correctly honoured, and the route does not answer on its peer names.
+`proximo status` says which value is missing. With the mesh down, proximo
+cannot tell, and says nothing.
+
+**An unshared route is unreachable from the mesh by construction.** Without the
+label there is no peer route at all, so a colleague who guesses an unshared
+route's peer name gets exactly what a name nobody declared gets
+([a shared link fails with a certificate error](troubleshooting.md#a-colleague-sees-a-certificate-error-on-a-shared-link)).
+Removing the label withdraws the peer route at the next reconcile, with no
+draining and no grace period: a colleague holding the page open holds a page,
+not a session.
+
+**Send the Qualified peer name.** `proximo status` prints both, because it
+reports facts, but the Bare peer name is the one a Collision can move.
+
+### What an app needs to be shareable
+
+*[Constraints](sharing.md#constraints) 4.* proximo detects nothing here. An app is shareable when it has two
+properties, and the self-test below checks both:
+
+1. **Every absolute URL is derived from the request** — `Host`, or
+   `X-Forwarded-Host` — never from a configured base URL (`APP_URL`,
+   `SITE_URL`, `ROOT_URL` and the like). Traefik passes `Host` through
+   unrewritten and sets `X-Forwarded-Host` to the peer name and
+   `X-Forwarded-Proto` to `https`, so an app that builds URLs from the request
+   needs no change. One built from a configured base sends a colleague's browser
+   to a `.test` host that does not resolve on their machine.
+2. **Cookies are host-only**, with no `Domain` attribute. A cookie pinned to
+   `Domain=<name>.test` is refused on the peer name, so the login appears to
+   succeed and never sticks. A cookie pinned to the Peer suffix is sent to every
+   shared route of every colleague, because the whole mesh is one site.
+
+**The self-test**: open your own route's **Qualified** peer name in your own
+browser, log in, and navigate. If you stay on the peer name and the session
+holds, the app is shareable. It needs no colleague, because this machine's
+resolver reaches its own peer names like anyone else's.
+
+A WebSocket needs no caveat: Traefik proxies the upgrade on the same route, and
+`Origin` and `Host` carry the same peer name, so an origin check comparing them
+passes.
+
+A session started on the `.test` host does not follow onto the peer name, and
+the reverse: they are different sites. You log in once per name.
+
 ## proximo.tcp.port — route TCP services by name (SNI)
 
 HTTP routing multiplexes every host on `:443` by the `Host` header, but raw TCP
@@ -507,6 +629,11 @@ labels:
 labels:
   - "proximo.hosts=web.test"
   - "proximo.inspect=true"
+
+# Share with colleagues on the team's mesh (needs this machine configured: see sharing.md)
+labels:
+  - "proximo.hosts=web.test"
+  - "proximo.share=true"
 
 # Advanced: native Traefik labels
 - "traefik.enable=true"

@@ -1,12 +1,8 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # A peer host is answered without rewriting `Host`
-
-> **Proposed.** Part of the [peer-sharing specification](../specs/peer-sharing.md),
-> which describes a capability the binary does not have yet. It becomes
-> `accepted` in the commit that builds it.
 
 A request from a colleague arrives at Traefik carrying a peer name, which is not
 under the machine's TLD. Something has to make the route answer it. The tempting
@@ -22,7 +18,8 @@ existing `websecure` entrypoint, matching the route's peer names. It points at t
   packets and terminates no HTTP. Rewriting `Host` would need a proxy proximo
   introduced and owned, TLS would terminate outside Traefik, and the application
   would be lied to about the name that was requested — the same lie the
-  specification refuses for response bodies, one layer down.
+  design refuses for response bodies
+  ([constraint 4](../sharing.md#constraints)), one layer down.
 - **Same service, same chain.** `proximo.auth`, `proximo.cors`, the custom headers
   and Inspection apply to a colleague's request exactly as to a local one. An
   inspected route's service *is* the Inspection hop, so excluding Inspection from

@@ -67,6 +67,7 @@ services speaking a label contract it has never seen
 | **dns** | `proximo` (`dnsserver`) | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
 | **watcher** | `proximo` (`watcher`) | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Records [Incidents](observability.md#incidents--what-the-runtime-declared) from the Docker event stream and publishes them on a loopback-only read API for `proximo errors`. Mounts the Docker socket and the CA. |
 | **inspector** | `proximo` (`inspector`) | The [Inspection](observability.md#inspection--what-the-browser-saw) hop. In the request path only for containers labelled `proximo.inspect`; idle otherwise. Publishes a loopback-only read API for `proximo errors` and holds Exchanges in memory, never on disk. |
+| **peer-dns** | `proximo` (`dnsserver`) | Only on a machine that [shares](sharing.md): answers this machine's peer subtree on its mesh address, `<address>:5354`, and refuses every other name. Profile-gated and not a core service — see [the peer DNS service](#the-peer-dns-service). |
 
 The watcher and Traefik share the host directory `~/.proximo/data/traefik`
 (**bind-mounted** into both at `/etc/traefik/dynamic`, not a Docker named volume):
@@ -178,14 +179,122 @@ falling back to the default TLD. `traefik.<tld>` is reserved for the stack.
 
 See [Routing](routing.md) for the label contract that drives all of this.
 
+## Peer sharing
+
+How a route labelled `proximo.share` reaches a colleague's browser — the how-to is
+[sharing.md](sharing.md), the label [routing.md](routing.md#proximoshare--share-a-route-with-colleagues).
+Every part of it is inert on a machine that has not opted in.
+
+### The peer DNS service
+
+*[Constraints](sharing.md#constraints) 6, 9. [ADR 0013](adr/0013-proximo-answers-the-peer-subtree.md).*
+
+proximo's DNS server answers this machine's own peer subtree, `<machine>.<suffix>`,
+and each colleague's resolver is routed to it by the mesh. Nothing central holds
+records about the machines: a machine's routes are known only to that machine,
+and are answered only by it, at any depth. A machine that is off stops answering
+for its names; nothing else answers for it with a stale address.
+
+- **A separate, peer-only listener.** The loopback DNS handler does not change.
+  The peer handler answers `A` for any name under `<machine>.<suffix>`, at any
+  depth, with the configured `<address>`; `AAAA` and every other type with
+  NOERROR and no records, as the loopback handler does for the TLD. Every name
+  outside the subtree gets **`REFUSED`**: no upstream forwarding and no `.test`,
+  so the publishing machine is never a recursive resolver for the mesh.
+- **Its own container port**, 5354. Docker Desktop rewrites the source address of a
+  published port, so the server cannot tell a mesh query from a loopback one by
+  its sender. The two handlers are kept apart by container port.
+- **Its own Compose service**, published only on `<address>:5354`, UDP and TCP.
+  A publish bound to an address no interface holds leaves its container
+  `created`, and Docker's restart policy never retries it. Inside the `dns`
+  service that would take `.test` down on every machine whose mesh is down at
+  start; in a service of its own it fails alone. Every interface is not an
+  option: Docker refuses a second publish of the loopback port, and it would
+  expose the listener on the LAN.
+- **Present if and only if** `machine`, the Peer suffix and `address` are all
+  configured. In any other state the service is absent from the materialised
+  Compose file, which is then byte-identical to that of a machine that does not
+  share; configured, the service is appended after the others and is
+  profile-gated, so the core `up` never waits on it. The certificates are not
+  required: a name that resolves while TLS fails is a stated state, not an error.
+- **The watcher restarts it.** Docker Desktop and the mesh client both start at
+  login, in no fixed order. Whenever the peer DNS service is `created` or
+  `exited`, the watcher runs `docker start` on it on its fixed 30-second tick, never on an
+  event, and logs a failed start once. It never
+  inspects host interfaces, touches no other service, and does nothing on a
+  machine where the service does not exist.
+- **Not a core service.** It is not one of the services `stack` requires, so a
+  mesh problem never fails `stack` and never skips the rest of `doctor`.
+
+### The peer route
+
+*[Constraints](sharing.md#constraints) 1, 4. [ADR 0012](adr/0012-a-peer-host-is-answered-without-rewriting-host.md).*
+
+For a shared HTTP route the watcher writes a **second router** on the
+`websecure` entrypoint. Its rule is the alternation of the route's peer names
+(with the route's path prefix, when it has one); it points at the **same
+service** as the local router — the Inspection hop's, when the route is
+inspected — and carries the **same middleware chain**. `Host` is never rewritten.
+With `proximo.redirect` it gets the same redirect on `web`.
+
+- **Peer hosts are a distinct field** of the routed container, never merged into
+  its local hosts. The local host list feeds the router rule, the SANs the local
+  CA signs and the Collision detector; a peer name reaching the local CA's
+  certificate would be valid and untrusted, and silent until a colleague's
+  browser refused it.
+- **The peer router is emitted only when** the machine label, the Peer suffix,
+  the team root and an intermediate for this machine's subtree are all
+  configured. The CLI then copies the peer material — the machine label and
+  suffix (`peer.json`), the intermediate and the machine key — into the stack's
+  `ca/` directory, which the watcher already mounts, so the Compose file does not
+  change; every `config` setter copies it at once and the watcher re-reads it each
+  reconcile (`internal/docker/peer.go`). Without them the route
+  stays local and fully working. A peer router served under an untrusted chain
+  would warn exactly as an interception does.
+- **proximo does not know a mesh exists.** Traefik publishes `:443` on every
+  interface already, and the mesh client runs on the host beside the stack.
+  Docker Desktop's forwarder serves the mesh interface. proximo calls no mesh API,
+  discovers nothing and names no vendor: it is told a label, a suffix and an
+  address.
+
+### Peer certificates and the default certificate
+
+*[Constraints](sharing.md#constraints) 7, 8. [ADR 0010](adr/0010-peer-certificates-come-from-a-name-constrained-team-root.md).*
+
+- **The team root** is a second trust anchor beside the machine's local CA, never
+  in place of it. It is installed and removed under **names of its own**, so
+  removing one anchor can never remove the other: its own Linux trust file
+  (`proximo-team-root.crt`), its own NSS nickname (`proximo team root`), and on
+  macOS deletion by SHA-1 fingerprint, because `delete-certificate -c` matches a
+  substring of a common name the team chose.
+- **The intermediate** is held in the TLS state directory with the machine key
+  that never leaves the machine.
+- **Peer leaves** are signed locally with the intermediate, exactly as the local
+  CA signs `.test` leaves: one per shared container, its peer names as exact
+  SANs, 397 days, reissued when its peer names change and removed when the
+  container stops being shared. The certificate file presents the intermediate
+  after the leaf, since a colleague's machine holds only the root. Traefik reads
+  them through the same file provider. SNI selects between a route's two leaves.
+- **No wildcard**, at any level (constraint 8).
+- **The default certificate is nameless.** Traefik has one TLS store and one
+  default certificate, served whenever no leaf matches the SNI. proximo writes a
+  certificate with **no SAN at all**, signed by the local CA, as that default —
+  always, with zero routes and whether or not the machine is configured. A name
+  this machine does not serve therefore gets the same certificate whether it is
+  an unshared route or an invented name, and the certificate names none of the
+  machine's local routes. A local `.test` name with no route stays in the error
+  class it had before: a trusted issuer and the wrong name. `sniStrict` is not
+  used: it is global, and would turn local clients without SNI into handshake
+  failures.
+
 ## Source map
 
 | Path | Responsibility |
 | --- | --- |
 | `main.go`, `internal/cli/` | The `proximo` command surface (Cobra). |
-| `internal/config/` | Persisted config (TLD), per-user paths. |
+| `internal/config/` | Persisted config (TLD, the peer-sharing values and their validation), per-user paths. |
 | `internal/dns/` | The wildcard DNS server + host-resolver wiring. |
-| `internal/tls/` | Local CA, leaf issuance, system + NSS trust. |
+| `internal/tls/` | Local CA, leaf issuance, system + NSS trust; the team root as a second anchor, the machine key, its CSR and its intermediate (`intermediate.go`, `peer.go`). |
 | `internal/docker/` | Embedded stack (`assets/`), `compose` driver, the watcher, what a container's labels declare (`labels.go`), the Incident store and its loopback read API. |
 | `internal/observability/` | Opt-in observability: generated hub secret + env files, Beszel hub-client bootstrap. |
 | `internal/platform/` | OS / package-manager detection, privileged host ops. |
@@ -193,3 +302,4 @@ See [Routing](routing.md) for the label contract that drives all of this.
 | `internal/transcript/` | Reading a Transcript back: the window an Exchange or an Incident fixes, the cut, and the silences it tells apart. |
 | `internal/inspect/` | The Inspection hop: the injected agent (`assets/agent.js`), response injection, CSP reconciliation, report ingest, the in-memory Exchange store. |
 | `cmd/dnsserver/`, `cmd/watcher/`, `cmd/inspector/` | Entrypoints for the in-stack services — all three built into the one published image by the root `Dockerfile`. |
+| `tools/team-ca/` | The custodian's tool: mints the team root and signs intermediates, run through Docker by `team-ca.sh`. Not shipped in the CLI. |

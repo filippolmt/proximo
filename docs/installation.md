@@ -103,6 +103,12 @@ Everything below is created by `install` and removed by `uninstall`.
 | **macOS** | `/etc/resolver/<tld>` → `nameserver 127.0.0.1` + `port 5354` | CA added to the system keychain trust store + NSS DBs (if any) |
 | **Linux** | `/etc/systemd/resolved.conf.d/proximo-<tld>.conf` → `DNS=127.0.0.1:5354`, `Domains=~<tld>`, then `systemd-resolved` is restarted | CA added to the system trust store + NSS DBs via `certutil` |
 
+On a machine that [shares](sharing.md) — `proximo config team-root` set — `install`
+also adds the team root to the same system and NSS stores, as a second anchor
+under names of its own (`proximo-team-root.crt` on Linux, the `proximo team root`
+NSS nickname), and `uninstall` removes it. Without `team-root`, nothing of it
+happens.
+
 `install` also refreshes any [agent Skill](skill.md) copy proximo itself wrote,
 bringing it level with the binary. It never creates one: a Skill appears only
 where you ran `proximo skill install`.
@@ -116,8 +122,8 @@ Docker-managed named volume, so a `docker volume prune` can't wipe it.
 
 | Path | Holds |
 | --- | --- |
-| `~/.proximo/config.json` | the persisted TLD |
-| `~/.proximo/tls/` | the local CA certificate and key (`ca.pem`, `ca-key.pem`) — external tools should query the CA path via [`proximo config ca-path`](cli.md#proximo-config-ca-path) instead of hardcoding it |
+| `~/.proximo/config.json` | the persisted TLD, and the [peer-sharing](sharing.md) values when set |
+| `~/.proximo/tls/` | the local CA certificate and key (`ca.pem`, `ca-key.pem`) — external tools should query the CA path via [`proximo config ca-path`](cli.md#proximo-config-ca-path) instead of hardcoding it — and, on a machine that shares, the machine key, its CSR and its intermediate (`machine-key.pem`, `machine.csr`, `intermediate.pem`) |
 | `~/.proximo/stack/` | the materialized `docker compose` stack (compose file, Traefik config, a copy of the CA for the watcher) |
 | `~/.proximo/data/traefik/` | **bind-mounted** into Traefik + the watcher: the dynamic routes and per-container certificates the watcher generates |
 | `~/.proximo/data/beszel/` | **bind-mounted** into the Beszel metrics hub when observability is enabled (`up --observability`): metrics history and hub users |

@@ -21,6 +21,14 @@ proximo <command> [args]
 | [`doctor`](#proximo-doctor) | Report every check, with a remedy per failure | no | no |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
+| [`config machine <label>`](#proximo-config-machine) | Set this machine's label in its peer names | no | no |
+| [`config peer-suffix <suffix>`](#proximo-config-peer-suffix) | Set the suffix every peer name lives under | no | no |
+| [`config address <ip>`](#proximo-config-address) | Set the mesh address this machine's peer names answer with | no | no |
+| [`config team-root <path>`](#proximo-config-team-root) | Point proximo at the team root certificate | no | no |
+| [`config csr`](#proximo-config-csr) | Print this machine's CSR for its intermediate | no | no |
+| [`config intermediate <file>`](#proximo-config-intermediate) | Install the intermediate signed from that CSR | no | no |
+| [`config mesh-remedy <command>`](#proximo-config-mesh-remedy) | Set the Remedy the `mesh` Check offers | no | no |
+| [`config unset <value>`](#proximo-config-unset) | Return a peer-sharing value to unconfigured | no | no |
 | [`skill install`](#proximo-skill-install) | Install the agent Skill for the coding agents on this host | no | no |
 | [`skill uninstall`](#proximo-skill-uninstall) | Remove the Skill copies proximo installed | no | no |
 | [`uninstall`](#proximo-uninstall) | Reverse all host changes + stop the stack | yes | yes |
@@ -98,6 +106,11 @@ HTTP→HTTPS redirect, so `http://logs.<tld>` / `http://metrics.<tld>` auto-redi
 to the trusted https host. Off by default: a plain `up` starts neither. `down` /
 `uninstall` tear them down too. See [Dev-time observability](observability.md).
 
+**Peer sharing.** When the peer DNS service cannot start, `up` succeeds, prints a
+warning naming `peer-dns` and the cause (the address is held by no
+interface), and exits 0, because `.test` works. A peer-side failure never fails
+the command that serves `.test`.
+
 ## proximo down
 
 Stop and remove the stack containers — the core services **and** the opt-in
@@ -167,6 +180,12 @@ the CA never made it into the browser's store or was regenerated.
 - **Needs sudo, no Docker**: it only writes host trust stores.
 - Reuses the existing CA (it never rotates it), so already-issued certificates
   stay valid. **Fully restart the browser afterwards** to pick up the CA.
+
+**Peer sharing.** `trust` and `install`: with `team-root` set, also install the team root
+in the system and NSS stores, as a second anchor, under names of its own; without
+it, they behave exactly as they would on a machine that does not share. The file
+is validated again first, and the anchor installed is recorded, so a replaced root
+takes the old one out and `uninstall` removes it even once the file is gone.
 
 ## proximo status
 
@@ -257,6 +276,45 @@ diagnoses — [`proximo doctor`](#proximo-doctor) reports those. A collision sho
 up in both by design: `status` shows it because the route's reachable URL
 changed, `doctor` because there is something to do about it.
 
+### The PEER column
+
+A `PEER` column appears
+**only when at least one route carries `proximo.share`**, the way `MIDDLEWARES`
+appears only when needed. Order: `CONTAINER | URL | PEER | MIDDLEWARES`. The cell
+mirrors the `URL` cell — the Bare peer name with `https://`, the Qualified one
+bare after `  + `:
+
+```
+CONTAINER      URL                                          PEER
+shop-api-1     https://api.test  + api.shop.test            https://api.studio-01.<suffix>  + api.shop.studio-01.<suffix>
+shop-worker-1  no route — observed for Incidents (proximo.transcript), service shop/worker
+db             tcp://db.test:5432 (terminate)  + db.shop.test  ⚠ proximo.share ignored on a TCP route
+web            https://app.test  + app.shop.test            ⚠ proximo.share is set; not served on its peer names (team-root and intermediate are not configured)
+```
+
+- **Shared and served**: both peer names. Both are printed because both answer;
+  which one to send is prose (send the Qualified one), not an omitted column.
+- **Shared but not served**: `⚠` and the missing values, in the fixed order
+  `machine`, `peer-suffix`, `address`, `team-root`, `intermediate` — the words of
+  the `config` subcommands, so `proximo config <word>` is findable directly.
+  Joined with commas and a final "and": `(machine, address and intermediate are
+  not configured)`; one alone reads `(machine is not configured)`. The `⚠` shows
+  whenever any of the five is missing, including `address` alone, where the peer
+  route is emitted but its names do not resolve. It is a fact, not a Remedy: the
+  cell prints no command. An **expired** intermediate is not a missing value —
+  the cell is unaffected and `doctor` reports it. `mesh-remedy` is never a cause.
+- **Shared, served, mesh down**: indistinguishable from served. proximo cannot
+  observe the mesh and does not imply reachability it never measured.
+- **Not shared**: an empty cell.
+- **A TCP route with the label**: `⚠ proximo.share ignored on a TCP route`, in
+  addition to the watcher warning.
+- **A container that lost a Collision**: its row carries only the Qualified peer
+  name; the `⚠` stays in `URL`, where the Collision already speaks.
+- `(balanced ×N)` is never repeated in `PEER`: it is a property of the service.
+- `proximo.path` is not printed, here or in `URL`.
+
+There is no clipboard flag and no `status --json`.
+
 ## proximo doctor
 
 Report every [Check](../CONTEXT.md#diagnosis-and-observation) on this host in one
@@ -337,6 +395,51 @@ tool that hangs is worse than one that is wrong.
 the three ports. `install` runs that same subset plus one more, that browser
 trust can be installed at all, since it is about to write a store `up` never
 touches. Both print only what failed.
+
+### The peer Checks
+
+Four Checks. On a machine
+that has not opted in, every one of them is Skipped, and `dns-server` and
+`dns-resolver` return exactly the Result they return on a machine that never
+configured a peer value (constraint 9).
+
+| Check | Statement | `Needs` | Skipped when | Remedy |
+| --- | --- | --- | --- | --- |
+| `peer-intermediate` | The machine's intermediate is valid for at least 30 more days | — | no intermediate installed, or `machine` or `peer-suffix` unset | `proximo config csr` |
+| `peer-routes` | Every shared route is served on its peer names | `stack` | `machine` or `peer-suffix` unset | `docker inspect <container>` |
+| `peer-dns` | The proximo DNS server answers the Peer suffix | `stack` | `machine`, `peer-suffix` or `address` unset | `proximo up` |
+| `mesh` | This machine's peer names resolve through the system resolver | `peer-dns` | only by inheritance from `peer-dns` | the configured `mesh-remedy`, else `scutil --dns` (macOS) / `resolvectl status` (Linux) |
+
+- **`peer-intermediate`** Fails under 30 days and when expired, so `doctor` exits
+  non-zero a month ahead. Without it, proximo would go on issuing valid leaves
+  under an expired intermediate and only a colleague's browser would see it.
+- **`peer-routes`** reads labels and is true or false with the mesh down. It
+  fails on the two label mistakes that survive the `status` row and have a cure:
+  a declared host outside the TLD, and a TCP route carrying the label. `routes`
+  is unchanged — "not served at all" and "served but not shared" read and cure
+  differently. It passes when no route is shared.
+- **`peer-dns`** queries `<address>:5354` directly for the sentinel
+  `proximo-doctor.<machine>.<suffix>` and requires `<address>` back. When it
+  fails, its Detail says whether the address is held by any interface of this
+  machine — the one cause of a failed bind.
+- **`mesh`** asks the **system** resolver for the same sentinel and requires the
+  configured `<address>`. That one lookup walks the whole local chain: system
+  resolver, the mesh's routing of the subtree, this machine's address on 5354,
+  proximo. It runs without `mesh-remedy`: the environment answers, only a
+  declared cure would be missing, and the platform command shows whether a
+  resolver exists for the suffix and where it points.
+
+`peer-dns` and `mesh` are one answer, as `dns-server` and `dns-resolver` are:
+`peer-dns` failing means proximo does not answer on the mesh address; `peer-dns`
+passing and `mesh` failing means proximo answers and the mesh does not route the
+suffix to it. A publishing machine that is not itself a resolving peer fails
+`mesh` while others can reach it; that cause has a section of its own.
+
+`stack` never fails for a peer problem: the peer DNS service is not one of the
+stack's core services. There is **no Check that a shared route is reachable**:
+proximo cannot observe another machine's view. There is no Check on the
+*quality* of a configured value either — whether a label names a person is not a
+statement proximo can verify.
 
 ## proximo errors
 
@@ -423,6 +526,28 @@ captured and where it lives.
 A Transcript is quoted inline beside every Exchange the listing shows, and is
 **raw application output quoted with no redaction** — it may carry credentials
 or personal data. The listing says so once.
+
+### A request that arrived on a peer name
+
+- **The reading row appends the host the request arrived on**, verbatim, only
+  when it is a peer name. A local row is unchanged.
+- **`--json` gains `"peer": true`** on such an Exchange, and omits it otherwise.
+  An agent reading the JSON knows neither the TLD nor the Peer suffix, so it
+  could not classify the host without a second command. The suffix itself is
+  not added: that would be configuration inside an observation.
+- **`--host` stays an exact match.** When the named host has peer names and the
+  window holds Exchanges on them, the listing says how many it excluded and names
+  the command that includes them, `--service`, which already unions local and
+  peer Exchanges because it selects by backend.
+- **No attribution to a machine or a person.** The client address is not read;
+  on Docker Desktop it is not even the colleague's.
+- **The Transcript carries no peer marker**, ever — proximo authors nothing inside
+  it ([ADR 0006](adr/0006-the-transcript-is-quoted-never-stored.md)). **An
+  Incident is never attributed to a peer**: the runtime declares nothing about
+  the browser that caused a request
+  ([ADR 0007](adr/0007-proximo-remembers-what-the-runtime-declares.md)).
+- **`proximo.share` with `proximo.inspect` is allowed, silently.** A colleague's
+  Client report and Snapshot are kept like any other.
 
 ### proximo errors transcript
 
@@ -516,6 +641,178 @@ does not exist yet (proximo not installed yet), so callers must check existence
 themselves; the command itself is side-effect free and never creates
 directories.
 
+## proximo config machine
+
+All of the configuration below is persisted in `config.json` beside the TLD, has
+**no default**, and is set one value per subcommand, the way
+[`proximo config tld`](#proximo-config-tld) is. Partial configuration is a
+legitimate state, not an error: `status` and `doctor` report what is missing.
+A value takes effect at once: a running stack's watcher picks it up at its next
+reconcile, with no `up`. [`proximo config unset`](#proximo-config-unset) returns
+one to its unconfigured state.
+
+The validation rule is the same everywhere, and it is the one the next value
+added must follow: **proximo refuses what the machine can decide, reports what
+it cannot, and does both when a person sets the value** — not at reconcile, and
+not as a refusal to start. A label is read with nobody watching, so a bad label
+degrades with a watcher warning; a configuration value is typed by a person who
+will read a refusal. Every rule a person has to apply is printed in terms of the
+**property required, never the mechanism that currently satisfies it**.
+
+```sh
+proximo config machine <label>
+```
+
+Set this machine's label in its peer names.
+
+- **Refused**: anything that is not a single DNS label of `[a-z0-9-]` (lowercased,
+  as `config tld` does), or longer than 63 octets.
+- **Printed on every set, unconditionally**: the rule — the label names a
+  machine, not a person; colleagues bookmark it and write it into READMEs, so it
+  must be neutral and stable (`studio-01`, never a person's name, a model or an
+  office). A person can own two machines, and a machine outlives its owner's
+  tenure. proximo cannot tell whether a label names a person, so it does not
+  pretend to check.
+- Changing it renames every peer name on the machine and requires a new
+  intermediate, which is constrained to the old label: with one installed, the
+  set warns and names `proximo config csr`.
+
+## proximo config peer-suffix
+
+```sh
+proximo config peer-suffix <suffix>
+```
+
+Set the Peer suffix every peer name lives under.
+
+- **Refused**: anything that does not normalise to lowercase `[a-z0-9-]` labels,
+  or that has fewer than two labels. This is not `config tld`'s normaliser,
+  which accepts exactly one label. Also refused, because the machine can decide
+  them: a suffix ending in `.local` (rule 1 below), and one under the configured
+  TLD, which proximo's own DNS server answers with `127.0.0.1`.
+- **Warned when it leaves something behind**: a configured team root that does
+  not cover the new suffix (Remedy `proximo config team-root <path>`), and an
+  installed intermediate constrained to the old one (Remedy `proximo config csr`).
+- **Warned at set time, never refused**: a suffix whose right-most label is not
+  reserved from delegation for private use. The list is the one `config tld`
+  already advises from. The value is stored either way.
+- **The rule, in prose.** A suffix is admissible when all three hold:
+  1. **No resolver on any colleague's machine claims it ahead of the nameserver
+     the mesh configures.** `.local` fails this: mDNS answers it first on macOS
+     and Linux.
+  2. **No Public Suffix List entry can reclassify it underneath a shipped
+     design.** `home.arpa` is the precedent. Constraint 8 is what makes a future
+     listing survivable.
+  3. **Nobody can delegate it in the future.** A single unreserved label works on
+     the day it is chosen and stops resolving the day someone registers it.
+     *Unclaimable*, not merely unclaimed.
+
+  The rule is deliberately not "avoid reserved names": proximo depends on `.test`
+  being reserved.
+
+## proximo config address
+
+```sh
+proximo config address <ip>
+```
+
+Set the address proximo answers this machine's peer names with — this machine's
+own address on the mesh.
+
+- **Refused**: anything that is not a parsable IPv4 address. The peer DNS
+  service answers `A` records only, so an IPv6 address could never be served.
+- **Warned at set time, never refused**: an address that no interface of this
+  machine currently holds. The check compares the **exact** address against the
+  addresses of **every** interface: a subnet test would assert nearly nothing,
+  and interface names are not stable. It is a report, because a correct address
+  is held by nothing whenever the mesh client is down.
+- **Printed on every set**: the rule. The check separates "an address this
+  machine holds" from "an address that exists nowhere on it". It catches a typo
+  and a stale value. It cannot tell the mesh address from the LAN address or
+  `127.0.0.1`, and that part is the person's to get right.
+
+## proximo config team-root
+
+```sh
+proximo config team-root <path>
+```
+
+Point proximo at the team root certificate. The file is public and is
+distributed however the team likes — never from this repository.
+[`proximo trust`](#proximo-trust) and `install` then install it as a
+second anchor beside the local CA, and `uninstall` removes it.
+
+- **Refused, hard** — the one value whose rule is checked completely, and the
+  most consequential (constraint 7): a certificate whose permitted DNS subtree
+  does not cover the configured Peer suffix, whose name constraints are not
+  marked critical, or which lacks exclusions for every IP address (`0.0.0.0/0`,
+  `::/0`), every email address and every URI. Constraining `dNSName` alone leaves
+  every other name type unrestricted. Covering the suffix is not enough either: a
+  root permitting an ancestor of it, or a second unrelated subtree, could sign
+  outside it, and is refused. So is a certificate that is not a CA.
+- **Refused, hard**: a certificate whose common name contains the local CA's
+  (`proximo local CA`). macOS removes the local CA by a common-name match,
+  which matches a substring, so that removal would take the team root with
+  it. The team root itself is removed by its fingerprint.
+- **Refused with a Remedy** naming `proximo config peer-suffix` when the suffix
+  is not set yet, since coverage cannot be judged without it. That is an order of
+  setting, not a completeness requirement.
+
+## proximo config csr
+
+```sh
+proximo config csr > machine.csr
+```
+
+Print the certificate signing request for this machine's intermediate on stdout.
+It creates the machine key only if none exists. Run again, it prints the same CSR,
+and it **never replaces a key that already has an intermediate**. A reinstalled
+machine has no key, so it gets a new one — the ceremony is the same as a first
+enrolment. The key never leaves the machine; the CSR is a public object, so any
+channel may carry it. See
+[the team root and the intermediates](sharing.md#the-team-root-and-the-intermediates).
+
+## proximo config intermediate
+
+```sh
+proximo config intermediate <file>
+```
+
+Install the intermediate a custodian signed from this machine's CSR.
+
+- **Refused, hard**, each in the words of the property it misses: a certificate
+  not signed by the configured team root, whose permitted subtree is not exactly
+  `<machine>.<suffix>`, whose `MaxPathLen` is not 0, whose name constraints are
+  not critical or leave an IP, email or URI name open, that carries such a name
+  itself, that has expired or is not yet valid, or that does not match the
+  machine key. The team root is validated again first.
+- **Refused with a Remedy** naming the missing value when the team root, the
+  machine label or the Peer suffix is not set.
+
+## proximo config mesh-remedy
+
+```sh
+proximo config mesh-remedy '<command>'
+```
+
+Set the command the [`mesh` Check](#the-peer-checks) offers as
+its Remedy — typically the transport's own status command. Stored verbatim, with
+no validation and no warning: proximo cannot judge a transport's command, and a
+public CLI names no vendor. Unset, `mesh` still runs and offers a platform
+command instead. It is an override, never a prerequisite.
+
+## proximo config unset
+
+```sh
+proximo config unset <machine|peer-suffix|address|team-root|intermediate|mesh-remedy>
+```
+
+Return one peer-sharing value to its unconfigured state; a materialized stack
+follows at its next reconcile, as it does when a value is set. `intermediate`
+removes the installed intermediate and keeps the machine key, the one thing a new
+intermediate must match. `team-root` leaves the anchor in the trust stores:
+removing it needs `sudo`, and `uninstall` removes what was trusted.
+
 ## proximo skill install
 
 Write the [agent Skill](skill.md) where a coding agent will read it. Needs
@@ -584,6 +881,8 @@ proximo uninstall
    was used) — so no proximo state is left on the host.
 
 The host is restored to its prior state.
+
+**Peer sharing.** `uninstall` also removes the team root.
 
 ## proximo version
 

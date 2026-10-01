@@ -12,7 +12,7 @@ import (
 	"github.com/filippolmt/proximo/internal/tls"
 )
 
-// The peer Checks (docs/specs/peer-sharing.md). On a machine that has not opted
+// The peer Checks (docs/cli.md#the-peer-checks). On a machine that has not opted
 // in every one of them is Skipped, and no other Check reads a peer value.
 const (
 	IDPeerIntermediate = "peer-intermediate"

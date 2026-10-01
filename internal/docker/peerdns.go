@@ -16,7 +16,7 @@ import (
 )
 
 // The peer DNS service answers this machine's peer subtree on the mesh
-// address (docs/specs/peer-sharing.md, "The peer DNS service"). It is a Compose
+// address (docs/architecture.md, "The peer DNS service"). It is a Compose
 // service of its own, present only when machine, peer-suffix and address are
 // all configured, and profile-gated so the core `up` never waits on it: a
 // publish bound to an address no interface holds leaves its container

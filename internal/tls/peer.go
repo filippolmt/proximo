@@ -81,7 +81,7 @@ func parseCertPEM(data []byte) (*x509.Certificate, error) {
 // permittedSubtrees reports whether one permitted DNS subtree is the suffix
 // itself, and lists every one that is not at or beneath it. Covering the suffix
 // is not enough: an ancestor, or a second unrelated subtree, would let the root
-// sign outside it (constraint 7 of docs/specs/peer-sharing.md). Go writes a subdomains-only subtree with a
+// sign outside it (constraint 7, docs/sharing.md#constraints). Go writes a subdomains-only subtree with a
 // leading dot.
 func permittedSubtrees(permitted []string, suffix string) (covered bool, outside []string) {
 	for _, raw := range permitted {

@@ -1,12 +1,8 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # A shared route answers on two peer names, derived from its local hosts
-
-> **Proposed.** Part of the [peer-sharing specification](../specs/peer-sharing.md),
-> which describes a capability the binary does not have yet. It becomes
-> `accepted` in the commit that builds it.
 
 A colleague cannot reach a route by its `.test` name: `.test` is not delegable,
 proximo's DNS server answers every name under it with `127.0.0.1`, and two
@@ -90,7 +86,7 @@ carry a person's name, and both change when the machine does.
   suffix, so every peer name is same-site with every other, and a cookie pinned to
   the suffix reaches every colleague's shared routes. A cookie pinned to the
   `.test` host is refused on the peer name. Host-only cookies are the documented
-  requirement; proximo rewrites nothing (constraint 4 of the specification).
+  requirement; proximo rewrites nothing ([constraint 4](../sharing.md#constraints)).
 - **`status` prints both names**, and the documentation recommends the Qualified
   one. A container that lost a Collision keeps only its Qualified peer name.
 - **A peer name over 253 octets, or with a label over 63, is a label fault**,

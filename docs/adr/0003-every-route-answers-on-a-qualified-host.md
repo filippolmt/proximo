@@ -78,7 +78,7 @@ real cost recorded below.
 
 ## See also
 
-[ADR 0011](0011-a-shared-route-answers-on-two-derived-peer-names.md) *(proposed)*
+[ADR 0011](0011-a-shared-route-answers-on-two-derived-peer-names.md)
 extends the bare and qualified hosts across a team's mesh as two peer names. A
 machine then answers a second suffix, and still claims exactly one TLD on the
 host resolver.

@@ -1,12 +1,8 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # proximo's DNS server answers the peer subtree
-
-> **Proposed.** Part of the [peer-sharing specification](../specs/peer-sharing.md),
-> which describes a capability the binary does not have yet. It becomes
-> `accepted` in the commit that builds it.
 
 A colleague's resolver has to turn `api.shop.<machine>.<suffix>` into the sharing
 machine's address on the mesh. A mesh nameserver configuration *forwards*; it
@@ -92,4 +88,5 @@ the listener on the LAN.
 - **`up` never fails for the peer listener.** When it cannot start, `up` warns,
   names the cause and exits 0: `.test` works.
 - Whether the listener answers again after the mesh drops and returns while it
-  runs is not measured; it is an acceptance item of the specification.
+  runs is not measured; it is to be verified on real machines
+  ([#131](https://github.com/filippolmt/proximo/issues/131)).

@@ -57,7 +57,7 @@ type Config struct {
 	// TLD is the top-level domain routed to the local proximo (without a dot).
 	TLD string `json:"tld"`
 
-	// The peer-sharing values (docs/specs/peer-sharing.md). Each has no
+	// The peer-sharing values (docs/sharing.md). Each has no
 	// default and is set on its own; any subset is a legitimate state, and a
 	// machine with none of them set executes no peer behaviour at all.
 
