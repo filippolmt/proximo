@@ -50,6 +50,11 @@ func TestValidateTeamRootAcceptsAFullyConstrainedRoot(t *testing.T) {
 	if err := ValidateTeamRoot(teamRootPEM(t, nil), "mesh.internal"); err != nil {
 		t.Fatalf("refused: %v", err)
 	}
+	// DNS names compare case-insensitively.
+	mixed := teamRootPEM(t, func(c *x509.Certificate) { c.PermittedDNSDomains = []string{".Mesh.Internal"} })
+	if err := ValidateTeamRoot(mixed, "mesh.internal"); err != nil {
+		t.Fatalf("mixed case refused: %v", err)
+	}
 }
 
 func TestValidateTeamRootRefuses(t *testing.T) {
@@ -65,6 +70,14 @@ func TestValidateTeamRootRefuses(t *testing.T) {
 		"not critical":     {func(c *x509.Certificate) { c.PermittedDNSDomainsCritical = false }, "mesh.internal", "critical"},
 		"other suffix":     {nil, "other.internal", "does not cover other.internal"},
 		"unconstrained CA": {func(c *x509.Certificate) { c.PermittedDNSDomains = nil }, "mesh.internal", "does not cover"},
+		"not a CA":         {func(c *x509.Certificate) { c.IsCA = false }, "mesh.internal", "not a CA"},
+		"emails open":      {func(c *x509.Certificate) { c.ExcludedEmailAddresses = nil }, "mesh.internal", "every email address"},
+		"URIs open":        {func(c *x509.Certificate) { c.ExcludedURIDomains = nil }, "mesh.internal", "every URI"},
+		// Covering the suffix is not enough: the root may sign nothing outside it.
+		"ancestor subtree": {func(c *x509.Certificate) { c.PermittedDNSDomains = []string{"internal"} }, "mesh.internal", "outside mesh.internal"},
+		"extra subtree": {func(c *x509.Certificate) {
+			c.PermittedDNSDomains = []string{".mesh.internal", "example.com"}
+		}, "mesh.internal", "outside mesh.internal"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

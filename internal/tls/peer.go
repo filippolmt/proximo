@@ -34,8 +34,12 @@ func ValidateTeamRoot(pemBytes []byte, suffix string) error {
 	if !c.PermittedDNSDomainsCritical {
 		missing = append(missing, "its name constraints are not marked critical")
 	}
-	if !permitsSuffix(c.PermittedDNSDomains, suffix) {
+	covered, outside := permittedSubtrees(c.PermittedDNSDomains, suffix)
+	if !covered {
 		missing = append(missing, fmt.Sprintf("its permitted DNS subtree does not cover %s", suffix))
+	}
+	if len(outside) > 0 {
+		missing = append(missing, fmt.Sprintf("it permits %s, outside %s", strings.Join(outside, ", "), suffix))
 	}
 	if !excludesAll(c.ExcludedIPRanges, "0.0.0.0/0") || !excludesAll(c.ExcludedIPRanges, "::/0") {
 		missing = append(missing, "it does not exclude every IP address (0.0.0.0/0 and ::/0)")
@@ -52,17 +56,22 @@ func ValidateTeamRoot(pemBytes []byte, suffix string) error {
 	return nil
 }
 
-// permitsSuffix reports whether one permitted DNS subtree covers suffix: the
-// suffix itself, or an ancestor of it. Go writes a subdomains-only subtree
-// with a leading dot.
-func permitsSuffix(permitted []string, suffix string) bool {
-	for _, p := range permitted {
-		p = strings.TrimPrefix(p, ".")
-		if p != "" && (suffix == p || strings.HasSuffix(suffix, "."+p)) {
-			return true
+// permittedSubtrees reports whether one permitted DNS subtree is the suffix
+// itself, and lists every one that is not at or beneath it. Covering the suffix
+// is not enough: an ancestor, or a second unrelated subtree, would let the root
+// sign outside it (constraint 7 of docs/specs/peer-sharing.md). Go writes a subdomains-only subtree with a
+// leading dot.
+func permittedSubtrees(permitted []string, suffix string) (covered bool, outside []string) {
+	for _, raw := range permitted {
+		p := strings.ToLower(strings.TrimPrefix(raw, "."))
+		switch {
+		case p == suffix:
+			covered = true
+		case !strings.HasSuffix(p, "."+suffix):
+			outside = append(outside, raw)
 		}
 	}
-	return false
+	return covered, outside
 }
 
 func excludesAll(ranges []*net.IPNet, cidr string) bool {

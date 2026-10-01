@@ -74,13 +74,14 @@ func Default() Config {
 	return Config{TLD: DefaultTLD}
 }
 
-var tldPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+// labelPattern is one DNS label: a TLD, a machine label, a label of the Peer suffix.
+var labelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // NormalizeTLD validates and normalizes a user-supplied TLD: it strips a leading
 // dot, lowercases, enforces a single DNS label, and rejects reserved values.
 func NormalizeTLD(raw string) (string, error) {
 	tld := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "."))
-	if !tldPattern.MatchString(tld) {
+	if !labelPattern.MatchString(tld) {
 		return "", fmt.Errorf("invalid TLD %q: use a single DNS label of [a-z0-9-]", raw)
 	}
 	if tld == "local" {
@@ -116,7 +117,7 @@ func TLDWarning(tld string) string {
 // machine can judge, so it is not checked — MachineRule is printed instead.
 func NormalizeMachine(raw string) (string, error) {
 	m := strings.ToLower(strings.TrimSpace(raw))
-	if !tldPattern.MatchString(m) || len(m) > 63 {
+	if !labelPattern.MatchString(m) || len(m) > 63 {
 		return "", fmt.Errorf("invalid machine label %q: use a single DNS label of [a-z0-9-], at most 63 characters", raw)
 	}
 	return m, nil
@@ -136,9 +137,13 @@ func NormalizePeerSuffix(raw string) (string, error) {
 		return "", fmt.Errorf("invalid peer suffix %q: use at least two DNS labels of [a-z0-9-]", raw)
 	}
 	for _, l := range labels {
-		if !tldPattern.MatchString(l) || len(l) > 63 {
+		if !labelPattern.MatchString(l) || len(l) > 63 {
 			return "", fmt.Errorf("invalid peer suffix %q: %q is not a DNS label of [a-z0-9-]", raw, l)
 		}
+	}
+	// mDNS answers .local ahead of any nameserver the mesh configures.
+	if labels[len(labels)-1] == "local" {
+		return "", fmt.Errorf("invalid peer suffix %q: .local is answered by mDNS first, so no peer name under it would resolve", raw)
 	}
 	return s, nil
 }

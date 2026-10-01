@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/filippolmt/proximo/internal/checks"
 	"github.com/filippolmt/proximo/internal/config"
@@ -69,6 +70,22 @@ func newConfigPeerSuffixCmd() *cobra.Command {
 			if w := config.PeerSuffixWarning(s); w != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s%s\n", warnPrefix, w)
 			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			// proximo's own DNS answers every name under the TLD with
+			// 127.0.0.1, ahead of any nameserver the mesh configures.
+			if strings.HasSuffix("."+s, "."+cfg.TLD) {
+				return fmt.Errorf("invalid peer suffix %q: proximo answers every name under .%s on this machine, so no peer name under it would reach a colleague", s, cfg.TLD)
+			}
+			// The team root was judged against the old suffix. A report, not a
+			// refusal: there is no other order in which to change both.
+			if cfg.TeamRoot != "" {
+				if err := checkTeamRoot(cfg.TeamRoot, s); err != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s%v\n    Remedy: proximo config team-root <path>\n", warnPrefix, err)
+				}
+			}
 			return savePeerValue(cmd, "peer-suffix", s, func(c *config.Config) { c.PeerSuffix = s }, "")
 		},
 	}
@@ -116,16 +133,23 @@ func newConfigTeamRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
+			if err := checkTeamRoot(path, cfg.PeerSuffix); err != nil {
 				return err
-			}
-			if err := tls.ValidateTeamRoot(data, cfg.PeerSuffix); err != nil {
-				return fmt.Errorf("team root %s: %w", path, err)
 			}
 			return savePeerValue(cmd, "team-root", path, func(c *config.Config) { c.TeamRoot = path }, "")
 		},
 	}
+}
+
+func checkTeamRoot(path, suffix string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := tls.ValidateTeamRoot(data, suffix); err != nil {
+		return fmt.Errorf("team root %s: %w", path, err)
+	}
+	return nil
 }
 
 func newConfigMeshRemedyCmd() *cobra.Command {

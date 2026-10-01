@@ -177,7 +177,7 @@ func TestNormalizePeerSuffix(t *testing.T) {
 		t.Fatalf("NormalizePeerSuffix = %q, %v; want mesh.internal", got, err)
 	}
 	// One label is refused: unclaimed today is not unclaimable.
-	for _, raw := range []string{"", "internal", "a..b", "a.b_c", "a.-b"} {
+	for _, raw := range []string{"", "internal", "a..b", "a.b_c", "a.-b", "mesh.local"} {
 		if _, err := NormalizePeerSuffix(raw); err == nil {
 			t.Errorf("NormalizePeerSuffix(%q) accepted", raw)
 		}
@@ -211,10 +211,27 @@ func TestPeerValuesAbsentByDefault(t *testing.T) {
 	if err := Default().Save(); err != nil {
 		t.Fatal(err)
 	}
-	p, _ := filePath()
-	data, _ := os.ReadFile(p)
+	p, err := filePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// An unconfigured machine's config.json is exactly what it was before.
 	if strings.TrimSpace(string(data)) != "{\n  \"tld\": \"test\"\n}" {
 		t.Errorf("config.json = %s", data)
+	}
+}
+
+func TestParseAddress(t *testing.T) {
+	if got, err := ParseAddress(" 100.89.88.2 "); err != nil || got != "100.89.88.2" {
+		t.Fatalf("ParseAddress = %q, %v", got, err)
+	}
+	for _, raw := range []string{"", "100.89.88", "studio-01.mesh.internal", "100.89.88.2/8"} {
+		if _, err := ParseAddress(raw); err == nil {
+			t.Errorf("ParseAddress(%q) accepted", raw)
+		}
 	}
 }
