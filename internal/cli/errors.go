@@ -586,7 +586,7 @@ func contestedHostWarning(ctx context.Context, host string) string {
 	if err != nil {
 		return ""
 	}
-	routes, err := docker.Routes(ctx, cfg.TLD)
+	routes, err := docker.Routes(ctx, cfg.TLD, docker.PeerNames{})
 	if err != nil {
 		return ""
 	}

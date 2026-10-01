@@ -116,7 +116,7 @@ func TestServedRoutes(t *testing.T) {
 		}},
 		collisions: []hostCollision{{name: "work-api-1", host: "api.test", note: "api.test is served by shop-api-1"}},
 	}
-	routes := servedRoutes(resolved, nil)
+	routes := servedRoutes(resolved, nil, nil, "test", PeerNames{})
 	if len(routes) != 2 {
 		t.Fatalf("routes = %+v, want one served row and one collision row", routes)
 	}
@@ -136,7 +136,7 @@ func TestServedRoutesDropsWithdrawnQualified(t *testing.T) {
 		name: "shop-api-1", hosts: []string{"api.test"}, port: 80, proximo: true,
 		ns: "shop", qual: map[string]string{"api.test": "api.shop.test"},
 	}}}
-	routes := servedRoutes(resolved, nil)
+	routes := servedRoutes(resolved, nil, nil, "test", PeerNames{})
 	if len(routes) != 1 || routes[0].Qualified != "" {
 		t.Fatalf("routes = %+v, want no qualified host advertised", routes)
 	}

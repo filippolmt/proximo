@@ -162,6 +162,8 @@ type routedContainer struct {
 	service  string            // Compose service name; with ns it names the route's files (see safeBase)
 	qual     map[string]string // declared host -> the qualified host derived from it; nil when there is no Namespace. Written once by qualifyHosts and never mutated after.
 	natives  []string          // hosts a native traefik.* router rule on this container claims; Traefik's Docker provider routes them, so proximo never stands a second router on one
+	share    bool              // true when proximo.share asks for the route to be served on its peer names too (HTTP routes only)
+	peer     []string          // the peer names served, derived after resolution; never merged into hosts, which feed the local CA's SANs and the Collision detector
 }
 
 // qualifyHosts gives every declared host under tld the qualified counterpart
@@ -270,6 +272,11 @@ type Watcher struct {
 	// lastHosts caches the last-issued host set per container (keyed by safe
 	// name) so certs are reissued only when a container's hosts change.
 	lastHosts map[string]string
+	// caDir is the stack's ca directory, which also carries the peer material
+	// when this machine shares; peer is what was read from it this reconcile,
+	// nil on a machine that has not opted in.
+	caDir string
+	peer  *peerMaterial
 	// defaultIssued records that this process issued the default certificate,
 	// so it is issued once per watcher start, under the CA it holds.
 	defaultIssued bool
@@ -295,6 +302,7 @@ func NewWatcher() (*Watcher, error) {
 	w := &Watcher{
 		cli:        cli,
 		dynamicDir: getenv("PROXIMO_DYNAMIC_DIR", "/etc/traefik/dynamic"),
+		caDir:      filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
 		tld:        getenv("PROXIMO_TLD", config.DefaultTLD),
 		lastHosts:  map[string]string{},
 		authHashes: map[string]string{},
@@ -455,6 +463,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// a base, so naming them before the merge would suffix the survivor away from
 	// the stable name it is entitled to.
 	assignSafeNames(routed)
+	w.sharePeers(routed)
 	for _, c := range res.collisions {
 		log.Printf("proximo watcher: container %s: %s (path %q)", c.name, c.note, c.path)
 	}
@@ -473,6 +482,31 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	w.syncDynamic(routed)
 	w.syncCerts(routed)
 	return nil
+}
+
+// sharePeers gives every shared route its peer names, from the hosts it serves
+// once resolved. It reads the peer material afresh each pass, so the stack picks
+// up a ceremony at the next reconcile; without it — a machine that has not
+// opted in, or one missing a value — no route gets a peer name.
+func (w *Watcher) sharePeers(routed []routedContainer) {
+	w.peer = nil
+	if w.caDir != "" {
+		w.peer = loadPeerMaterial(w.caDir)
+	}
+	if w.peer == nil {
+		return
+	}
+	for i := range routed {
+		rc := &routed[i]
+		if !rc.share || rc.isTCP() || rc.internal {
+			continue
+		}
+		var outside []string
+		rc.peer, outside = rc.peerHosts(w.tld, w.peer.names)
+		for _, h := range outside {
+			log.Printf("proximo watcher: container %s: %s is outside .%s, so it has no peer name; its other hosts are still shared", rc.name, h, w.tld)
+		}
+	}
 }
 
 // dashboardRoute synthesizes the self-route serving Traefik's dashboard at
@@ -592,6 +626,11 @@ func classify(ctx context.Context, inspect inspector, c container.Summary, tld s
 				// route has none to inject.
 				info.tcpIgnoredHTTP = append(info.tcpIgnoredHTTP, proximoInspectLabel)
 			}
+			if isTruthyLabel(c.Labels, proximoShareLabel) {
+				// A TCP route has no HTTP layer, and a passthrough backend could
+				// not present a peer certificate anyway.
+				info.tcpIgnoredHTTP = append(info.tcpIgnoredHTTP, proximoShareLabel)
+			}
 			rc.mw = middlewareSet{}
 			return rc, true, info
 		}
@@ -608,6 +647,7 @@ func classify(ctx context.Context, inspect inspector, c container.Summary, tld s
 		rc.path = prefix
 		rc.strip = isProximoPathStrip(c.Labels)
 		rc.inspect = isProximoInspect(c.Labels)
+		rc.share = isTruthyLabel(c.Labels, proximoShareLabel)
 
 		port, ok, res := resolveBackendPort(ctx, inspect, c)
 		if !ok {
@@ -814,19 +854,23 @@ func (w *Watcher) materializeAuth(rc *routedContainer) {
 // to safe charsets before reaching here, so templating them into the rule is
 // safe. The host alternation is parenthesized when a prefix is present so the
 // `&&` binds across all hosts (`(Host(a) || Host(b)) && PathPrefix(/p)`).
-func routerRule(rc routedContainer) string {
-	rules := make([]string, 0, len(rc.hosts))
-	for _, h := range rc.hosts {
+func routerRule(rc routedContainer) string { return hostRule(rc.hosts, rc.path) }
+
+// hostRule is routerRule over any host set: the local router's hosts, or the
+// peer router's peer names.
+func hostRule(hosts []string, path string) string {
+	rules := make([]string, 0, len(hosts))
+	for _, h := range hosts {
 		rules = append(rules, "Host(`"+h+"`)")
 	}
 	rule := strings.Join(rules, " || ")
-	if rc.path == "" {
+	if path == "" {
 		return rule
 	}
 	if len(rules) > 1 {
 		rule = "(" + rule + ")"
 	}
-	return rule + " && PathPrefix(`" + rc.path + "`)"
+	return rule + " && PathPrefix(`" + path + "`)"
 }
 
 // renderRouter renders the Traefik dynamic config (HTTP router + service) for a
@@ -876,7 +920,7 @@ func renderRouter(rc routedContainer) []byte {
 	// router. Priority from prefix byte length makes the most specific prefix
 	// win, and keeps a bare host (no priority => Traefik default) below any
 	// PathPrefix.
-	writeRuleAndService := func() {
+	writeRuleAndService := func(rule string) {
 		fmt.Fprintf(&b, "      rule: %q\n", rule)
 		if rc.path != "" {
 			fmt.Fprintf(&b, "      priority: %d\n", len(rc.path))
@@ -884,27 +928,37 @@ func renderRouter(rc routedContainer) []byte {
 		fmt.Fprintf(&b, "      service: %s\n", service)
 	}
 
-	b.WriteString("http:\n")
-	b.WriteString("  routers:\n")
-	fmt.Fprintf(&b, "    %s:\n", id)
-	b.WriteString("      entryPoints:\n        - websecure\n")
-	writeRuleAndService()
-	if len(websecureMW) > 0 {
-		b.WriteString("      middlewares:\n")
-		for _, name := range websecureMW {
-			fmt.Fprintf(&b, "        - %s\n", name)
+	// writeRouters emits the websecure router and, with proximo.redirect, its
+	// web twin. The peer router is the same pair through the peer names: same
+	// service, same middleware chain, Host never rewritten.
+	writeRouters := func(routerID, rule string) {
+		fmt.Fprintf(&b, "    %s:\n", routerID)
+		b.WriteString("      entryPoints:\n        - websecure\n")
+		writeRuleAndService(rule)
+		if len(websecureMW) > 0 {
+			b.WriteString("      middlewares:\n")
+			for _, name := range websecureMW {
+				fmt.Fprintf(&b, "        - %s\n", name)
+			}
+		}
+		b.WriteString("      tls: {}\n")
+		if rc.redirect {
+			// HTTP router on :80 for the same rule plus the redirectScheme
+			// middleware it references. Strip is not applied here: the redirect
+			// router 302s to https:// without forwarding to the backend.
+			fmt.Fprintf(&b, "    %s-redirect:\n", routerID)
+			b.WriteString("      entryPoints:\n        - web\n")
+			writeRuleAndService(rule)
+			b.WriteString("      middlewares:\n")
+			fmt.Fprintf(&b, "        - %s\n", redirectID)
 		}
 	}
-	b.WriteString("      tls: {}\n")
-	if rc.redirect {
-		// HTTP router on :80 for the same rule plus the redirectScheme
-		// middleware it references. Strip is not applied here: the redirect
-		// router 302s to https:// without forwarding to the backend.
-		fmt.Fprintf(&b, "    %s:\n", redirectID)
-		b.WriteString("      entryPoints:\n        - web\n")
-		writeRuleAndService()
-		b.WriteString("      middlewares:\n")
-		fmt.Fprintf(&b, "        - %s\n", redirectID)
+
+	b.WriteString("http:\n")
+	b.WriteString("  routers:\n")
+	writeRouters(id, rule)
+	if len(rc.peer) > 0 {
+		writeRouters(id+"-peer", hostRule(rc.peer, rc.path))
 	}
 	// middlewares: is a sibling of routers:/services: under http:, so emitting
 	// it here (before services) is order-free. The curated, strip, and redirect
@@ -1026,6 +1080,7 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 	hasDefault := w.syncDefaultCert(certsDir)
 
 	active := map[string]bool{}
+	peerActive := map[string]bool{}
 	var entries []routedContainer
 	for _, rc := range routed {
 		if len(rc.hosts) == 0 {
@@ -1033,6 +1088,9 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 		}
 		active[rc.safe] = true
 		entries = append(entries, rc)
+		if w.syncPeerLeaf(certsDir, rc) {
+			peerActive[rc.safe] = true
+		}
 
 		hosts := append([]string(nil), rc.hosts...)
 		sort.Strings(hosts)
@@ -1066,8 +1124,62 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 	// Traefik's file provider reloads against a missing cert and logs
 	// "failed to find any PEM data". Writing the config first makes the
 	// intermediate state "cert present but no longer referenced" — harmless.
-	w.writeTLSConfig(certsDir, entries, hasDefault)
+	w.writeTLSConfig(certsDir, entries, peerActive, hasDefault)
 	w.removeStaleCerts(certsDir, active)
+	w.removeStalePeerLeaves(certsDir, peerActive)
+}
+
+// syncPeerLeaf issues a shared route's peer leaf: signed by this machine's
+// intermediate, its peer names as exact SANs, the intermediate presented after
+// it, since a colleague's machine holds only the team root. It is reissued
+// when the peer names or the intermediate change, and reports whether a leaf
+// is in place.
+func (w *Watcher) syncPeerLeaf(certsDir string, rc routedContainer) bool {
+	if len(rc.peer) == 0 || w.peer == nil {
+		return false
+	}
+	hosts := append([]string(nil), rc.peer...)
+	sort.Strings(hosts)
+	key := w.peer.fingerprint + ":" + strings.Join(hosts, ",")
+	cacheKey := "peer:" + rc.safe
+	crt := filepath.Join(certsDir, rc.safe+peerCertSuffix)
+	pkey := filepath.Join(certsDir, rc.safe+peerKeySuffix)
+	if w.lastHosts[cacheKey] == key && fileExists(crt) && fileExists(pkey) {
+		return true
+	}
+	certPEM, keyPEM, err := tls.IssueHostCert(w.peer.intermediate, w.peer.key, rc.peer)
+	if err != nil {
+		log.Printf("proximo watcher: issue peer certificate for %s: %v", rc.safe, err)
+		return false
+	}
+	if err := atomicWrite(crt, append(certPEM, w.peer.intPEM...), 0o644); err != nil {
+		log.Printf("proximo watcher: write peer cert %s: %v", rc.safe, err)
+		return false
+	}
+	if err := atomicWrite(pkey, keyPEM, 0o600); err != nil {
+		log.Printf("proximo watcher: write peer key %s: %v", rc.safe, err)
+		return false
+	}
+	w.lastHosts[cacheKey] = key
+	log.Printf("proximo watcher: issued peer certificate for %s: %s", rc.safe, strings.Join(hosts, ","))
+	return true
+}
+
+// removeStalePeerLeaves deletes the peer leaf of every route no longer shared,
+// so removing proximo.share withdraws it at the next reconcile. Like
+// removeStaleCerts, it runs after the TLS config stopped referencing them.
+func (w *Watcher) removeStalePeerLeaves(certsDir string, active map[string]bool) {
+	matches, _ := filepath.Glob(filepath.Join(certsDir, "*"+peerCertSuffix))
+	for _, crt := range matches {
+		safe := strings.TrimSuffix(filepath.Base(crt), peerCertSuffix)
+		if active[safe] {
+			continue
+		}
+		_ = os.Remove(crt)
+		_ = os.Remove(filepath.Join(certsDir, safe+peerKeySuffix))
+		delete(w.lastHosts, "peer:"+safe)
+		log.Printf("proximo watcher: removed peer certificate for %s", safe)
+	}
 }
 
 // syncDefaultCert issues the nameless default certificate once per watcher
@@ -1129,7 +1241,7 @@ func (w *Watcher) removeStaleCerts(certsDir string, active map[string]bool) {
 // self-signed default. Should the default be missing, the first (sorted) leaf
 // backs the store instead, keeping a trusted issuer. sniStrict is not used: it
 // is global, and would turn local clients without SNI into handshake failures.
-func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer, hasDefault bool) {
+func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer, peerActive map[string]bool, hasDefault bool) {
 	tlsPath := filepath.Join(w.dynamicDir, "proximo-tls.yml")
 	if len(entries) == 0 && !hasDefault {
 		_ = os.Remove(tlsPath)
@@ -1153,6 +1265,12 @@ func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer, has
 	for _, rc := range entries {
 		fmt.Fprintf(&b, "    - certFile: %s\n", filepath.Join(certsDir, rc.safe+".crt"))
 		fmt.Fprintf(&b, "      keyFile: %s\n", filepath.Join(certsDir, rc.safe+".key"))
+		// SNI selects between a route's two leaves: the peer names are on this
+		// one only, never on the local CA's.
+		if peerActive[rc.safe] {
+			fmt.Fprintf(&b, "    - certFile: %s\n", filepath.Join(certsDir, rc.safe+peerCertSuffix))
+			fmt.Fprintf(&b, "      keyFile: %s\n", filepath.Join(certsDir, rc.safe+peerKeySuffix))
+		}
 	}
 	if err := writeFileIfChanged(tlsPath, []byte(b.String()), 0o644); err != nil {
 		log.Printf("proximo watcher: write tls config: %v", err)
@@ -1363,7 +1481,7 @@ func replicaKey(rc routedContainer) string {
 	// projects claiming the same bare host, but a declared host outside the TLD
 	// is never qualified, so the Namespace joins the key explicitly rather than
 	// leaving that one case able to merge across projects by accident.
-	return string(renderRouter(norm)) + "\x00" + rc.ns
+	return string(renderRouter(norm)) + "\x00" + rc.ns + "\x00" + strconv.FormatBool(rc.share)
 }
 
 // routeMerge names a proximo container merged into an existing route as a
