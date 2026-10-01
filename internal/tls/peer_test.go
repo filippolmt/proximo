@@ -4,11 +4,17 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +95,77 @@ func TestValidateTeamRootRefuses(t *testing.T) {
 	}
 	if ValidateTeamRoot([]byte("nope"), "mesh.internal") == nil {
 		t.Error("non-PEM accepted")
+	}
+}
+
+// The local CA is removed from the macOS keychain by common name, which
+// matches a substring: a team root whose name contains it could go with it.
+func TestValidateTeamRootRefusesTheLocalCAName(t *testing.T) {
+	root := teamRootPEM(t, func(c *x509.Certificate) { c.Subject.CommonName = "acme " + caCommonName })
+	if err := ValidateTeamRoot(root, "mesh.internal"); err == nil || !strings.Contains(err.Error(), caCommonName) {
+		t.Fatalf("err = %v, want a refusal naming %q", err, caCommonName)
+	}
+}
+
+// The team root is removed from the macOS keychain by its SHA-1, which selects
+// exactly one certificate, never by a name another anchor could share.
+func TestTeamRootFingerprintIsItsSHA1(t *testing.T) {
+	root := teamRootPEM(t, nil)
+	path := filepath.Join(t.TempDir(), "root.crt")
+	if err := os.WriteFile(path, root, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(root)
+	got, err := TeamRootFingerprint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("%X", sha1.Sum(block.Bytes)); got != want {
+		t.Fatalf("fingerprint = %s, want %s", got, want)
+	}
+}
+
+type recordRunner struct{ calls []string }
+
+func (r *recordRunner) Run(name string, args ...string) error {
+	r.calls = append(r.calls, strings.TrimSpace(name+" "+strings.Join(args, " ")))
+	return nil
+}
+func (r *recordRunner) Sudo(args ...string) error {
+	r.calls = append(r.calls, "sudo "+strings.Join(args, " "))
+	return nil
+}
+func (r *recordRunner) WriteFilePrivileged(path string, _ []byte, _ os.FileMode) error {
+	r.calls = append(r.calls, "write "+path)
+	return nil
+}
+func (r *recordRunner) RemoveFilePrivileged(path string) error {
+	r.calls = append(r.calls, "remove "+path)
+	return nil
+}
+
+// On Linux the team root has a trust file of its own, so neither anchor's
+// install or removal touches the other's.
+func TestTeamRootSystemTrustOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the Linux trust path")
+	}
+	path := filepath.Join(t.TempDir(), "root.crt")
+	if err := os.WriteFile(path, teamRootPEM(t, nil), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &recordRunner{}
+	if err := installTeamRootSystemTrust(r, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTeamRootSystemTrust(r, "ABCD"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"write " + linuxTeamRootPath, "sudo update-ca-certificates",
+		"remove " + linuxTeamRootPath, "sudo update-ca-certificates --fresh",
+	}
+	if !slices.Equal(r.calls, want) || linuxTeamRootPath == linuxTrustPath {
+		t.Fatalf("calls = %v, want %v", r.calls, want)
 	}
 }

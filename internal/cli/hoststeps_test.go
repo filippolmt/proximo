@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/platform"
 )
 
@@ -90,7 +92,8 @@ func TestApplyStepsRollsBackAppliedPrefixOnFailure(t *testing.T) {
 // install output stays byte-identical and uninstall (reverse) prints the trust
 // and resolver lines in inverse order.
 func TestHostStepsOrderAndBanners(t *testing.T) {
-	steps := hostSteps(platform.ExecRunner{}, "test")
+	cfg := config.Default()
+	steps := hostSteps(platform.ExecRunner{}, &cfg)
 	if len(steps) != 4 {
 		t.Fatalf("hostSteps len = %d, want 4", len(steps))
 	}
@@ -116,5 +119,71 @@ func TestHostStepsOrderAndBanners(t *testing.T) {
 		if s.apply == nil || s.revert == nil {
 			t.Errorf("step %d has a nil apply/revert", i)
 		}
+	}
+}
+
+func TestHostStepsTeamRoot(t *testing.T) {
+	calls := stubTrust(t)
+	cfg, fp := configureTeamRoot(t)
+	steps := hostSteps(defaultRunner, &cfg)
+	if len(steps) != 5 {
+		t.Fatalf("hostSteps len = %d, want 5", len(steps))
+	}
+	// The local CA's steps are the same, configured or not (constraint 9).
+	unset := config.Default()
+	for i, s := range hostSteps(defaultRunner, &unset) {
+		if steps[i].applyMsg != s.applyMsg || steps[i].revertMsg != s.revertMsg {
+			t.Errorf("step %d banners changed with a team root configured", i)
+		}
+	}
+	last := steps[4]
+	if last.applyMsg != teamRootApplyMsg || last.revertMsg != teamRootRevertMsg {
+		t.Errorf("team root step banners = %q / %q", last.applyMsg, last.revertMsg)
+	}
+	if err := last.apply(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TeamRootTrusted != fp {
+		t.Errorf("install did not record the trusted fingerprint: %q", cfg.TeamRootTrusted)
+	}
+	if err := last.revert(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"team-root " + cfg.TeamRoot, "remove team-root " + fp}; !slices.Equal(*calls, want) {
+		t.Errorf("calls = %v, want %v", *calls, want)
+	}
+
+	// A peer-side failure never fails the command that serves .test: install
+	// warns and goes on, and uninstall still reaches the local CA.
+	installTeamRootTrust = func(platform.Runner, string) error { return errors.New("boom") }
+	removeTeamRootTrust = func(platform.Runner, string) error { return errors.New("boom") }
+	if err := last.apply(); err != nil {
+		t.Errorf("a team root failure failed install: %v", err)
+	}
+	if err := last.revert(); err != nil {
+		t.Errorf("a team root failure failed uninstall: %v", err)
+	}
+}
+
+// uninstall removes what was trusted, even once team-root no longer names it,
+// and touches no store for a root that was configured but never trusted.
+func TestHostStepsTeamRootRevertFollowsWhatWasTrusted(t *testing.T) {
+	calls := stubTrust(t)
+	cfg := config.Default()
+	cfg.TeamRootTrusted = "ABCD"
+	steps := hostSteps(defaultRunner, &cfg)
+	if len(steps) != 5 {
+		t.Fatalf("hostSteps len = %d, want 5", len(steps))
+	}
+	if err := steps[4].revert(); err != nil {
+		t.Fatal(err)
+	}
+	cfg = config.Default()
+	cfg.TeamRoot = "/never/trusted.crt"
+	if err := hostSteps(defaultRunner, &cfg)[4].revert(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"remove team-root ABCD"}; !slices.Equal(*calls, want) {
+		t.Errorf("calls = %v, want %v", *calls, want)
 	}
 }
