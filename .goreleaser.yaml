@@ -35,6 +35,12 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
 
+# A tag with a pre-release suffix (v0.16.0-rc.1) is published as a GitHub
+# pre-release, and never reaches the Homebrew tap below: a release candidate is
+# installed on purpose, never by `brew upgrade`.
+release:
+  prerelease: auto
+
 changelog:
   sort: asc
   filters:
@@ -54,6 +60,7 @@ homebrew_casks:
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
+    skip_upload: auto
     homepage: "https://github.com/filippolmt/proximo"
     description: "Local development reverse proxy with automatic DNS and trusted HTTPS"
     # Converging the stack is the caveat's job, not the cask's: a steps block
