@@ -76,3 +76,35 @@ func parseLeaf(t *testing.T, certPEM []byte) *x509.Certificate {
 	}
 	return cert
 }
+
+// The default certificate names nothing: served for every SNI no leaf
+// matches, it must not tell an unserved name from an invented one.
+func TestIssueDefaultCertIsNameless(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	certPath, keyPath, err := EnsureCA()
+	if err != nil {
+		t.Fatalf("EnsureCA: %v", err)
+	}
+	caCert, caKey, err := LoadCA(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("LoadCA: %v", err)
+	}
+	certPEM, _, err := IssueDefaultCert(caCert, caKey)
+	if err != nil {
+		t.Fatalf("IssueDefaultCert: %v", err)
+	}
+	leaf := parseLeaf(t, certPEM)
+	if len(leaf.DNSNames)+len(leaf.IPAddresses)+len(leaf.EmailAddresses)+len(leaf.URIs) != 0 {
+		t.Fatalf("SANs = %v %v %v %v, want none", leaf.DNSNames, leaf.IPAddresses, leaf.EmailAddresses, leaf.URIs)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots}); err != nil {
+		t.Fatalf("default cert does not chain to the CA: %v", err)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: "app.test", Roots: roots}); err == nil {
+		t.Fatal("default cert verifies for app.test")
+	}
+}
