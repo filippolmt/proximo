@@ -114,26 +114,12 @@ maps them onto one product.
 
 ## Taking part
 
-**To reach colleagues' routes** — every colleague:
-
-1. Be enrolled in the mesh, and be a resolving peer.
-2. `proximo config peer-suffix <suffix>`, then `proximo config team-root <path>`,
-   then `proximo trust`, which asks for `sudo` itself. Fully restart the browser.
-3. Use Chrome 126 or later, or Firefox.
-
-**To share your own routes** — additionally, in this order:
-
-1. `proximo config machine <label>` and `proximo config address <ip>`.
-2. `proximo config csr > machine.csr`, send it to a custodian, and install what
-   comes back with `proximo config intermediate <file>`.
-3. `proximo up`, then `proximo doctor`: `peer-dns` passes.
-4. **Only then** does the mesh operator create the routing of
-   `<machine>.<suffix>` to `<address>:5354`. Created first, it would exist,
-   carry the right flags and resolve nothing — configuration that looks live and
-   is not. `mesh` now passes.
-5. Label a route `proximo.share=true`; `proximo status` shows its peer names. Run
-   the [self-test](routing.md#what-an-app-needs-to-be-shareable), then send the Qualified
-   peer name.
+Every colleague who opens shared routes sets the Peer suffix and the team root,
+and trusts it. A machine that shares its own routes also gets a machine label,
+an address and an intermediate. The mesh routes its subtree to it only once its
+peer DNS service answers: created first, that routing would exist, carry the
+right flags and resolve nothing. The steps, in order and with the commands, are
+in [Setting up sharing for a team](sharing-setup.md).
 
 ## The team root and the intermediates
 

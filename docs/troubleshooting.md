@@ -616,7 +616,12 @@ Read what the certificate names:
 - **It carries the right name under an unknown issuer.** The team root is not
   installed on the colleague's machine: macOS reports `CSSMERR_TP_NOT_TRUSTED`,
   Chrome shows a warning that cannot be clicked through, Firefox
-  `SEC_ERROR_UNKNOWN_ISSUER`. Install it ([`docs/sharing.md`](sharing.md)).
+  `SEC_ERROR_UNKNOWN_ISSUER`. Install it
+  ([enrolling a colleague](sharing-setup.md#enrolling-a-colleague)). On Linux two
+  causes leave it out with no error: `proximo trust` run under `sudo`, which
+  reads root's configuration instead of yours, and a Chrome that had never
+  started, so its certificate store did not exist yet. Run `proximo trust` as
+  yourself once Chrome has started once.
 - **The intermediate has expired.** proximo keeps issuing valid leaves under it,
   so only the colleague's browser sees the failure. On the sharing machine
   `peer-intermediate` fails a month ahead.
@@ -659,6 +664,11 @@ route, which is never shared. `docker inspect <container>` shows the labels; dro
   once the address appears; `proximo up` retries now.
 - The stack's watcher is down, so nothing retries: `proximo up`.
 - `config address` is not this machine's address on the mesh.
+- **On macOS, the machine cannot reach its own mesh address**, and the Detail
+  says the address is held by an interface. The query from the machine to itself
+  times out although colleagues get an answer
+  ([#144](https://github.com/filippolmt/proximo/issues/144)). Ask from another
+  machine on the mesh: `dig @<address> -p 5354 proximo-doctor.<machine>.<suffix>`.
 
 Until this passes, the nameserver group that routes the subtree to this machine
 resolves nothing — which is why it is created only after this passes.
