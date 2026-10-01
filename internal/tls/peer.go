@@ -31,6 +31,11 @@ func ValidateTeamRoot(pemBytes []byte, suffix string) error {
 	if !c.IsCA {
 		missing = append(missing, "it is not a CA")
 	}
+	// The local CA leaves the macOS keychain by a common-name match, which is
+	// a substring match: this name would go with it.
+	if strings.Contains(strings.ToLower(c.Subject.CommonName), strings.ToLower(caCommonName)) {
+		missing = append(missing, fmt.Sprintf("its common name contains %q, the local CA's", caCommonName))
+	}
 	if !c.PermittedDNSDomainsCritical {
 		missing = append(missing, "its name constraints are not marked critical")
 	}

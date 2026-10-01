@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/platform"
 )
 
@@ -90,7 +91,7 @@ func TestApplyStepsRollsBackAppliedPrefixOnFailure(t *testing.T) {
 // install output stays byte-identical and uninstall (reverse) prints the trust
 // and resolver lines in inverse order.
 func TestHostStepsOrderAndBanners(t *testing.T) {
-	steps := hostSteps(platform.ExecRunner{}, "test")
+	steps := hostSteps(platform.ExecRunner{}, config.Default())
 	if len(steps) != 4 {
 		t.Fatalf("hostSteps len = %d, want 4", len(steps))
 	}

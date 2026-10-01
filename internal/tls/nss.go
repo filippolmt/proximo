@@ -13,11 +13,22 @@ import (
 // certutil invocations go through the injected Runner; certutil discovery and
 // bootstrap stay on the package helpers.
 func InstallNSSTrust(r platform.Runner) error {
-	if err := ensureCertutil(); err != nil {
-		return err
-	}
 	caPath, err := CACertPath()
 	if err != nil {
+		return err
+	}
+	return installNSSAnchor(r, caPath, caCommonName)
+}
+
+// RemoveNSSTrust removes the local CA from all discovered NSS databases.
+func RemoveNSSTrust(r platform.Runner) error {
+	return removeNSSAnchor(r, caCommonName)
+}
+
+// installNSSAnchor adds the certificate at path under nickname. A nickname
+// is matched exactly, so each anchor's is its own.
+func installNSSAnchor(r platform.Runner, path, nickname string) error {
+	if err := ensureCertutil(); err != nil {
 		return err
 	}
 	dbs := nssDatabases(true)
@@ -27,22 +38,21 @@ func InstallNSSTrust(r platform.Runner) error {
 	}
 	for _, db := range dbs {
 		// Remove any stale entry first so re-runs stay idempotent.
-		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
+		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", nickname)
 		if err := r.Run("certutil", "-A", "-d", "sql:"+db,
-			"-t", "C,,", "-n", caCommonName, "-i", caPath); err != nil {
-			fmt.Fprintf(os.Stderr, "proximo: warning: could not add CA to NSS db %s: %v\n", db, err)
+			"-t", "C,,", "-n", nickname, "-i", path); err != nil {
+			fmt.Fprintf(os.Stderr, "proximo: warning: could not add %s to NSS db %s: %v\n", nickname, db, err)
 		}
 	}
 	return nil
 }
 
-// RemoveNSSTrust removes the local CA from all discovered NSS databases.
-func RemoveNSSTrust(r platform.Runner) error {
+func removeNSSAnchor(r platform.Runner, nickname string) error {
 	if !platform.Has("certutil") {
 		return nil
 	}
 	for _, db := range nssDatabases(false) {
-		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", caCommonName)
+		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", nickname)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/platform"
 	"github.com/filippolmt/proximo/internal/tls"
 	"github.com/spf13/cobra"
@@ -12,8 +13,10 @@ import (
 // Seams for the trust-store writes so the wiring is unit-testable without
 // touching the host (mirrors uninstall.go's teardownStack/purgeObservability).
 var (
-	installSystemTrust = tls.InstallSystemTrust
-	installNSSTrust    = tls.InstallNSSTrust
+	installSystemTrust   = tls.InstallSystemTrust
+	installNSSTrust      = tls.InstallNSSTrust
+	installTeamRootTrust = tls.InstallTeamRootTrust
+	removeTeamRootTrust  = tls.RemoveTeamRootTrust
 )
 
 func newTrustCmd() *cobra.Command {
@@ -52,11 +55,38 @@ func runTrust(cmd *cobra.Command) error {
 
 // applyTrust installs the CA into the system store then the NSS store, in that
 // order, under a single banner — matching the "system + NSS" grouping install
-// uses. Unlike install it runs no checks, so it works with the stack up.
+// uses — and then, when one is configured, the team root. Unlike install it
+// runs no checks, so it works with the stack up.
 func applyTrust(out io.Writer, r platform.Runner) error {
 	fmt.Fprintln(out, "==> Installing CA trust (system + NSS)")
 	if err := installSystemTrust(r); err != nil {
 		return err
 	}
-	return installNSSTrust(r)
+	if err := installNSSTrust(r); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if cfg.TeamRoot == "" {
+		return nil
+	}
+	fmt.Fprintln(out, teamRootApplyMsg)
+	return trustTeamRoot(r, cfg)
+}
+
+const (
+	teamRootApplyMsg  = "==> Installing team root trust (system + NSS)"
+	teamRootRevertMsg = "==> Removing team root trust (system + NSS)"
+)
+
+// trustTeamRoot installs the configured team root, judging the file again
+// first: it may have changed, or the Peer suffix may have, since config
+// team-root accepted it, and the store it reaches serves real browsing.
+func trustTeamRoot(r platform.Runner, cfg config.Config) error {
+	if err := checkTeamRoot(cfg.TeamRoot, cfg.PeerSuffix); err != nil {
+		return err
+	}
+	return installTeamRootTrust(r, cfg.TeamRoot)
 }
