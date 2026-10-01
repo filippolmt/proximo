@@ -1,12 +1,8 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Peer certificates come from a name-constrained team root
-
-> **Proposed.** Part of the [peer-sharing specification](../specs/peer-sharing.md),
-> which describes a capability the binary does not have yet. It becomes
-> `accepted` in the commit that builds it.
 
 A colleague's browser has to trust a shared route's certificate, and proximo's
 local CA cannot be the answer as it stands: a CA in a trust store can sign for

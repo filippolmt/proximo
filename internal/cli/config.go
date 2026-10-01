@@ -30,24 +30,19 @@ func newConfigCmd() *cobra.Command {
 	cmd.AddCommand(newConfigMeshRemedyCmd())
 	cmd.AddCommand(newConfigCSRCmd())
 	cmd.AddCommand(newConfigIntermediateCmd())
+	cmd.AddCommand(newConfigUnsetCmd())
 	return cmd
 }
 
-// The peer values are hidden until the capability that reads them is built:
-// documenting them now would advertise a feature the binary does not have
-// (docs/specs/peer-sharing.md). Unhide them in the commit that moves that
-// specification's cli.md sections into docs/cli.md.
-//
 // The peer values are set one per subcommand, and validated here — at the
 // moment a person types them, never at reconcile and never as a refusal to
 // start. What a machine can decide is refused; what it cannot is reported.
 
 func newConfigMachineCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "machine <label>",
-		Short:  "Set this machine's label in its peer names",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		Use:   "machine <label>",
+		Short: "Set this machine's label in its peer names",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := config.NormalizeMachine(args[0])
 			if err != nil {
@@ -65,10 +60,9 @@ func newConfigMachineCmd() *cobra.Command {
 
 func newConfigPeerSuffixCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "peer-suffix <suffix>",
-		Short:  "Set the suffix every peer name lives under",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		Use:   "peer-suffix <suffix>",
+		Short: "Set the suffix every peer name lives under",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := config.NormalizePeerSuffix(args[0])
 			if err != nil {
@@ -104,10 +98,9 @@ var interfaceAddrs = net.InterfaceAddrs
 
 func newConfigAddressCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "address <ip>",
-		Short:  "Set the address proximo answers this machine's peer names with",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		Use:   "address <ip>",
+		Short: "Set the address proximo answers this machine's peer names with",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := config.ParseAddress(args[0])
 			if err != nil {
@@ -125,10 +118,9 @@ func newConfigAddressCmd() *cobra.Command {
 
 func newConfigTeamRootCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "team-root <path>",
-		Short:  "Point proximo at the team root certificate",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		Use:   "team-root <path>",
+		Short: "Point proximo at the team root certificate",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -162,9 +154,8 @@ func checkTeamRoot(path, suffix string) error {
 
 func newConfigMeshRemedyCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "mesh-remedy <command>",
-		Short:  "Set the command the mesh Check offers as its Remedy",
-		Hidden: true,
+		Use:   "mesh-remedy <command>",
+		Short: "Set the command the mesh Check offers as its Remedy",
 		Long: "Store, verbatim, the command the mesh Check offers when it fails —\n" +
 			"typically the transport's own status command. proximo cannot judge a\n" +
 			"transport's command, so nothing is validated.",
@@ -178,9 +169,8 @@ func newConfigMeshRemedyCmd() *cobra.Command {
 
 func newConfigCSRCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "csr",
-		Short:  "Print the certificate signing request for this machine's intermediate",
-		Hidden: true,
+		Use:   "csr",
+		Short: "Print the certificate signing request for this machine's intermediate",
 		Long: "Print, on stdout and nothing else, the CSR a custodian signs into this\n" +
 			"machine's intermediate. The machine key is created only if none exists\n" +
 			"and never leaves the machine; run again, the same CSR is printed.",
@@ -205,10 +195,9 @@ func newConfigCSRCmd() *cobra.Command {
 
 func newConfigIntermediateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "intermediate <file>",
-		Short:  "Install the intermediate a custodian signed from this machine's CSR",
-		Hidden: true,
-		Args:   cobra.ExactArgs(1),
+		Use:   "intermediate <file>",
+		Short: "Install the intermediate a custodian signed from this machine's CSR",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -245,6 +234,51 @@ func newConfigIntermediateCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Saved intermediate for %s, valid until %s\n",
 				tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), c.NotAfter.Format("2006-01-02"))
+			return nil
+		},
+	}
+}
+
+// unsetters return each peer value to its unconfigured state. The team root's
+// trust anchor is not removed here — that needs sudo, and `uninstall` removes
+// what was trusted — and the machine key is never removed: it is the one thing
+// a new intermediate must match.
+var unsetters = map[string]func(*config.Config){
+	"machine":     func(c *config.Config) { c.Machine = "" },
+	"peer-suffix": func(c *config.Config) { c.PeerSuffix = "" },
+	"address":     func(c *config.Config) { c.Address = "" },
+	"team-root":   func(c *config.Config) { c.TeamRoot = "" },
+	"mesh-remedy": func(c *config.Config) { c.MeshRemedy = "" },
+}
+
+func newConfigUnsetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unset <machine|peer-suffix|address|team-root|intermediate|mesh-remedy>",
+		Short: "Return a peer-sharing value to its unconfigured state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			switch unset, ok := unsetters[name]; {
+			case name == "intermediate":
+				if err := tls.RemoveIntermediate(); err != nil {
+					return err
+				}
+			case ok:
+				unset(&cfg)
+				if err := cfg.Save(); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("%q is not a peer-sharing value: machine, peer-suffix, address, team-root, intermediate or mesh-remedy", name)
+			}
+			if err := docker.SyncPeer(cfg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Unset %s.\n", name)
 			return nil
 		},
 	}

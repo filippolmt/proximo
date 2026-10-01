@@ -275,6 +275,19 @@ func IntermediateSubtree(c *x509.Certificate) string {
 	return strings.ToLower(strings.TrimPrefix(c.PermittedDNSDomains[0], "."))
 }
 
+// RemoveIntermediate removes the installed intermediate, keeping the machine
+// key a new one must match. Removing none is not an error.
+func RemoveIntermediate() error {
+	path, err := locate(intermediateName)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Intermediate returns the installed intermediate, or nil when there is none.
 func Intermediate() (*x509.Certificate, error) {
 	path, err := locate(intermediateName)

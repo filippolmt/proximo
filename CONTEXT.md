@@ -98,6 +98,53 @@ balanced round-robin. Replicas live inside one Project — containers of differe
 Projects are never replicas.
 _Avoid_: collision, duplicate, instance
 
+### Sharing with colleagues
+
+**Peer suffix**:
+The multi-label DNS suffix every peer name lives under, supplied as
+configuration. It is not a TLD: proximo claims nothing for it on the host
+resolver. See [sharing](docs/sharing.md).
+_Avoid_: zone, domain, mesh domain
+
+**Machine label**:
+The single label that names one machine in the mesh. It names a **machine, not a
+person**, and colleagues write it down, so it is neutral and stable.
+_Avoid_: hostname, username, device name
+
+**Peer name**:
+A name a route answers on for colleagues, `<…>.<machine>.<suffix>`, derived from
+one of its local hosts. The **Bare peer name** is derived from the Bare host: the
+convenient form, and like the Bare host the one a Collision can move. The
+**Qualified peer name** is derived from the Qualified host, is never moved by a
+Collision, and is the one to send a colleague.
+_Avoid_: public name, external URL, share link
+
+**Peer host**:
+Any host a route answers on that is a peer name, as opposed to its `.test` hosts.
+_Avoid_: remote host, mesh host
+
+**Publishing peer**:
+A machine that exposes routes for others to reach. Being one means its own names
+must resolve for everyone else.
+_Avoid_: server, host machine
+
+**Resolving peer**:
+A machine that must resolve other people's peer names: anyone who opens those
+pages. A different and larger set than the publishing peers. *You resolve to
+consult; you publish to offer.* A publishing peer is always a resolving peer too.
+_Avoid_: client, consumer
+
+**Team root**:
+The certificate authority a colleague installs to trust peer names.
+Name-constrained to the Peer suffix, in every name type, and kept offline.
+_Avoid_: team CA, shared CA, root certificate (when the local CA is meant)
+
+**Intermediate**:
+The certificate authority one machine holds, signed by the team root and
+constrained to `<machine>.<suffix>`. proximo signs that machine's peer leaves
+with it.
+_Avoid_: machine CA, sub-CA
+
 ### Diagnosis and observation
 
 **Check**:

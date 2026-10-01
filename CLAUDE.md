@@ -29,6 +29,8 @@ Architecture lives in `docs/`, never here. Whole picture:
 | Routing label contract & port resolution | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels) |
 | Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
 | The bare + qualified host every route answers on | [docs/routing.md — The two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets) |
+| Sharing a route with colleagues (`proximo.share`, peer names, the team root, the mesh) | [docs/sharing.md](docs/sharing.md), [docs/routing.md — proximo.share](docs/routing.md#proximoshare--share-a-route-with-colleagues) |
+| How peer routes, peer leaves and the peer DNS service are built, and why they are inert unconfigured | [docs/architecture.md — Peer sharing](docs/architecture.md#peer-sharing), [docs/adr/0010–0013](docs/adr/) |
 | A host collision: what is reported and what to do | [docs/troubleshooting.md — A host collision is reported](docs/troubleshooting.md#a-host-collision-is-reported) |
 | What a Check reports, and why `status` never prints a Remedy | [docs/cli.md — proximo doctor](docs/cli.md#proximo-doctor) |
 | The Skill proximo ships to agents, and what makes a copy Managed | [docs/skill.md](docs/skill.md) |

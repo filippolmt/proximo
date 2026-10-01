@@ -321,3 +321,46 @@ func TestConfigIntermediateSyncsARunningStack(t *testing.T) {
 		t.Error("the stack kept peer material for the old label")
 	}
 }
+
+// unset returns a value to its unconfigured state, and the stack with it.
+func TestConfigUnset(t *testing.T) {
+	rootPEM, rootKeyPEM, csr := enrol(t)
+	intPEM, err := tls.SignIntermediate(rootPEM, rootKeyPEM, csr, "studio-01", "mesh.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "intermediate.crt")
+	if err := os.WriteFile(file, intPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, "intermediate", file); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"intermediate", "team-root", "machine", "peer-suffix", "address", "mesh-remedy"} {
+		if _, err := runConfig(t, "unset", name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg != config.Default() {
+		t.Errorf("config after unsetting everything = %+v", cfg)
+	}
+	if c, _ := tls.Intermediate(); c != nil {
+		t.Error("the intermediate outlived unset")
+	}
+	if _, err := runConfig(t, "unset", "tld"); err == nil {
+		t.Error("unset accepted a value that is not a peer value")
+	}
+}
+
+// The peer subcommands are visible now that the capability is built.
+func TestPeerSubcommandsAreVisible(t *testing.T) {
+	for _, c := range newConfigCmd().Commands() {
+		if c.Hidden {
+			t.Errorf("config %s is hidden", c.Name())
+		}
+	}
+}

@@ -16,7 +16,7 @@ import (
 )
 
 // proximoShareLabel opts a route in to being served on its peer names
-// (docs/specs/peer-sharing.md). A pure switch: it carries no name, no policy
+// (docs/routing.md#proximoshare--share-a-route-with-colleagues). A pure switch: it carries no name, no policy
 // and no suffix, which are machine configuration.
 const proximoShareLabel = "proximo.share"
 

@@ -413,6 +413,13 @@ route.
    is worth a look when you want to confirm the route is being served through the
    hop at all.
 
+On a shared route:
+
+- A colleague cannot read the Inspection of their own request: the read API is
+  on the sharing machine's loopback, so the diagnosis is asked of the publisher.
+- Inspection is Chrome-only, so a colleague on another engine produces no Client
+  report; the Access record and the Transcript are still there.
+
 ## An inspected route 404s on part of my app
 
 proximo reserves the path prefix `/.proximo/` on the origin of an inspected route
@@ -435,6 +442,11 @@ DNS server even though the stack is healthy.
 
 In both cases `dig @127.0.0.1 -p 5354 <name>.test` answering correctly proves
 the problem is resolver precedence, not proximo's DNS server.
+
+A mesh nameserver configured as the machine's **primary** resolver is one more
+such cause. It captures every query no rule matches, `.test` included, and it
+breaks every local route on the machine. The mesh's nameserver configuration must
+never be primary ([constraint 6](sharing.md#constraints)).
 
 ## Degraded stack
 
@@ -544,6 +556,92 @@ developer who uses no coding agent should never see a red line about one.
 
 After any of these, restart the agent session — a skill is read when the session
 starts.
+
+## A shared link does not resolve or times out
+
+A timeout with no page is what a machine that has not admitted you looks like:
+nothing listens below TLS. The causes, none of them a proximo fault and none of
+them affecting the sharing machine's own `.test` routes:
+
+- the mesh's access policy does not admit your machine to theirs;
+- the sharing machine's mesh login has lapsed — ask them to log in, retrying
+  will not help;
+- the sharing machine is off, or its mesh client is down;
+- your machine is not a resolving peer, so the name does not resolve for you.
+
+On the sharing machine, `proximo doctor` reports `mesh`.
+
+## A shared link lands on a `.test` address that does not resolve
+
+The browser shows `DNS_PROBE_FINISHED_NXDOMAIN` for a `.test` host. The app
+built an absolute URL — a redirect, usually after login — from a configured base
+URL instead of from the request. See property 1 of
+[what an app needs to be shareable](routing.md#what-an-app-needs-to-be-shareable).
+
+## Login on a shared link does not stick
+
+The login appears to succeed and the next page is anonymous. The app pinned its
+session cookie to `Domain=<name>.test`, which the browser silently refuses on the
+peer name. In the other direction, a session started on the `.test` host never
+follows onto the peer name: one login per name. A colleague's app that pins a
+cookie to the Peer suffix can also overwrite your session, because the whole mesh
+is one site. See property 2 of
+[what an app needs to be shareable](routing.md#what-an-app-needs-to-be-shareable).
+
+## A shared link answers 404
+
+The route is shared and the request reached it:
+
+- only a `proximo.path` prefix is shared, so the root answers `404`, and
+  `proximo status` does not print paths;
+- the app itself answers `404`;
+- with `proximo.inspect` on, `/.proximo/` is reserved on the peer names too;
+- the Bare peer name moved to another container after a Collision — use the
+  Qualified peer name.
+
+An unshared route or an invented name does **not** answer `404`; it fails at the
+certificate (next section).
+
+## A colleague sees a certificate error on a shared link
+
+Read what the certificate names:
+
+- **It carries no name at all.** The name is not shared on that machine, or
+  nobody declared it. The two are deliberately indistinguishable: there is no
+  catch-all that says "not shared", because one would let a colleague tell
+  "exists but unshared" from "does not exist". Possible reasons: the route lacks
+  `proximo.share`; the label is set and a value is missing (the sharing machine's
+  `proximo status` names it); the declared host is outside the TLD; the container
+  is not running.
+- **It carries the right name under an unknown issuer.** The team root is not
+  installed on the colleague's machine: macOS reports `CSSMERR_TP_NOT_TRUSTED`,
+  Chrome shows a warning that cannot be clicked through, Firefox
+  `SEC_ERROR_UNKNOWN_ISSUER`. Install it ([`docs/sharing.md`](sharing.md)).
+- **The intermediate has expired.** proximo keeps issuing valid leaves under it,
+  so only the colleague's browser sees the failure. On the sharing machine
+  `peer-intermediate` fails a month ahead.
+- **Chrome older than 126.** Below 126 a policy could switch off enforcement of
+  the team root's constraints, so it is not a supported browser for peer names.
+  No `doctor` Check reports it: the browser that matters is on the colleague's
+  machine.
+- **A name-constraint violation**, which no platform names as such: macOS reports
+  the certificate as *"not standards compliant"* (status `-2147409643`, the same
+  for a DNS and an IP violation), SecureTransport flattens it to `unable to get
+  local issuer certificate`, Chrome shows the generic `ERR_CERT_INVALID`, Firefox
+  `SEC_ERROR_CERT_NOT_IN_NAME_SPACE` — even before the root is installed — and
+  OpenSSL `permitted subtree violation` or `excluded subtree violation`. Any
+  diagnostic that matches one alert string is wrong on some client. It means a
+  certificate was issued outside the machine's subtree, which the configuration
+  refusals exist to prevent.
+
+## A shared link is slow
+
+The path between the two machines is relayed — behind a phone hotspot or
+carrier-grade NAT it usually is, and stays so. That is a normal operating
+condition and there is no per-network fix to apply. On a relayed path a new
+connection costs from a few hundred milliseconds up to about a second, with
+visible jitter. Later requests reuse the HTTP/2 connection and skip the
+handshake, so it feels like a distant server, not like localhost.
 
 ## A shared route is not served on its peer names
 

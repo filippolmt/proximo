@@ -1,6 +1,6 @@
 ---
 name: proximo
-description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when exposing a container through proximo.* labels, when a .test host does not answer or returns 502/503, when a browser distrusts a local certificate, when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, or when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken.
+description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when exposing a container through proximo.* labels, when a .test host does not answer or returns 502/503, when a browser distrusts a local certificate, when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
 metadata:
   short-description: Expose a container at https://<name>.test, and diagnose one that is broken
 ---
@@ -36,6 +36,7 @@ first: what it shows picks the branch.
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
 | A route, the host answers, and a request fails on the server — a 500, or an API call that comes back wrong | [`references/transcript.md`](references/transcript.md) |
 | Nothing is visibly broken, and the developer says something is **not progressing** — a queue not draining, a job that never finishes, a worker that keeps dying | [`references/transcript.md`](references/transcript.md) — ask for **Incidents** |
+| A route carries `proximo.share`, or a **colleague** reports a shared link that times out, lands on a `.test` address, loses its login, or fails at the certificate | The `PEER` column says whether the route is served on its peer names; then [sharing](https://filippolmt.github.io/proximo/sharing.html) and the matching section of [troubleshooting](https://filippolmt.github.io/proximo/troubleshooting.html#a-shared-link-does-not-resolve-or-times-out). `proximo doctor` checks this machine's side (`peer-intermediate`, `peer-routes`, `peer-dns`, `mesh`); nothing here can see the colleague's |
 
 When the developer's account does not settle which row it is, ask the host
 itself and let the status code decide:

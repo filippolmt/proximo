@@ -23,6 +23,7 @@ map** of it — every `##` section of every guide is linked below.
 | [Routing](routing.md) | reference | How to expose a container: the `proximo.*` labels, port auto-detection, multiple hosts, and native Traefik compatibility. |
 | [Dev-time observability](observability.md) | how-to | The opt-in `up --observability` logs (Dozzle) + metrics (Beszel) dashboards — credential-less and no-secret. |
 | [The agent skill](skill.md) | how-to | The Skill proximo ships to coding agents: installing it, the Managed copy that keeps it level with the binary, and what it knows. |
+| [Sharing a route with colleagues](sharing.md) | how-to | `proximo.share`: who can reach a shared route, what the team's mesh must provide, taking part, and the team root and intermediates. |
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
 | [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases and the stack image pipeline. |
 
@@ -54,23 +55,13 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0009 — The stack declares its own address space](adr/0009-the-stack-declares-its-own-address-space.md)
 
-[0010 — Peer certificates come from a name-constrained team root](adr/0010-peer-certificates-come-from-a-name-constrained-team-root.md) *(proposed)*
+[0010 — Peer certificates come from a name-constrained team root](adr/0010-peer-certificates-come-from-a-name-constrained-team-root.md)
 
-[0011 — A shared route answers on two peer names, derived from its local hosts](adr/0011-a-shared-route-answers-on-two-derived-peer-names.md) *(proposed)*
+[0011 — A shared route answers on two peer names, derived from its local hosts](adr/0011-a-shared-route-answers-on-two-derived-peer-names.md)
 
-[0012 — A peer host is answered without rewriting `Host`](adr/0012-a-peer-host-is-answered-without-rewriting-host.md) *(proposed)*
+[0012 — A peer host is answered without rewriting `Host`](adr/0012-a-peer-host-is-answered-without-rewriting-host.md)
 
-[0013 — proximo's DNS server answers the peer subtree](adr/0013-proximo-answers-the-peer-subtree.md) *(proposed)*
-
-### [Specifications](specs/)
-
-Capabilities designed and not yet built. Nothing in them is honoured by the
-binary; each section is headed by the guide it moves into when it is built, and
-the document is deleted once it has been emptied. A *(proposed)* decision record
-belongs to one of them.
-
-[Sharing a route with colleagues](specs/peer-sharing.md) — `proximo.share`, peer
-names, the team root, and the peer DNS listener
+[0013 — proximo's DNS server answers the peer subtree](adr/0013-proximo-answers-the-peer-subtree.md)
 
 ### [Installation](installation.md)
 
@@ -95,6 +86,14 @@ names, the team root, and the peer DNS listener
 [`proximo errors transcript`](cli.md#proximo-errors-transcript) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
+[`proximo config machine`](cli.md#proximo-config-machine) ·
+[`proximo config peer-suffix`](cli.md#proximo-config-peer-suffix) ·
+[`proximo config address`](cli.md#proximo-config-address) ·
+[`proximo config team-root`](cli.md#proximo-config-team-root) ·
+[`proximo config csr`](cli.md#proximo-config-csr) ·
+[`proximo config intermediate`](cli.md#proximo-config-intermediate) ·
+[`proximo config mesh-remedy`](cli.md#proximo-config-mesh-remedy) ·
+[`proximo config unset`](cli.md#proximo-config-unset) ·
 [`proximo skill install`](cli.md#proximo-skill-install) ·
 [`proximo skill uninstall`](cli.md#proximo-skill-uninstall) ·
 [`proximo uninstall`](cli.md#proximo-uninstall) ·
@@ -117,6 +116,7 @@ names, the team root, and the peer DNS listener
 [DNS](architecture.md#dns) ·
 [TLS and trust](architecture.md#tls-and-trust) ·
 [The watcher](architecture.md#the-watcher) ·
+[Peer sharing](architecture.md#peer-sharing) ·
 [Source map](architecture.md#source-map)
 
 ### [Routing](routing.md)
@@ -131,6 +131,7 @@ names, the team root, and the peer DNS listener
 [`proximo.path` — split one host across containers](routing.md#proximopath--split-one-host-across-containers) ·
 [proximo middlewares — auth, CORS, custom headers](routing.md#proximo-middlewares--auth-cors-custom-headers) ·
 [`proximo.inspect` — see what the browser saw](routing.md#proximoinspect--see-what-the-browser-saw) ·
+[`proximo.share` — share a route with colleagues](routing.md#proximoshare--share-a-route-with-colleagues) ·
 [`proximo.tcp.port` — route TCP services by name (SNI)](routing.md#proximotcpport--route-tcp-services-by-name-sni) ·
 [Round-robin across replicas](routing.md#round-robin-across-replicas) ·
 [What happens behind the scenes](routing.md#what-happens-behind-the-scenes) ·
@@ -159,6 +160,17 @@ names, the team root, and the peer DNS listener
 [What the Skill knows](skill.md#what-the-skill-knows) ·
 [Without the binary](skill.md#without-the-binary)
 
+### [Sharing a route with colleagues](sharing.md)
+
+[Scope and assumptions](sharing.md#scope-and-assumptions) ·
+[Constraints](sharing.md#constraints) ·
+[Who can reach a shared route](sharing.md#who-can-reach-a-shared-route) ·
+[What the mesh must provide](sharing.md#what-the-mesh-must-provide) ·
+[Taking part](sharing.md#taking-part) ·
+[The team root and the intermediates](sharing.md#the-team-root-and-the-intermediates) ·
+[Limits for whoever runs the team](sharing.md#limits-for-whoever-runs-the-team) ·
+[Appendix — one transport that satisfies the requirements](sharing.md#appendix--one-transport-that-satisfies-the-requirements)
+
 ### [Troubleshooting](troubleshooting.md)
 
 [The Docker daemon is not reachable](troubleshooting.md#the-docker-daemon-is-not-reachable) ·
@@ -185,6 +197,12 @@ names, the team root, and the peer DNS listener
 [The stack runs an overridden image](troubleshooting.md#the-stack-runs-an-overridden-image) ·
 [The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled) ·
 [The agent skill is out of date](troubleshooting.md#the-agent-skill-is-out-of-date) ·
+[A shared link does not resolve or times out](troubleshooting.md#a-shared-link-does-not-resolve-or-times-out) ·
+[A shared link lands on a `.test` address that does not resolve](troubleshooting.md#a-shared-link-lands-on-a-test-address-that-does-not-resolve) ·
+[Login on a shared link does not stick](troubleshooting.md#login-on-a-shared-link-does-not-stick) ·
+[A shared link answers 404](troubleshooting.md#a-shared-link-answers-404) ·
+[A colleague sees a certificate error on a shared link](troubleshooting.md#a-colleague-sees-a-certificate-error-on-a-shared-link) ·
+[A shared link is slow](troubleshooting.md#a-shared-link-is-slow) ·
 [A shared route is not served on its peer names](troubleshooting.md#a-shared-route-is-not-served-on-its-peer-names) ·
 [proximo does not answer on the mesh address](troubleshooting.md#proximo-does-not-answer-on-the-mesh-address) ·
 [This machine's peer names do not resolve](troubleshooting.md#this-machines-peer-names-do-not-resolve) ·

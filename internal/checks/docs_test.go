@@ -13,17 +13,23 @@ import (
 // environment cannot be asked — instead of a documented failure quietly having
 // no check.
 var unverifiable = map[string]string{
-	"macos-udp-forwarding":                                   "a property of the Docker VM, visible only as the DNS checks failing",
-	"macos-gatekeeper-blocks-the-binary":                     "about the binary before it runs, so nothing of proximo is running to ask",
-	"traefik-logs-failed-to-find-any-pem-data":               "a fixed race in an older version; the log line is the only trace",
-	"where-to-read-watcher-warnings":                         "a pointer to the logs, not a statement about the host",
-	"an-error-i-typed-in-the-browser-console-never-shows-up": "browser behaviour proximo cannot observe",
-	"proximo-errors-shows-nothing-for-an-inspected-route":    "a checklist about one route's traffic, answered by `proximo errors` itself",
-	"an-inspected-route-404s-on-part-of-my-app":              "a property of the project's own paths, which proximo does not know",
-	"502503-right-after-a-container-restarts":                "cured by adding a healthcheck; until one exists there is nothing to read",
-	"the-stack-image-cannot-be-pulled":                       "carried by the converge that fails, which prints the Remedy itself",
-	"a-publishing-machine-is-not-a-resolving-peer":           "which machines the mesh distributes a nameserver group to is visible only from the mesh; this machine sees it as mesh failing, whose section points here",
-	"a-transcript-is-empty-or-says-the-container-is-gone":    "each outcome is a fact about one Exchange or Incident, named by `proximo errors` as it prints it; there is nothing about the host to state up front",
+	"macos-udp-forwarding":                                        "a property of the Docker VM, visible only as the DNS checks failing",
+	"macos-gatekeeper-blocks-the-binary":                          "about the binary before it runs, so nothing of proximo is running to ask",
+	"traefik-logs-failed-to-find-any-pem-data":                    "a fixed race in an older version; the log line is the only trace",
+	"where-to-read-watcher-warnings":                              "a pointer to the logs, not a statement about the host",
+	"an-error-i-typed-in-the-browser-console-never-shows-up":      "browser behaviour proximo cannot observe",
+	"proximo-errors-shows-nothing-for-an-inspected-route":         "a checklist about one route's traffic, answered by `proximo errors` itself",
+	"an-inspected-route-404s-on-part-of-my-app":                   "a property of the project's own paths, which proximo does not know",
+	"502503-right-after-a-container-restarts":                     "cured by adding a healthcheck; until one exists there is nothing to read",
+	"the-stack-image-cannot-be-pulled":                            "carried by the converge that fails, which prints the Remedy itself",
+	"a-shared-link-does-not-resolve-or-times-out":                 "seen from a colleague's machine; this machine cannot observe another's view of it",
+	"a-shared-link-lands-on-a-test-address-that-does-not-resolve": "a property of the app's URLs, seen in a colleague's browser",
+	"login-on-a-shared-link-does-not-stick":                       "a property of the app's cookies, seen in a colleague's browser",
+	"a-shared-link-answers-404":                                   "the route answered: a fact about the app and its paths, not about the host",
+	"a-colleague-sees-a-certificate-error-on-a-shared-link":       "read off the certificate in a colleague's browser; the sharing machine's side is peer-intermediate",
+	"a-shared-link-is-slow":                                       "the relayed path between two machines, which neither side's Check can measure",
+	"a-publishing-machine-is-not-a-resolving-peer":                "which machines the mesh distributes a nameserver group to is visible only from the mesh; this machine sees it as mesh failing, whose section points here",
+	"a-transcript-is-empty-or-says-the-container-is-gone":         "each outcome is a fact about one Exchange or Incident, named by `proximo errors` as it prints it; there is nothing about the host to state up front",
 }
 
 // Every check names a section of docs/troubleshooting.md, and this test asserts
