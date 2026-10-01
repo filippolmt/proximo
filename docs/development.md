@@ -186,6 +186,12 @@ Push a `vX.Y.Z` tag → `.github/workflows/release.yml` runs GoReleaser
 `.github/workflows/ci.yml` ([the checks listed above](#build-and-test)) and
 `.github/workflows/docs.yml` (Markdown link + anchor check).
 
+A tag with a pre-release suffix — `v0.16.0-rc.1` — is a **release candidate**:
+GoReleaser publishes it as a GitHub pre-release and skips the Homebrew tap, so
+no `brew upgrade` ever installs it, and its stack image never moves `latest`.
+Install one by hand from the release's archive; the binary pins the
+`v0.16.0-rc.1` image like any other version.
+
 `ci.yml` also carries a `cask` job that renders the Homebrew cask with
 `goreleaser release --snapshot --skip=publish,validate` and greps the result.
 It exists because `goreleaser check` validates the schema only: it reports a
@@ -203,6 +209,7 @@ the `custom_block` and read that job's assertions.
 | --- | --- |
 | push to `main` | `main` (mobile), `sha-<short>` (immutable) |
 | push of `vX.Y.Z` | `vX.Y.Z`, `latest` |
+| push of a pre-release `vX.Y.Z-rc.N` | `vX.Y.Z-rc.N` only |
 
 Mobile `vX.Y` / `vX` tags are deliberately **not** published: proximo pins the
 exact version programmatically, and a mobile major tag would reintroduce the
