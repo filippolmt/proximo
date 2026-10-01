@@ -23,7 +23,8 @@ map** of it — every `##` section of every guide is linked below.
 | [Routing](routing.md) | reference | How to expose a container: the `proximo.*` labels, port auto-detection, multiple hosts, and native Traefik compatibility. |
 | [Dev-time observability](observability.md) | how-to | The opt-in `up --observability` logs (Dozzle) + metrics (Beszel) dashboards — credential-less and no-secret. |
 | [The agent skill](skill.md) | how-to | The Skill proximo ships to coding agents: installing it, the Managed copy that keeps it level with the binary, and what it knows. |
-| [Sharing a route with colleagues](sharing.md) | how-to | `proximo.share`: who can reach a shared route, what the team's mesh must provide, taking part, and the team root and intermediates. |
+| [Sharing a route with colleagues](sharing.md) | explanation | `proximo.share`: who can reach a shared route, what the team's mesh must provide, taking part, and the team root and intermediates. |
+| [Setting up sharing for a team](sharing-setup.md) | how-to | The steps, in order: roles, the team root, the mesh, enrolling a colleague and a sharing machine, sharing a page, checking it, stopping. |
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
 | [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases and the stack image pipeline. |
 
@@ -170,6 +171,17 @@ Why a design is the way it is, and what was rejected on the way.
 [The team root and the intermediates](sharing.md#the-team-root-and-the-intermediates) ·
 [Limits for whoever runs the team](sharing.md#limits-for-whoever-runs-the-team) ·
 [Appendix — one transport that satisfies the requirements](sharing.md#appendix--one-transport-that-satisfies-the-requirements)
+
+### [Setting up sharing for a team](sharing-setup.md)
+
+[Who does what](sharing-setup.md#who-does-what) ·
+[Once per team: the team root](sharing-setup.md#once-per-team-the-team-root) ·
+[Once per team: the mesh](sharing-setup.md#once-per-team-the-mesh) ·
+[Enrolling a colleague](sharing-setup.md#enrolling-a-colleague) ·
+[Enrolling a sharing machine](sharing-setup.md#enrolling-a-sharing-machine) ·
+[Sharing a page](sharing-setup.md#sharing-a-page) ·
+[Checking it end to end](sharing-setup.md#checking-it-end-to-end) ·
+[Stopping](sharing-setup.md#stopping)
 
 ### [Troubleshooting](troubleshooting.md)
 
