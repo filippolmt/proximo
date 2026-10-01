@@ -447,10 +447,60 @@ func TestSyncCertsPerContainer(t *testing.T) {
 		t.Error("tls config should still list the surviving certificate")
 	}
 
-	// No routed containers → TLS config removed.
+	// No routed containers → the TLS config still carries the default.
 	w.syncCerts(nil)
-	if fileExists(filepath.Join(w.dynamicDir, "proximo-tls.yml")) {
-		t.Error("tls config should be removed when nothing is routed")
+	tlsYAML, err = os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if err != nil {
+		t.Fatalf("read tls config with nothing routed: %v", err)
+	}
+	if strings.Contains(string(tlsYAML), ".crt") || !strings.Contains(string(tlsYAML), "defaultCertificate") {
+		t.Errorf("tls config with nothing routed should hold only the default:\n%s", tlsYAML)
+	}
+}
+
+// The default store serves a certificate with no SAN, signed by the local CA,
+// never a route's leaf: the leaves stay listed, and SNI still selects each.
+func TestSyncCertsDefaultIsNameless(t *testing.T) {
+	w := testWatcher(t)
+	certsDir := filepath.Join(w.dynamicDir, "certs")
+	app := routedContainer{name: "app", safe: "app", hosts: []string{"app.test"}, proximo: true}
+
+	for _, routed := range [][]routedContainer{nil, {app}} {
+		w.syncCerts(routed)
+		tlsYAML, err := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+		if err != nil {
+			t.Fatalf("read tls config: %v", err)
+		}
+		def := filepath.Join(certsDir, defaultCertFile)
+		wantDefault := "defaultCertificate:\n        certFile: " + def + "\n"
+		if !strings.Contains(string(tlsYAML), wantDefault) {
+			t.Fatalf("default store does not reference %s:\n%s", def, tlsYAML)
+		}
+		if strings.Count(string(tlsYAML), "certFile: "+def) != 1 {
+			t.Errorf("the default certificate is listed as a leaf:\n%s", tlsYAML)
+		}
+		data, err := os.ReadFile(def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, _ := pem.Decode(data)
+		if block == nil {
+			t.Fatal("default certificate is not PEM")
+		}
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.DNSNames)+len(c.IPAddresses) != 0 {
+			t.Errorf("default certificate names %v %v", c.DNSNames, c.IPAddresses)
+		}
+		if err := c.CheckSignatureFrom(w.caCert); err != nil {
+			t.Errorf("default certificate not signed by the local CA: %v", err)
+		}
+	}
+	tlsYAML, _ := os.ReadFile(filepath.Join(w.dynamicDir, "proximo-tls.yml"))
+	if !strings.Contains(string(tlsYAML), "- certFile: "+filepath.Join(certsDir, "app.crt")) {
+		t.Errorf("the route's leaf is no longer listed:\n%s", tlsYAML)
 	}
 }
 

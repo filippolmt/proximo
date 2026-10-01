@@ -120,6 +120,11 @@ const (
 	// user containers away from it, and the self-route is rebuilt every
 	// reconcile, so stale cleanup always sees it as active.
 	dashboardSafe = "dashboard"
+	// defaultCertFile and defaultKeyFile hold the nameless default certificate
+	// in the certs directory. The .pem extension keeps them clear of every
+	// per-container <safe>.crt/.key pair and of the stale sweep's *.crt glob.
+	defaultCertFile = "default.pem"
+	defaultKeyFile  = "default-key.pem"
 	// dashboardFile is the stable dynamic-config filename of the dashboard
 	// self-route. It deliberately does not match the proximo-route-* cleanup
 	// glob, so the per-container stale sweep can never collect it.
@@ -265,6 +270,9 @@ type Watcher struct {
 	// lastHosts caches the last-issued host set per container (keyed by safe
 	// name) so certs are reissued only when a container's hosts change.
 	lastHosts map[string]string
+	// defaultIssued records that this process issued the default certificate,
+	// so it is issued once per watcher start, under the CA it holds.
+	defaultIssued bool
 	// authHashes caches the bcrypt hash of each plaintext basic-auth secret
 	// (keyed by user+"\x00"+plaintext) so a stable hash is reused across
 	// reconciles. bcrypt's random salt would otherwise produce a different hash
@@ -1015,6 +1023,8 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 		return
 	}
 
+	hasDefault := w.syncDefaultCert(certsDir)
+
 	active := map[string]bool{}
 	var entries []routedContainer
 	for _, rc := range routed {
@@ -1056,8 +1066,32 @@ func (w *Watcher) syncCerts(routed []routedContainer) {
 	// Traefik's file provider reloads against a missing cert and logs
 	// "failed to find any PEM data". Writing the config first makes the
 	// intermediate state "cert present but no longer referenced" — harmless.
-	w.writeTLSConfig(certsDir, entries)
+	w.writeTLSConfig(certsDir, entries, hasDefault)
 	w.removeStaleCerts(certsDir, active)
+}
+
+// syncDefaultCert issues the nameless default certificate once per watcher
+// start, and again should its files disappear. It reports whether the files
+// exist, so the TLS config never references a certificate that is not there.
+func (w *Watcher) syncDefaultCert(certsDir string) bool {
+	crt := filepath.Join(certsDir, defaultCertFile)
+	pkey := filepath.Join(certsDir, defaultKeyFile)
+	if w.defaultIssued && fileExists(crt) && fileExists(pkey) {
+		return true
+	}
+	certPEM, keyPEM, err := tls.IssueDefaultCert(w.caCert, w.caKey)
+	if err == nil {
+		err = atomicWrite(pkey, keyPEM, 0o600)
+	}
+	if err == nil {
+		err = atomicWrite(crt, certPEM, 0o644)
+	}
+	if err != nil {
+		log.Printf("proximo watcher: issue default certificate: %v", err)
+		return fileExists(crt) && fileExists(pkey)
+	}
+	w.defaultIssued = true
+	return true
 }
 
 // removeStaleCerts deletes cert/key files (and forgets cached host sets) only
@@ -1084,11 +1118,14 @@ func (w *Watcher) removeStaleCerts(certsDir string, active map[string]bool) {
 }
 
 // writeTLSConfig regenerates proximo-tls.yml listing every per-container
-// certificate. The first (sorted) cert backs the default store so Traefik does
-// not fall back to its built-in self-signed default.
-func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer) {
+// certificate. The default store holds the nameless default certificate, never
+// a route's leaf: a name this machine does not serve gets a certificate that
+// names nothing, rather than another route's names or Traefik's built-in
+// self-signed default. sniStrict is not used: it is global, and would turn
+// local clients without SNI into handshake failures.
+func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer, hasDefault bool) {
 	tlsPath := filepath.Join(w.dynamicDir, "proximo-tls.yml")
-	if len(entries) == 0 {
+	if len(entries) == 0 && !hasDefault {
 		_ = os.Remove(tlsPath)
 		return
 	}
@@ -1096,11 +1133,14 @@ func (w *Watcher) writeTLSConfig(certsDir string, entries []routedContainer) {
 
 	var b strings.Builder
 	b.WriteString("tls:\n")
-	first := entries[0]
-	b.WriteString("  stores:\n    default:\n      defaultCertificate:\n")
-	fmt.Fprintf(&b, "        certFile: %s\n", filepath.Join(certsDir, first.safe+".crt"))
-	fmt.Fprintf(&b, "        keyFile: %s\n", filepath.Join(certsDir, first.safe+".key"))
-	b.WriteString("  certificates:\n")
+	if hasDefault {
+		b.WriteString("  stores:\n    default:\n      defaultCertificate:\n")
+		fmt.Fprintf(&b, "        certFile: %s\n", filepath.Join(certsDir, defaultCertFile))
+		fmt.Fprintf(&b, "        keyFile: %s\n", filepath.Join(certsDir, defaultKeyFile))
+	}
+	if len(entries) > 0 {
+		b.WriteString("  certificates:\n")
+	}
 	for _, rc := range entries {
 		fmt.Fprintf(&b, "    - certFile: %s\n", filepath.Join(certsDir, rc.safe+".crt"))
 		fmt.Fprintf(&b, "      keyFile: %s\n", filepath.Join(certsDir, rc.safe+".key"))
