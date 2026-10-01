@@ -54,6 +54,16 @@ func StackDir() (string, error) {
 // copies the TLS material from certDir into the stack, writes the compose
 // environment file pinning the stack image, and returns the stack directory.
 func Materialize(tld, certDir, image string) (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	return materialize(tld, certDir, image, cfg)
+}
+
+// materialize is Materialize from a configuration the caller already holds,
+// which decides the peer material and the peer DNS service.
+func materialize(tld, certDir, image string, cfg config.Config) (string, error) {
 	dir, err := StackDir()
 	if err != nil {
 		return "", err
@@ -106,10 +116,6 @@ func Materialize(tld, certDir, image string) (string, error) {
 	}
 	// The peer material rides the ca mount the watcher already has, so the
 	// Compose file is the same whether or not this machine shares.
-	cfg, err := config.Load()
-	if err != nil {
-		return "", err
-	}
 	if err := copyPeer(filepath.Join(dir, "ca"), certDir, cfg); err != nil {
 		return "", err
 	}
@@ -118,6 +124,11 @@ func Materialize(tld, certDir, image string) (string, error) {
 	}
 	if err := writeDevOverride(dir, image); err != nil {
 		return "", err
+	}
+	if peerDNSConfigured(cfg) {
+		if err := appendPeerDNS(dir, cfg); err != nil {
+			return "", err
+		}
 	}
 	return dir, nil
 }
@@ -394,7 +405,19 @@ func convergeWith(c Composer, tld, certDir string, opts ConvergeOpts) error {
 // image has nothing to do with them failing.
 func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, error) {
 	image := opts.EffectiveImage()
-	dir, err := Materialize(tld, certDir, image)
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	// A value unset since the last converge leaves a peer DNS service that only
+	// the previous Compose file still describes: remove it before that file is
+	// rewritten. A machine that never configured one runs nothing here.
+	if stack, err := StackDir(); err == nil && composeHasPeerDNS(stack) && !peerDNSConfigured(cfg) {
+		if err := c.Compose(stack, peerDNSRemoveCmd...); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ %s: could not remove the peer DNS service: %v\n", peerDNSRole, err)
+		}
+	}
+	dir, err := materialize(tld, certDir, image, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -402,6 +425,9 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 		if err := c.Compose(dir, args...); err != nil {
 			return "", remedyFor(image, err)
 		}
+	}
+	if peerDNSConfigured(cfg) {
+		startPeerDNS(c, dir, tld, cfg)
 	}
 	return dir, nil
 }
@@ -532,8 +558,8 @@ func composeConvergeCmds(image string, force bool) [][]string {
 // Down stops and removes the whole stack — core services plus the opt-in
 // observability dashboards — without touching host configuration. A plain
 // `docker compose down` leaves profile-gated services running, so the
-// observability profile must be enabled (and --remove-orphans added) for the
-// dashboards to be torn down together with the core stack.
+// observability and peer profiles must be enabled (and --remove-orphans added)
+// for the dashboards and the peer DNS service to be torn down with the core.
 func Down() error {
 	return downWith(defaultComposer)
 }
@@ -594,7 +620,8 @@ func downWith(c Composer) error {
 		// Nothing materialized; nothing to tear down.
 		return nil
 	}
-	return c.Compose(dir, "--profile", observabilityProfile, "down", "--remove-orphans")
+	// Both profiles, or their services outlive the core stack.
+	return c.Compose(dir, "--profile", observabilityProfile, "--profile", peerProfile, "down", "--remove-orphans")
 }
 
 // DownObservability stops and removes only the opt-in observability services,

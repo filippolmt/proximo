@@ -512,7 +512,7 @@ func TestDownTearsDownEverything(t *testing.T) {
 	if len(c.cmds) != 1 {
 		t.Fatalf("ran %d commands, want 1: %v", len(c.cmds), c.cmds)
 	}
-	for _, want := range []string{"--profile", observabilityProfile, "down", "--remove-orphans"} {
+	for _, want := range []string{"--profile", observabilityProfile, peerProfile, "down", "--remove-orphans"} {
 		if !slices.Contains(c.cmds[0], want) {
 			t.Errorf("down cmd missing %q: %v", want, c.cmds[0])
 		}
