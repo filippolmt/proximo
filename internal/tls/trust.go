@@ -35,7 +35,7 @@ func InstallSystemTrust(r platform.Runner) error {
 
 // RemoveSystemTrust removes the local CA from the OS system trust store.
 func RemoveSystemTrust(r platform.Runner) error {
-	return removeSystemAnchor(r, func() ([]string, error) { return []string{"-c", caCommonName}, nil }, linuxTrustPath)
+	return removeSystemAnchor(r, []string{"-c", caCommonName}, linuxTrustPath)
 }
 
 // InstallTeamRootTrust adds the team root at path to the system and NSS
@@ -44,40 +44,37 @@ func InstallTeamRootTrust(r platform.Runner, path string) error {
 	if err := installTeamRootSystemTrust(r, path); err != nil {
 		return err
 	}
-	return installNSSAnchor(r, path, teamRootNickname)
+	return installNSSAnchor(r, path, teamRootNickname, "team root")
 }
 
-// RemoveTeamRootTrust removes the team root at path from the system and NSS
-// stores. The file is read on macOS only, to select the certificate by hash.
-func RemoveTeamRootTrust(r platform.Runner, path string) error {
-	if err := removeTeamRootSystemTrust(r, path); err != nil {
-		return err
+// RemoveTeamRootTrust removes the team root that was installed with the given
+// fingerprint from the system and NSS stores. It needs no file: the one
+// configured now may have been replaced or deleted since it was trusted.
+func RemoveTeamRootTrust(r platform.Runner, fingerprint string) error {
+	return errors.Join(removeTeamRootSystemTrust(r, fingerprint), removeNSSAnchor(r, teamRootNickname))
+}
+
+// TeamRootFingerprint is the SHA-1 of the team root's DER, the selector
+// `security delete-certificate -Z` takes: it names exactly one certificate,
+// where -c matches a substring of a common name the team chose.
+func TeamRootFingerprint(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
 	}
-	return removeNSSAnchor(r, teamRootNickname)
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", errors.New("the team root is not a PEM certificate")
+	}
+	return fmt.Sprintf("%X", sha1.Sum(block.Bytes)), nil
 }
 
 func installTeamRootSystemTrust(r platform.Runner, path string) error {
 	return installSystemAnchor(r, path, linuxTeamRootPath)
 }
 
-func removeTeamRootSystemTrust(r platform.Runner, path string) error {
-	return removeSystemAnchor(r, func() ([]string, error) {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("select the team root to remove: %w", err)
-		}
-		return teamRootMacSelector(data)
-	}, linuxTeamRootPath)
-}
-
-// teamRootMacSelector selects the team root in the keychain by SHA-1 of its
-// DER: `security delete-certificate -c` matches a substring of the common name.
-func teamRootMacSelector(pemBytes []byte) ([]string, error) {
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, errors.New("the team root is not a PEM certificate")
-	}
-	return []string{"-Z", fmt.Sprintf("%X", sha1.Sum(block.Bytes))}, nil
+func removeTeamRootSystemTrust(r platform.Runner, fingerprint string) error {
+	return removeSystemAnchor(r, []string{"-Z", fingerprint}, linuxTeamRootPath)
 }
 
 func installSystemAnchor(r platform.Runner, path, linuxPath string) error {
@@ -99,15 +96,11 @@ func installSystemAnchor(r platform.Runner, path, linuxPath string) error {
 	)
 }
 
-func removeSystemAnchor(r platform.Runner, macSelector func() ([]string, error), linuxPath string) error {
+func removeSystemAnchor(r platform.Runner, macSelector []string, linuxPath string) error {
 	return platform.Dispatch(
 		// Best-effort: the certificate may already be gone.
 		func() error {
-			sel, err := macSelector()
-			if err != nil {
-				return err
-			}
-			return r.Sudo(append(append([]string{"security", "delete-certificate"}, sel...), macSystemKeychain)...)
+			return r.Sudo(append(append([]string{"security", "delete-certificate"}, macSelector...), macSystemKeychain)...)
 		},
 		func() error {
 			if err := r.RemoveFilePrivileged(linuxPath); err != nil {

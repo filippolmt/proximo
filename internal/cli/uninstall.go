@@ -42,7 +42,7 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	if err := revertSteps(out, hostSteps(defaultRunner, cfg)); err != nil {
+	if err := revertSteps(out, hostSteps(defaultRunner, &cfg)); err != nil {
 		return err
 	}
 

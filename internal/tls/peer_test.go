@@ -109,16 +109,19 @@ func TestValidateTeamRootRefusesTheLocalCAName(t *testing.T) {
 
 // The team root is removed from the macOS keychain by its SHA-1, which selects
 // exactly one certificate, never by a name another anchor could share.
-func TestTeamRootMacSelectorIsItsHash(t *testing.T) {
+func TestTeamRootFingerprintIsItsSHA1(t *testing.T) {
 	root := teamRootPEM(t, nil)
+	path := filepath.Join(t.TempDir(), "root.crt")
+	if err := os.WriteFile(path, root, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	block, _ := pem.Decode(root)
-	sel, err := teamRootMacSelector(root)
+	got, err := TeamRootFingerprint(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("%X", sha1.Sum(block.Bytes))
-	if !slices.Equal(sel, []string{"-Z", want}) {
-		t.Fatalf("selector = %v, want [-Z %s]", sel, want)
+	if want := fmt.Sprintf("%X", sha1.Sum(block.Bytes)); got != want {
+		t.Fatalf("fingerprint = %s, want %s", got, want)
 	}
 }
 
@@ -155,7 +158,7 @@ func TestTeamRootSystemTrustOnLinux(t *testing.T) {
 	if err := installTeamRootSystemTrust(r, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := removeTeamRootSystemTrust(r, path); err != nil {
+	if err := removeTeamRootSystemTrust(r, "ABCD"); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{

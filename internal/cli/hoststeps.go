@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/filippolmt/proximo/internal/config"
-
 	"github.com/filippolmt/proximo/internal/dns"
 	"github.com/filippolmt/proximo/internal/platform"
 	"github.com/filippolmt/proximo/internal/tls"
@@ -29,10 +28,12 @@ type hostStep struct {
 
 // hostSteps is the single source of truth for the host mutations install
 // applies and uninstall reverses, in install order: CA, resolver, system trust,
-// NSS trust, and the team root when one is configured. install applies the list forward; uninstall reverts it in reverse,
-// so a mutation can never be applied without a matching reversal. Privileged
-// exec is routed through r so the sequence is testable with a fake Runner.
-func hostSteps(r platform.Runner, cfg config.Config) []hostStep {
+// NSS trust, and the team root when one is configured or was trusted. install
+// applies the list forward; uninstall reverts it in reverse, so a mutation can
+// never be applied without a matching reversal. Privileged exec is routed
+// through r so the sequence is testable with a fake Runner. The team root step
+// records what it trusted in cfg, which install saves.
+func hostSteps(r platform.Runner, cfg *config.Config) []hostStep {
 	tld := cfg.TLD
 	steps := []hostStep{
 		{
@@ -60,27 +61,36 @@ func hostSteps(r platform.Runner, cfg config.Config) []hostStep {
 			revert:    func() error { return tls.RemoveNSSTrust(r) },
 		},
 	}
-	if cfg.TeamRoot == "" {
+	if cfg.TeamRoot == "" && cfg.TeamRootTrusted == "" {
 		return steps
 	}
 	// A peer-side failure never fails the command that serves .test: the team
 	// root warns and lets install finish, and uninstall go on to the local CA.
-	return append(steps, hostStep{
-		applyMsg:  teamRootApplyMsg,
+	step := hostStep{
 		revertMsg: teamRootRevertMsg,
 		apply: func() error {
+			if cfg.TeamRoot == "" {
+				return nil
+			}
 			if err := trustTeamRoot(r, cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "proximo: warning: the team root was not trusted: %v\n", err)
 			}
 			return nil
 		},
 		revert: func() error {
-			if err := removeTeamRootTrust(r, cfg.TeamRoot); err != nil {
+			if cfg.TeamRootTrusted == "" {
+				return nil
+			}
+			if err := removeTeamRootTrust(r, cfg.TeamRootTrusted); err != nil {
 				fmt.Fprintf(os.Stderr, "proximo: warning: the team root was not removed: %v\n", err)
 			}
 			return nil
 		},
-	})
+	}
+	if cfg.TeamRoot != "" {
+		step.applyMsg = teamRootApplyMsg
+	}
+	return append(steps, step)
 }
 
 // applySteps applies steps in order, printing each applyMsg first. When a step

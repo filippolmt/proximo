@@ -48,6 +48,9 @@ func runTrust(cmd *cobra.Command) error {
 	if err := applyTrust(out, defaultRunner); err != nil {
 		return err
 	}
+	if err := trustConfiguredTeamRoot(out, defaultRunner); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(out, "\nCA trusted. Fully restart your browser to pick it up.")
 	return nil
@@ -55,16 +58,25 @@ func runTrust(cmd *cobra.Command) error {
 
 // applyTrust installs the CA into the system store then the NSS store, in that
 // order, under a single banner — matching the "system + NSS" grouping install
-// uses — and then, when one is configured, the team root. Unlike install it
-// runs no checks, so it works with the stack up.
+// uses. Unlike install it runs no checks, so it works with the stack up.
 func applyTrust(out io.Writer, r platform.Runner) error {
 	fmt.Fprintln(out, "==> Installing CA trust (system + NSS)")
 	if err := installSystemTrust(r); err != nil {
 		return err
 	}
-	if err := installNSSTrust(r); err != nil {
-		return err
-	}
+	return installNSSTrust(r)
+}
+
+const (
+	teamRootApplyMsg  = "==> Installing team root trust (system + NSS)"
+	teamRootRevertMsg = "==> Removing team root trust (system + NSS)"
+)
+
+// trustConfiguredTeamRoot installs the team root when one is configured, after
+// the local CA, and does nothing otherwise. Unlike install, trust reports a
+// failure: it is the command a colleague runs to trust the team root, and the
+// local CA is already in place by then.
+func trustConfiguredTeamRoot(out io.Writer, r platform.Runner) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -73,20 +85,33 @@ func applyTrust(out io.Writer, r platform.Runner) error {
 		return nil
 	}
 	fmt.Fprintln(out, teamRootApplyMsg)
-	return trustTeamRoot(r, cfg)
+	if err := trustTeamRoot(r, &cfg); err != nil {
+		return err
+	}
+	return cfg.Save()
 }
 
-const (
-	teamRootApplyMsg  = "==> Installing team root trust (system + NSS)"
-	teamRootRevertMsg = "==> Removing team root trust (system + NSS)"
-)
-
-// trustTeamRoot installs the configured team root, judging the file again
-// first: it may have changed, or the Peer suffix may have, since config
-// team-root accepted it, and the store it reaches serves real browsing.
-func trustTeamRoot(r platform.Runner, cfg config.Config) error {
+// trustTeamRoot installs the configured team root and records its
+// fingerprint, judging the file again first: it may have changed, or the Peer
+// suffix may have, since config team-root accepted it, and the store it reaches
+// serves real browsing. A different root trusted earlier is removed first.
+func trustTeamRoot(r platform.Runner, cfg *config.Config) error {
 	if err := checkTeamRoot(cfg.TeamRoot, cfg.PeerSuffix); err != nil {
 		return err
 	}
-	return installTeamRootTrust(r, cfg.TeamRoot)
+	fp, err := tls.TeamRootFingerprint(cfg.TeamRoot)
+	if err != nil {
+		return err
+	}
+	if cfg.TeamRootTrusted != "" && cfg.TeamRootTrusted != fp {
+		if err := removeTeamRootTrust(r, cfg.TeamRootTrusted); err != nil {
+			return err
+		}
+		cfg.TeamRootTrusted = ""
+	}
+	if err := installTeamRootTrust(r, cfg.TeamRoot); err != nil {
+		return err
+	}
+	cfg.TeamRootTrusted = fp
+	return nil
 }

@@ -17,7 +17,7 @@ func InstallNSSTrust(r platform.Runner) error {
 	if err != nil {
 		return err
 	}
-	return installNSSAnchor(r, caPath, caCommonName)
+	return installNSSAnchor(r, caPath, caCommonName, "CA")
 }
 
 // RemoveNSSTrust removes the local CA from all discovered NSS databases.
@@ -25,9 +25,9 @@ func RemoveNSSTrust(r platform.Runner) error {
 	return removeNSSAnchor(r, caCommonName)
 }
 
-// installNSSAnchor adds the certificate at path under nickname. A nickname
-// is matched exactly, so each anchor's is its own.
-func installNSSAnchor(r platform.Runner, path, nickname string) error {
+// installNSSAnchor adds the certificate at path under nickname; what names it
+// in a warning. A nickname is matched exactly, so each anchor's is its own.
+func installNSSAnchor(r platform.Runner, path, nickname, what string) error {
 	if err := ensureCertutil(); err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func installNSSAnchor(r platform.Runner, path, nickname string) error {
 		_ = r.Run("certutil", "-D", "-d", "sql:"+db, "-n", nickname)
 		if err := r.Run("certutil", "-A", "-d", "sql:"+db,
 			"-t", "C,,", "-n", nickname, "-i", path); err != nil {
-			fmt.Fprintf(os.Stderr, "proximo: warning: could not add %s to NSS db %s: %v\n", nickname, db, err)
+			fmt.Fprintf(os.Stderr, "proximo: warning: could not add %s to NSS db %s: %v\n", what, db, err)
 		}
 	}
 	return nil

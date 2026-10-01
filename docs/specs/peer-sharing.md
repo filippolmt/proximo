@@ -357,6 +357,10 @@ second anchor beside the local CA, and `uninstall` removes it.
   marked critical, or which lacks exclusions for every IP address (`0.0.0.0/0`,
   `::/0`), every email address and every URI. Constraining `dNSName` alone leaves
   every other name type unrestricted.
+- **Refused, hard**: a certificate whose common name contains the local CA's
+  (`proximo local CA`). macOS removes the local CA by a common-name match,
+  which matches a substring, so that removal would take the team root with
+  it. The team root itself is removed by its fingerprint.
 - **Refused with a Remedy** naming `proximo config peer-suffix` when the suffix
   is not set yet, since coverage cannot be judged without it. That is an order of
   setting, not a completeness requirement.

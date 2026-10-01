@@ -36,7 +36,7 @@ func runInstall(cmd *cobra.Command) error {
 
 	platform.SudoPrime("configure the host resolver and trust the local CA")
 
-	if err := applySteps(out, hostSteps(defaultRunner, cfg)); err != nil {
+	if err := applySteps(out, hostSteps(defaultRunner, &cfg)); err != nil {
 		return err
 	}
 

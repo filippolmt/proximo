@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -10,12 +9,12 @@ import (
 
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/platform"
+	"github.com/filippolmt/proximo/internal/tls"
 )
 
 // TestApplyTrustOrder asserts the trust command writes the system store before
 // the NSS store, passing the privileged runner through to both.
 func TestApplyTrustOrder(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
 	origSystem, origNSS := installSystemTrust, installNSSTrust
 	t.Cleanup(func() { installSystemTrust, installNSSTrust = origSystem, origNSS })
 
@@ -47,7 +46,6 @@ func TestApplyTrustOrder(t *testing.T) {
 // TestApplyTrustSystemErrorStops ensures a system-store failure short-circuits
 // before the NSS store is touched.
 func TestApplyTrustSystemErrorStops(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
 	origSystem, origNSS := installSystemTrust, installNSSTrust
 	t.Cleanup(func() { installSystemTrust, installNSSTrust = origSystem, origNSS })
 
@@ -74,15 +72,13 @@ func stubTrust(t *testing.T) *[]string {
 	installSystemTrust = func(platform.Runner) error { calls = append(calls, "system"); return nil }
 	installNSSTrust = func(platform.Runner) error { calls = append(calls, "nss"); return nil }
 	installTeamRootTrust = func(_ platform.Runner, path string) error { calls = append(calls, "team-root "+path); return nil }
-	removeTeamRootTrust = func(_ platform.Runner, path string) error {
-		calls = append(calls, "remove team-root "+path)
-		return nil
-	}
+	removeTeamRootTrust = func(_ platform.Runner, fp string) error { calls = append(calls, "remove team-root "+fp); return nil }
 	return &calls
 }
 
-// configureTeamRoot saves a Peer suffix and a team root that covers it.
-func configureTeamRoot(t *testing.T) config.Config {
+// configureTeamRoot saves a Peer suffix and a team root that covers it, and
+// returns the config with the root's fingerprint.
+func configureTeamRoot(t *testing.T) (config.Config, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	cfg := config.Default()
@@ -91,70 +87,74 @@ func configureTeamRoot(t *testing.T) config.Config {
 	if err := cfg.Save(); err != nil {
 		t.Fatal(err)
 	}
-	return cfg
-}
-
-func TestApplyTrustInstallsTheTeamRootAfterTheLocalCA(t *testing.T) {
-	calls := stubTrust(t)
-	cfg := configureTeamRoot(t)
-	var out bytes.Buffer
-	if err := applyTrust(&out, defaultRunner); err != nil {
+	fp, err := tls.TeamRootFingerprint(cfg.TeamRoot)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"system", "nss", "team-root " + cfg.TeamRoot}; !slices.Equal(*calls, want) {
+	return cfg, fp
+}
+
+// trust installs the team root after the local CA, and records what it
+// installed, so uninstall removes it without needing the file.
+func TestTrustConfiguredTeamRoot(t *testing.T) {
+	calls := stubTrust(t)
+	cfg, fp := configureTeamRoot(t)
+	var out bytes.Buffer
+	if err := trustConfiguredTeamRoot(&out, defaultRunner); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"team-root " + cfg.TeamRoot}; !slices.Equal(*calls, want) {
 		t.Errorf("calls = %v, want %v", *calls, want)
 	}
-	if !strings.Contains(out.String(), "team root") {
+	if !strings.Contains(out.String(), teamRootApplyMsg) {
 		t.Errorf("output = %q", out.String())
+	}
+	saved, err := config.Load()
+	if err != nil || saved.TeamRootTrusted != fp {
+		t.Errorf("TeamRootTrusted = %q, %v; want %s", saved.TeamRootTrusted, err, fp)
+	}
+}
+
+// Without a team root, trust does exactly what it did before.
+func TestTrustConfiguredTeamRootUnconfigured(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	calls := stubTrust(t)
+	var out bytes.Buffer
+	if err := trustConfiguredTeamRoot(&out, defaultRunner); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 || out.Len() != 0 {
+		t.Errorf("calls = %v, output = %q; want nothing", *calls, out.String())
+	}
+}
+
+// A replaced team root leaves the trust stores: the macOS keychain selects by
+// fingerprint, so nothing else would ever remove the old one.
+func TestTrustTeamRootReplacesTheOldAnchor(t *testing.T) {
+	calls := stubTrust(t)
+	cfg, fp := configureTeamRoot(t)
+	cfg.TeamRootTrusted = "OLD"
+	if err := trustTeamRoot(defaultRunner, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"remove team-root OLD", "team-root " + cfg.TeamRoot}; !slices.Equal(*calls, want) {
+		t.Errorf("calls = %v, want %v", *calls, want)
+	}
+	if cfg.TeamRootTrusted != fp {
+		t.Errorf("TeamRootTrusted = %q, want %s", cfg.TeamRootTrusted, fp)
 	}
 }
 
 // The file is judged again before it reaches a trust store: it may have
 // changed, or the suffix may have, since config team-root accepted it.
-func TestApplyTrustRefusesATeamRootThatNoLongerValidates(t *testing.T) {
+func TestTrustTeamRootRefusesARootThatNoLongerValidates(t *testing.T) {
 	calls := stubTrust(t)
-	cfg := configureTeamRoot(t)
+	cfg, _ := configureTeamRoot(t)
 	cfg.PeerSuffix = "other.internal"
-	if err := cfg.Save(); err != nil {
-		t.Fatal(err)
-	}
-	if err := applyTrust(io.Discard, defaultRunner); err == nil || !strings.Contains(err.Error(), "does not cover other.internal") {
+	if err := trustTeamRoot(defaultRunner, &cfg); err == nil || !strings.Contains(err.Error(), "does not cover other.internal") {
 		t.Fatalf("err = %v, want the team root refused", err)
 	}
-	if want := []string{"system", "nss"}; !slices.Equal(*calls, want) {
-		t.Errorf("calls = %v, want the local CA only: %v", *calls, want)
-	}
-}
-
-func TestHostStepsTeamRoot(t *testing.T) {
-	calls := stubTrust(t)
-	cfg := configureTeamRoot(t)
-	steps := hostSteps(defaultRunner, cfg)
-	if len(steps) != 5 {
-		t.Fatalf("hostSteps len = %d, want 5", len(steps))
-	}
-	last := steps[4]
-	if last.applyMsg == "" || last.revertMsg == "" {
-		t.Errorf("team root step banners = %q / %q", last.applyMsg, last.revertMsg)
-	}
-	if err := last.apply(); err != nil {
-		t.Fatal(err)
-	}
-	if err := last.revert(); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"team-root " + cfg.TeamRoot, "remove team-root " + cfg.TeamRoot}; !slices.Equal(*calls, want) {
-		t.Errorf("calls = %v, want %v", *calls, want)
-	}
-
-	// A peer-side failure never fails the command that serves .test: install
-	// warns and goes on, and uninstall still reaches the local CA.
-	installTeamRootTrust = func(platform.Runner, string) error { return errors.New("boom") }
-	removeTeamRootTrust = func(platform.Runner, string) error { return errors.New("boom") }
-	if err := last.apply(); err != nil {
-		t.Errorf("a team root failure failed install: %v", err)
-	}
-	if err := last.revert(); err != nil {
-		t.Errorf("a team root failure failed uninstall: %v", err)
+	if len(*calls) != 0 || cfg.TeamRootTrusted != "" {
+		t.Errorf("calls = %v, TeamRootTrusted = %q; want nothing installed", *calls, cfg.TeamRootTrusted)
 	}
 }

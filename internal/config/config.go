@@ -65,6 +65,10 @@ type Config struct {
 	Address string `json:"address,omitempty"`
 	// TeamRoot is the absolute path of the team root certificate (PEM).
 	TeamRoot string `json:"team_root,omitempty"`
+	// TeamRootTrusted is the SHA-1 fingerprint of the team root last installed
+	// in the trust stores: what uninstall removes, and what a replaced root
+	// takes out first, whether or not TeamRoot still names that file.
+	TeamRootTrusted string `json:"team_root_trusted,omitempty"`
 	// MeshRemedy overrides the Remedy the mesh Check offers. Stored verbatim.
 	MeshRemedy string `json:"mesh_remedy,omitempty"`
 }
