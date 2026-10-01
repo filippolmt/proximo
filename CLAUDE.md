@@ -101,11 +101,10 @@ compiler will not enforce:
 
 ## graphify
 
-Knowledge graph at `graphify-out/`.
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
-- Codebase question: run `graphify query "<question>"` first when `graphify-out/graph.json`
-  exists — it returns a scoped subgraph, far smaller than `GRAPH_REPORT.md` or raw grep.
-  `graphify path "<A>" "<B>"` for relationships, `graphify explain "<concept>"` for one concept.
-- Broad navigation: `graphify-out/wiki/index.md` when it exists.
-- `GRAPH_REPORT.md`: broad architecture review only, or when query/path/explain fall short.
-- After changing code: `graphify update .` (AST-only, no API cost).
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
