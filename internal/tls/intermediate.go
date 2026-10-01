@@ -259,11 +259,20 @@ func InstallIntermediate(intPEM []byte) error {
 // intermediate installed it returns "", false.
 func IntermediateFor(machine, suffix string) (subtree string, ok bool) {
 	c, err := Intermediate()
-	if err != nil || c == nil || len(c.PermittedDNSDomains) != 1 {
+	if err != nil || c == nil {
 		return "", false
 	}
-	subtree = strings.ToLower(strings.TrimPrefix(c.PermittedDNSDomains[0], "."))
-	return subtree, subtree == MachineSubtree(machine, suffix)
+	subtree = IntermediateSubtree(c)
+	return subtree, subtree != "" && subtree == MachineSubtree(machine, suffix)
+}
+
+// IntermediateSubtree is the single DNS subtree an intermediate is constrained
+// to, or "" when it is not constrained to exactly one.
+func IntermediateSubtree(c *x509.Certificate) string {
+	if len(c.PermittedDNSDomains) != 1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimPrefix(c.PermittedDNSDomains[0], "."))
 }
 
 // Intermediate returns the installed intermediate, or nil when there is none.

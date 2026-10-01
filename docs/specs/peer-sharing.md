@@ -626,49 +626,12 @@ handshake, so it feels like a distant server, not like localhost.
 - Inspection is Chrome-only, so a colleague on another engine produces no Client
   report; the Access record and the Transcript are still there.
 
-### A shared route is not served on its peer names
-
-`peer-routes` failed: a label on a shared route cannot take effect. Either a
-declared host is outside the TLD, so it has no peer names, or the route is a TCP
-route, which is never shared. `docker inspect <container>` shows the labels; drop
-`proximo.share` or the TCP label, or move the host under the TLD.
-
-### proximo does not answer on the mesh address
-
-`peer-dns` failed. The peer DNS service is not answering on `<address>:5354`:
-
-- **The address is held by no interface** (the Detail says so): the mesh client
-  was down when the service last tried to start. The watcher retries on its own
-  once the address appears; `proximo up` retries now.
-- The stack's watcher is down, so nothing retries: `proximo up`.
-- `config address` is not this machine's address on the mesh.
-
-Until this passes, the nameserver group that routes the subtree to this machine
-resolves nothing — which is why it is created only after this passes.
-
-### This machine's peer names do not resolve
-
-`mesh` failed while `peer-dns` passed: proximo answers, and the system resolver
-does not send it the query. The Remedy shows which resolver handles the Peer
-suffix and where it points. The causes are the mesh's: its client is down or
-logged out, the nameserver group for `<machine>.<suffix>` does not exist or
-forwards to the wrong port, or this machine is not in the group it is
-distributed to — see
-[a publishing machine is not a resolving peer](#a-publishing-machine-is-not-a-resolving-peer).
-
-### A publishing machine is not a resolving peer
-
-`mesh` resolves the machine's own names, so a publishing machine outside the
-resolving peers fails it even while colleagues reach it. Being a resolving peer
-is a requirement for publishing ([`docs/sharing.md`](#lands-in-docssharingmd)):
-add the machine to the set the subtrees are distributed to.
-
-### The machine's intermediate is about to expire
-
-`peer-intermediate` failed: the intermediate expires in under 30 days, or has.
-Run the ceremony again — `proximo config csr`, have it signed, `proximo config
-intermediate <file>`. The machine label does not change, so every bookmark keeps
-working.
+*Moved into `docs/troubleshooting.md` with the Checks that point at them:
+[a shared route is not served on its peer names](../troubleshooting.md#a-shared-route-is-not-served-on-its-peer-names),
+[proximo does not answer on the mesh address](../troubleshooting.md#proximo-does-not-answer-on-the-mesh-address),
+[this machine's peer names do not resolve](../troubleshooting.md#this-machines-peer-names-do-not-resolve),
+[a publishing machine is not a resolving peer](../troubleshooting.md#a-publishing-machine-is-not-a-resolving-peer)
+and [the machine's intermediate is about to expire](../troubleshooting.md#the-machines-intermediate-is-about-to-expire).*
 
 ### A line added to the existing `VPN or corporate DNS overrides the resolver`
 

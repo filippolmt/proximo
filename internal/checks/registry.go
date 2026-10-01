@@ -41,7 +41,7 @@ func All(env Env) []Check {
 	stack := once(env.Stack)
 	sentinel := dns.Sentinel(env.TLD)
 
-	return append(PreInstall(env),
+	list := append(PreInstall(env),
 		Check{
 			ID:   IDInstalled,
 			Name: "proximo is installed on this host",
@@ -239,6 +239,9 @@ func All(env Env) []Check {
 					"%s", notesOf(unserved))
 			},
 		},
+	)
+	list = append(list, peerChecks(env)...)
+	return append(list,
 		Check{
 			ID:   IDAgentSkill,
 			Name: "The agent skill matches the installed CLI",

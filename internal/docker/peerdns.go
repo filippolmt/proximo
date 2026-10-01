@@ -25,7 +25,7 @@ import (
 const (
 	peerProfile = "peer"
 	peerDNSRole = "peer-dns"
-	peerDNSPort = 5354
+	peerDNSPort = config.PeerDNSPort
 )
 
 // peerDNSUpCmd starts the peer DNS service after the core converge;

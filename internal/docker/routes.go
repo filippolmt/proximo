@@ -55,6 +55,7 @@ type Route struct {
 	// the row's hosts answer on, set only when the route is served on them.
 	Share         bool
 	ShareTCP      bool
+	ShareOutside  bool // a shared row whose host lies outside the TLD, so it has no peer name
 	Peer          string
 	PeerQualified string
 }
@@ -235,7 +236,7 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 				continue
 			}
 			routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends, Inspect: rc.inspect, InspectNote: refused[rc.name],
-				Share: rc.share, Peer: peerName(rc, host), PeerQualified: peerName(rc, qualified)})
+				Share: rc.share, ShareOutside: rc.share && !strings.HasSuffix(host, "."+tld), Peer: peerName(rc, host), PeerQualified: peerName(rc, qualified)})
 		}
 	}
 	return routes
