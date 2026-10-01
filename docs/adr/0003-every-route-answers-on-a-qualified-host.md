@@ -75,3 +75,10 @@ real cost recorded below.
   introduces it — signed by the already-trusted CA, so no browser re-approval.
 - **Always on, with no opt-out.** A stable name behind a flag is not stable: if it
   can be switched off, nothing in a README may depend on it.
+
+## See also
+
+[ADR 0011](0011-a-shared-route-answers-on-two-derived-peer-names.md) *(proposed)*
+extends the bare and qualified hosts across a team's mesh as two peer names. A
+machine then answers a second suffix, and still claims exactly one TLD on the
+host resolver.
