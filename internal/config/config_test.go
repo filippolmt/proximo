@@ -2,8 +2,10 @@ package config
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -155,6 +157,81 @@ func TestTLDWarning(t *testing.T) {
 		}
 		if _, err := NormalizeTLD(tld); err != nil {
 			t.Errorf("NormalizeTLD(%q) must warn, never reject: %v", tld, err)
+		}
+	}
+}
+
+func TestNormalizeMachine(t *testing.T) {
+	if got, err := NormalizeMachine(" Studio-01 "); err != nil || got != "studio-01" {
+		t.Fatalf("NormalizeMachine = %q, %v; want studio-01", got, err)
+	}
+	for _, raw := range []string{"", "a.b", "-x", "x_y", strings.Repeat("a", 64)} {
+		if _, err := NormalizeMachine(raw); err == nil {
+			t.Errorf("NormalizeMachine(%q) accepted", raw)
+		}
+	}
+}
+
+func TestNormalizePeerSuffix(t *testing.T) {
+	if got, err := NormalizePeerSuffix(".Mesh.Internal."); err != nil || got != "mesh.internal" {
+		t.Fatalf("NormalizePeerSuffix = %q, %v; want mesh.internal", got, err)
+	}
+	// One label is refused: unclaimed today is not unclaimable.
+	for _, raw := range []string{"", "internal", "a..b", "a.b_c", "a.-b", "mesh.local"} {
+		if _, err := NormalizePeerSuffix(raw); err == nil {
+			t.Errorf("NormalizePeerSuffix(%q) accepted", raw)
+		}
+	}
+}
+
+func TestPeerSuffixWarning(t *testing.T) {
+	if w := PeerSuffixWarning("mesh.internal"); w != "" {
+		t.Errorf("reserved suffix warned: %q", w)
+	}
+	if w := PeerSuffixWarning("mesh.corp"); w == "" {
+		t.Error("unreserved suffix not warned")
+	}
+}
+
+func TestAddressHeldIsExact(t *testing.T) {
+	_, mesh, _ := net.ParseCIDR("100.89.88.2/8")
+	mesh.IP = net.ParseIP("100.89.88.2")
+	addrs := []net.Addr{mesh, &net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)}}
+	if !AddressHeld("100.89.88.2", addrs) {
+		t.Error("held address not found")
+	}
+	// Inside the same /8 is not the same address.
+	if AddressHeld("100.89.88.3", addrs) {
+		t.Error("subnet membership counted as held")
+	}
+}
+
+func TestPeerValuesAbsentByDefault(t *testing.T) {
+	withTempConfigDir(t)
+	if err := Default().Save(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := filePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An unconfigured machine's config.json is exactly what it was before.
+	if strings.TrimSpace(string(data)) != "{\n  \"tld\": \"test\"\n}" {
+		t.Errorf("config.json = %s", data)
+	}
+}
+
+func TestParseAddress(t *testing.T) {
+	if got, err := ParseAddress(" 100.89.88.2 "); err != nil || got != "100.89.88.2" {
+		t.Fatalf("ParseAddress = %q, %v", got, err)
+	}
+	for _, raw := range []string{"", "100.89.88", "studio-01.mesh.internal", "100.89.88.2/8"} {
+		if _, err := ParseAddress(raw); err == nil {
+			t.Errorf("ParseAddress(%q) accepted", raw)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,6 +51,22 @@ const (
 type Config struct {
 	// TLD is the top-level domain routed to the local proximo (without a dot).
 	TLD string `json:"tld"`
+
+	// The peer-sharing values (docs/specs/peer-sharing.md). Each has no
+	// default and is set on its own; any subset is a legitimate state, and a
+	// machine with none of them set executes no peer behaviour at all.
+
+	// Machine is this machine's label in its peer names.
+	Machine string `json:"machine,omitempty"`
+	// PeerSuffix is the multi-label suffix every peer name lives under.
+	PeerSuffix string `json:"peer_suffix,omitempty"`
+	// Address is the address proximo answers this machine's peer names with:
+	// the machine's own address on the mesh.
+	Address string `json:"address,omitempty"`
+	// TeamRoot is the absolute path of the team root certificate (PEM).
+	TeamRoot string `json:"team_root,omitempty"`
+	// MeshRemedy overrides the Remedy the mesh Check offers. Stored verbatim.
+	MeshRemedy string `json:"mesh_remedy,omitempty"`
 }
 
 // Default returns a Config populated with default values.
@@ -57,13 +74,14 @@ func Default() Config {
 	return Config{TLD: DefaultTLD}
 }
 
-var tldPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+// labelPattern is one DNS label: a TLD, a machine label, a label of the Peer suffix.
+var labelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // NormalizeTLD validates and normalizes a user-supplied TLD: it strips a leading
 // dot, lowercases, enforces a single DNS label, and rejects reserved values.
 func NormalizeTLD(raw string) (string, error) {
 	tld := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "."))
-	if !tldPattern.MatchString(tld) {
+	if !labelPattern.MatchString(tld) {
 		return "", fmt.Errorf("invalid TLD %q: use a single DNS label of [a-z0-9-]", raw)
 	}
 	if tld == "local" {
@@ -92,6 +110,85 @@ func TLDWarning(tld string) string {
 		return ""
 	}
 	return fmt.Sprintf(".%s is not reserved for private use: it may be delegated on the public internet, and routing it locally shadows every name under it. Reserved alternatives: .%s (RFC 6761) and .internal.", tld, DefaultTLD)
+}
+
+// NormalizeMachine validates a machine label: one DNS label of [a-z0-9-],
+// lowercased, at most 63 octets. Whether it names a person is not something a
+// machine can judge, so it is not checked — MachineRule is printed instead.
+func NormalizeMachine(raw string) (string, error) {
+	m := strings.ToLower(strings.TrimSpace(raw))
+	if !labelPattern.MatchString(m) || len(m) > 63 {
+		return "", fmt.Errorf("invalid machine label %q: use a single DNS label of [a-z0-9-], at most 63 characters", raw)
+	}
+	return m, nil
+}
+
+// MachineRule is printed on every `config machine`, unconditionally: the one
+// intervention available for a value whose fault cannot be detected.
+const MachineRule = "The machine label names a machine, not a person: colleagues bookmark it and write it into READMEs, so keep it neutral and stable (studio-01, never a person's name, a model or an office)."
+
+// NormalizePeerSuffix validates a Peer suffix: at least two DNS labels of
+// [a-z0-9-], lowercased, leading and trailing dots stripped. NormalizeTLD does
+// not fit: it accepts exactly one label.
+func NormalizePeerSuffix(raw string) (string, error) {
+	s := strings.Trim(strings.ToLower(strings.TrimSpace(raw)), ".")
+	labels := strings.Split(s, ".")
+	if len(labels) < 2 || len(s) > 253 {
+		return "", fmt.Errorf("invalid peer suffix %q: use at least two DNS labels of [a-z0-9-]", raw)
+	}
+	for _, l := range labels {
+		if !labelPattern.MatchString(l) || len(l) > 63 {
+			return "", fmt.Errorf("invalid peer suffix %q: %q is not a DNS label of [a-z0-9-]", raw, l)
+		}
+	}
+	// mDNS answers .local ahead of any nameserver the mesh configures.
+	if labels[len(labels)-1] == "local" {
+		return "", fmt.Errorf("invalid peer suffix %q: .local is answered by mDNS first, so no peer name under it would resolve", raw)
+	}
+	return s, nil
+}
+
+// PeerSuffixWarning returns advice for a suffix whose right-most label nobody
+// reserved, or "" for a reserved one. It never rejects, as TLDWarning does not.
+func PeerSuffixWarning(suffix string) string {
+	last := suffix[strings.LastIndex(suffix, ".")+1:]
+	if reservedTLDs[last] {
+		return ""
+	}
+	return fmt.Sprintf(".%s is not reserved from delegation: the day someone registers it, every peer name under %s stops resolving. Pick a suffix under a reserved label, such as .internal.", last, suffix)
+}
+
+// ParseAddress validates the address proximo answers peer names with.
+func ParseAddress(raw string) (string, error) {
+	ip := net.ParseIP(strings.TrimSpace(raw))
+	if ip == nil {
+		return "", fmt.Errorf("invalid address %q: not an IP address", raw)
+	}
+	return ip.String(), nil
+}
+
+// AddressRule is printed on every `config address`: the held-by-an-interface
+// check catches a typo or a stale value, never a wrong-but-local address.
+const AddressRule = "The address must be this machine's own address on the mesh. proximo checks only that some interface holds it: it cannot tell the mesh address from the LAN address or 127.0.0.1."
+
+// AddressHeld reports whether one of addrs (as net.InterfaceAddrs returns
+// them) is exactly addr. Exact, never subnet membership: a mesh range is
+// typically a /8, and membership in it asserts almost nothing.
+func AddressHeld(addr string, addrs []net.Addr) bool {
+	want := net.ParseIP(addr)
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip != nil && ip.Equal(want) {
+			return true
+		}
+	}
+	return false
 }
 
 // Dir returns (creating if needed) the per-user state home at $HOME/.proximo.

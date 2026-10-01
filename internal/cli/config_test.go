@@ -2,9 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/filippolmt/proximo/internal/config"
 )
 
 // TestConfigCAPathPrintsWithoutSideEffects asserts `config ca-path` prints the
@@ -29,5 +40,141 @@ func TestConfigCAPathPrintsWithoutSideEffects(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(home, ".proximo")); !os.IsNotExist(err) {
 		t.Errorf("state home was created by a query-only command (stat err = %v)", err)
+	}
+}
+
+func runConfig(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := newConfigCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestConfigMachinePrintsTheRuleOnEverySet(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for i := 0; i < 2; i++ {
+		out, err := runConfig(t, "machine", "Studio-01")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "Saved machine: studio-01") || !strings.Contains(out, "not a person") {
+			t.Errorf("run %d output = %q", i, out)
+		}
+	}
+}
+
+func TestConfigTeamRootNeedsThePeerSuffix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, err := runConfig(t, "team-root", "/nonexistent.pem")
+	if err == nil || !strings.Contains(err.Error(), "proximo config peer-suffix") {
+		t.Fatalf("err = %v, want a Remedy naming config peer-suffix", err)
+	}
+}
+
+func TestConfigAddressWarnsWhenNoInterfaceHoldsIt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	interfaceAddrs = func() ([]net.Addr, error) { return nil, nil }
+	t.Cleanup(func() { interfaceAddrs = net.InterfaceAddrs })
+	out, err := runConfig(t, "address", "100.89.88.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "not held by any interface") || !strings.Contains(out, "Saved address: 100.89.88.2") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+// writeTeamRoot writes a root permitted .mesh.internal and excluding every IP,
+// email address and URI — the shape config team-root accepts — and returns its
+// path.
+func writeTeamRoot(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, v4, _ := net.ParseCIDR("0.0.0.0/0")
+	_, v6, _ := net.ParseCIDR("::/0")
+	tmpl := &x509.Certificate{
+		SerialNumber:                big.NewInt(1),
+		NotBefore:                   time.Now(),
+		NotAfter:                    time.Now().AddDate(10, 0, 0),
+		IsCA:                        true,
+		BasicConstraintsValid:       true,
+		KeyUsage:                    x509.KeyUsageCertSign,
+		PermittedDNSDomains:         []string{".mesh.internal"},
+		PermittedDNSDomainsCritical: true,
+		ExcludedIPRanges:            []*net.IPNet{v4, v6},
+		ExcludedEmailAddresses:      []string{""},
+		ExcludedURIDomains:          []string{""},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "team-root.crt")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestConfigTeamRootStoresAnAbsolutePath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := runConfig(t, "peer-suffix", "mesh.internal"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, "team-root", writeTeamRoot(t)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(cfg.TeamRoot) {
+		t.Errorf("TeamRoot = %q, want an absolute path", cfg.TeamRoot)
+	}
+}
+
+func TestConfigPeerSuffixWarnsWhenTheTeamRootNoLongerCoversIt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := runConfig(t, "peer-suffix", "mesh.internal"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, "team-root", writeTeamRoot(t)); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runConfig(t, "peer-suffix", "other.internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "does not cover other.internal") || !strings.Contains(out, "Remedy: proximo config team-root") || !strings.Contains(out, "Saved peer-suffix: other.internal") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+// Each refusal stops the command and stores nothing.
+func TestConfigRefusals(t *testing.T) {
+	for _, args := range [][]string{
+		{"machine", "studio.01"},
+		{"peer-suffix", "internal"},
+		{"peer-suffix", "mesh.local"},
+		// proximo's own DNS answers the TLD with 127.0.0.1.
+		{"peer-suffix", "mesh.test"},
+		{"address", "100.89.88"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if _, err := runConfig(t, args...); err == nil {
+				t.Fatal("accepted")
+			}
+			if cfg, err := config.Load(); err != nil || cfg != config.Default() {
+				t.Errorf("config = %+v, %v; want the default", cfg, err)
+			}
+		})
 	}
 }
