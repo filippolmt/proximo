@@ -50,6 +50,13 @@ type Route struct {
 	// collision to its own explanation without pattern-matching prose that is
 	// written for a human.
 	Collision bool
+	// Share is proximo.share on an HTTP route; ShareTCP the same label on a TCP
+	// route, where it is ignored. Peer and PeerQualified are the peer names
+	// the row's hosts answer on, set only when the route is served on them.
+	Share         bool
+	ShareTCP      bool
+	Peer          string
+	PeerQualified string
 }
 
 // Display renders the route's target for `proximo status`: the HTTPS URL for an
@@ -85,7 +92,9 @@ func (r Route) Display() string {
 // warnings. tld names the Traefik dashboard self-route host (traefik.<tld>),
 // which the watcher injects outside container classification and is therefore
 // surfaced here the same way: present whenever the stack's Traefik is running.
-func Routes(ctx context.Context, tld string) ([]Route, error) {
+// peer is this machine's peer names when its shared routes are served on them,
+// and the zero value otherwise.
+func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 	cli, err := newClient()
 	if err != nil {
 		return nil, err
@@ -104,6 +113,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	// A refusal must reach `proximo status`: one that lives only in the watcher's
 	// log is indistinguishable, from here, from Inspection simply not working.
 	refused := map[string]string{}
+	shareTCP := map[string]bool{}
 	for _, c := range cs {
 		if !isRouted(c) {
 			continue
@@ -133,6 +143,9 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 		if slices.Contains(info.tcpIgnoredHTTP, proximoInspectLabel) {
 			refused[rc.name] = "inspection off: a TCP route has no response body to inject into"
 		}
+		if slices.Contains(info.tcpIgnoredHTTP, proximoShareLabel) {
+			shareTCP[rc.name] = true
+		}
 		served = append(served, rc)
 	}
 	// Apply the same host-by-host resolution the watcher uses, so status lists
@@ -142,7 +155,7 @@ func Routes(ctx context.Context, tld string) ([]Route, error) {
 	for _, name := range resolved.inspectDropped {
 		refused[name] = "inspection off: route balances across replicas"
 	}
-	routes = append(routes, servedRoutes(resolved, refused)...)
+	routes = append(routes, servedRoutes(resolved, refused, shareTCP, tld, peer)...)
 	sort.Slice(routes, func(i, j int) bool {
 		// A row with no host is a container that is observed and not routed. It
 		// sorts last: the table is a listing of names proximo answers for, and
@@ -189,10 +202,27 @@ func observedRoutes(cs []container.Summary) []Route {
 // resolved — a loser absent from the listing is exactly how the condition used
 // to hide. refused maps a container to the reason its proximo.inspect could not
 // be honoured.
-func servedRoutes(resolved routeResolution, refused map[string]string) []Route {
+func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP map[string]bool, tld string, peer PeerNames) []Route {
+	// peerName is "" whenever the route is not served on its peer names.
+	peerName := func(rc routedContainer, h string) string {
+		if !rc.share || peer == (PeerNames{}) || h == "" {
+			return ""
+		}
+		n, _ := peer.name(h, tld)
+		return n
+	}
 	var routes []Route
 	for _, c := range resolved.collisions {
-		routes = append(routes, Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true})
+		r := Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true}
+		// A container that lost its Bare host keeps only its Qualified peer
+		// name; the Collision itself speaks in URL.
+		for _, rc := range resolved.kept {
+			if rc.name == c.name && rc.path == c.path {
+				r.Share = rc.share
+				r.PeerQualified = peerName(rc, rc.servedQualified(c.host))
+			}
+		}
+		routes = append(routes, r)
 	}
 	for _, rc := range resolved.kept {
 		backends := len(rc.backends())
@@ -201,10 +231,11 @@ func servedRoutes(resolved routeResolution, refused map[string]string) []Route {
 			// same certificate, so it rides this row rather than getting another.
 			qualified := rc.servedQualified(host)
 			if rc.isTCP() {
-				routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends, InspectNote: refused[rc.name]})
+				routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, TCPPorts: rc.tcpPorts, TLSMode: rc.tcpTLS, Backends: backends, InspectNote: refused[rc.name], ShareTCP: shareTCP[rc.name]})
 				continue
 			}
-			routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends, Inspect: rc.inspect, InspectNote: refused[rc.name]})
+			routes = append(routes, Route{Container: rc.name, Host: host, Qualified: qualified, Path: rc.path, URL: "https://" + host + rc.path, Middlewares: rc.mw.active(), Backends: backends, Inspect: rc.inspect, InspectNote: refused[rc.name],
+				Share: rc.share, Peer: peerName(rc, host), PeerQualified: peerName(rc, qualified)})
 		}
 	}
 	return routes

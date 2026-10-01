@@ -236,6 +236,9 @@ func newConfigIntermediateCmd() *cobra.Command {
 			if err := tls.InstallIntermediate(data); err != nil {
 				return err
 			}
+			if err := docker.SyncPeer(cfg); err != nil {
+				return err
+			}
 			c, err := tls.Intermediate()
 			if err != nil {
 				return err
@@ -269,8 +272,8 @@ func warnIntermediate(cmd *cobra.Command, machine, suffix string) {
 }
 
 // savePeerValue persists one peer value and says what it stored, followed by
-// the rule a person has to apply when there is one. Nothing reads these values
-// at runtime yet, so there is nothing to converge.
+// the rule a person has to apply when there is one. A materialized stack gets
+// the change at once: its watcher re-reads the peer material every reconcile.
 func savePeerValue(cmd *cobra.Command, name, value string, set func(*config.Config), rule string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -278,6 +281,9 @@ func savePeerValue(cmd *cobra.Command, name, value string, set func(*config.Conf
 	}
 	set(&cfg)
 	if err := cfg.Save(); err != nil {
+		return err
+	}
+	if err := docker.SyncPeer(cfg); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()

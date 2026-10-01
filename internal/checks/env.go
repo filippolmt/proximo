@@ -120,7 +120,7 @@ func DefaultEnv(tld string) (Env, error) {
 		Incidents:           docker.StackRecordsIncidents,
 		AgentSkill:          skill.Survey,
 		Routes: func(ctx context.Context) ([]docker.Route, error) {
-			return docker.Routes(ctx, tld)
+			return docker.Routes(ctx, tld, docker.PeerNames{})
 		},
 	}, nil
 }

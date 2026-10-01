@@ -104,6 +104,15 @@ func Materialize(tld, certDir, image string) (string, error) {
 	if err := copyCA(dir, certDir); err != nil {
 		return "", err
 	}
+	// The peer material rides the ca mount the watcher already has, so the
+	// Compose file is the same whether or not this machine shares.
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	if err := copyPeer(filepath.Join(dir, "ca"), certDir, cfg); err != nil {
+		return "", err
+	}
 	if err := writeEnv(dir, tld, image); err != nil {
 		return "", err
 	}

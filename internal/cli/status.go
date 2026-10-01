@@ -71,7 +71,14 @@ func newStatusCmd() *cobra.Command {
 			// something about, not inventory: they belong to `proximo doctor`,
 			// the only command that prints a Remedy. status keeps its per-route
 			// notes, which are facts about what is reachable right now.
-			routes, err := docker.Routes(ctx, cfg.TLD)
+			// Peer names are printed only when the route is served on them:
+			// with any value missing, the cell names what is missing instead.
+			missing := docker.PeerMissing(cfg)
+			peer := docker.PeerNames{}
+			if len(missing) == 0 {
+				peer = docker.PeerNames{Machine: cfg.Machine, Suffix: cfg.PeerSuffix}
+			}
+			routes, err := docker.Routes(ctx, cfg.TLD, peer)
 			if err != nil {
 				return err
 			}
@@ -79,23 +86,23 @@ func newStatusCmd() *cobra.Command {
 				fmt.Fprintln(out, "No routed containers.")
 				return nil
 			}
-			// The MIDDLEWARES column appears only when at least one route carries
-			// proximo middlewares, so the common (no-middleware) listing stays a
-			// two-column table.
-			anyMW := false
+			// The MIDDLEWARES and PEER columns appear only when at least one route
+			// needs them, so the common listing stays a two-column table.
+			anyMW, anyPeer := false, false
 			for _, r := range routes {
-				if len(r.Middlewares) > 0 {
-					anyMW = true
-					break
-				}
+				anyMW = anyMW || len(r.Middlewares) > 0
+				anyPeer = anyPeer || r.Share || r.ShareTCP
 			}
 
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			if anyMW {
-				fmt.Fprintln(w, "CONTAINER\tURL\tMIDDLEWARES")
-			} else {
-				fmt.Fprintln(w, "CONTAINER\tURL")
+			header := []string{"CONTAINER", "URL"}
+			if anyPeer {
+				header = append(header, "PEER")
 			}
+			if anyMW {
+				header = append(header, "MIDDLEWARES")
+			}
+			fmt.Fprintln(w, strings.Join(header, "\t"))
 			for _, r := range routes {
 				val := r.Display()
 				// An observed container's row is a fact about the inventory, not
@@ -106,11 +113,14 @@ func newStatusCmd() *cobra.Command {
 				case r.Note != "":
 					val = warnPrefix + r.Note
 				}
-				if anyMW {
-					fmt.Fprintf(w, "%s\t%s\t%s\n", r.Container, val, strings.Join(r.Middlewares, ", "))
-				} else {
-					fmt.Fprintf(w, "%s\t%s\n", r.Container, val)
+				cells := []string{r.Container, val}
+				if anyPeer {
+					cells = append(cells, peerCell(r, missing))
 				}
+				if anyMW {
+					cells = append(cells, strings.Join(r.Middlewares, ", "))
+				}
+				fmt.Fprintln(w, strings.Join(cells, "\t"))
 			}
 			if err := w.Flush(); err != nil {
 				return err
@@ -119,4 +129,38 @@ func newStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// peerCell renders a route's PEER cell, mirroring the URL cell: the Bare peer
+// name with https://, the Qualified one bare after "  + ". A shared route not
+// served on its peer names says which values are missing — a fact, never a
+// command. With the mesh down the cell is unchanged: proximo cannot observe it.
+func peerCell(r docker.Route, missing []string) string {
+	switch {
+	case r.ShareTCP:
+		return warnPrefix + "proximo.share ignored on a TCP route"
+	case !r.Share:
+		return ""
+	case len(missing) > 0:
+		verb := "is"
+		if len(missing) > 1 {
+			verb = "are"
+		}
+		return fmt.Sprintf("%sproximo.share is set; not served on its peer names (%s %s not configured)", warnPrefix, joinAnd(missing), verb)
+	case r.Peer == "" && r.PeerQualified != "":
+		return "https://" + r.PeerQualified
+	case r.Peer == "":
+		return ""
+	case r.PeerQualified != "":
+		return "https://" + r.Peer + "  + " + r.PeerQualified
+	}
+	return "https://" + r.Peer
+}
+
+// joinAnd joins words with commas and a final "and".
+func joinAnd(words []string) string {
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }
