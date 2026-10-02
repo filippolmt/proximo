@@ -496,6 +496,31 @@ func TestStackLogCaps(t *testing.T) {
 	}
 }
 
+// TestDownEmptiesTheInventory: a stopped stack serves nothing, and its watcher
+// is no longer there to say so — down does, or a consumer keeps pinning names
+// nothing answers on.
+func TestDownEmptiesTheInventory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := Materialize("test", "", "ghcr.io/filippolmt/proximo:v0.1.0"); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	dir, err := config.InventoryDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteInventory(dir, NewInventory([]Route{{Container: "a", Host: "a.test", URL: "https://a.test"}})); err != nil {
+		t.Fatalf("WriteInventory into the materialized dir: %v", err)
+	}
+	if err := downWith(&recordComposer{}); err != nil {
+		t.Fatalf("downWith: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, InventoryFile))
+	if err != nil || strings.TrimSpace(string(raw)) != "{\n  \"routes\": []\n}" {
+		t.Fatalf("inventory after down = %q (%v), want an empty one", raw, err)
+	}
+}
+
 // TestDownTearsDownEverything asserts a plain `down` enables the observability
 // profile and removes orphans, so profile-gated dashboards are torn down with
 // the core stack (a bare `docker compose down` leaves them running).

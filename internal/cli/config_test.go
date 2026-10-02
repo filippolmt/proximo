@@ -45,6 +45,24 @@ func TestConfigCAPathPrintsWithoutSideEffects(t *testing.T) {
 	}
 }
 
+// TestConfigInventoryDirPrintsWithoutSideEffects: the same contract as ca-path,
+// for the directory the watcher keeps the effective-route inventory in.
+func TestConfigInventoryDirPrintsWithoutSideEffects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	out, err := runConfig(t, "inventory-dir")
+	if err != nil {
+		t.Fatalf("config inventory-dir: %v", err)
+	}
+	if want := filepath.Join(home, ".proximo", "data", "inventory") + "\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".proximo")); !os.IsNotExist(err) {
+		t.Errorf("state home was created by a query-only command (stat err = %v)", err)
+	}
+}
+
 func runConfig(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer

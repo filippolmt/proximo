@@ -21,6 +21,7 @@ proximo <command> [args]
 | [`doctor`](#proximo-doctor) | Report every check, with a remedy per failure | no | no |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
+| [`config inventory-dir`](#proximo-config-inventory-dir) | Print the directory holding the effective-route inventory | no | no |
 | [`config machine <label>`](#proximo-config-machine) | Set this machine's label in its peer names | no | no |
 | [`config peer-suffix <suffix>`](#proximo-config-peer-suffix) | Set the suffix every peer name lives under | no | no |
 | [`config address <ip>`](#proximo-config-address) | Set the mesh address this machine's peer names answer with | no | no |
@@ -322,7 +323,9 @@ There is no clipboard flag.
 one entry per table row, with every name the route answers on as its own field
 instead of display text. It exists for tools that make proximo's names reachable
 somewhere proximo's DNS does not answer — a dev container pinning them in its
-`/etc/hosts`, for one. Deriving a
+`/etc/hosts`, for one. The watcher keeps the same document in a file, for tools
+that cannot run the CLI: see
+[`config inventory-dir`](#proximo-config-inventory-dir). Deriving a
 [qualified host](routing.md#the-two-hosts-every-route-gets) is proximo's job,
 so such a tool reads the names here rather than from labels.
 
@@ -681,6 +684,29 @@ of hardcoding the state-home layout. The path is printed even when the file
 does not exist yet (proximo not installed yet), so callers must check existence
 themselves; the command itself is side-effect free and never creates
 directories.
+
+## proximo config inventory-dir
+
+Print the absolute path of the directory holding the effective-route inventory:
+
+```sh
+proximo config inventory-dir
+# /Users/you/.proximo/data/inventory
+```
+
+The directory holds `routes.json`, the [`status --json`](#--json) document. The
+watcher keeps it current: it rewrites the file on every reconcile where the
+content changed, and never otherwise. It is the same contract as `ca-path`, for
+a tool that must follow routes **while** they change without running the CLI —
+a dev container re-pinning names as projects start and stop, for one.
+
+- **Mount the directory, not the file.** The file is replaced atomically, by
+  rename, so a reader never sees half a document. A bind mount of the file itself
+  would keep the inode it first saw and never see an update.
+- **Stopped means empty.** `proximo down` writes `{"routes": []}`, so a consumer
+  drops its names rather than pinning ones nothing answers on.
+- The path is printed even before `proximo install` creates it, and the command
+  never creates directories.
 
 ## proximo config machine
 

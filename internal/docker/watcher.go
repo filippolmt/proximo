@@ -267,6 +267,9 @@ type Watcher struct {
 	caCert     *x509.Certificate
 	caKey      *ecdsa.PrivateKey
 	dynamicDir string
+	// inventoryDir is where the effective-route inventory is kept current for
+	// tools that read it without running the CLI ("" = not written).
+	inventoryDir string
 	// tld is the configured proximo TLD (from PROXIMO_TLD), used to build the
 	// dashboard self-route host traefik.<tld>.
 	tld string
@@ -308,11 +311,14 @@ func NewWatcher() (*Watcher, error) {
 	w := &Watcher{
 		cli:        cli,
 		dynamicDir: getenv("PROXIMO_DYNAMIC_DIR", "/etc/traefik/dynamic"),
-		caDir:      filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
-		tld:        getenv("PROXIMO_TLD", config.DefaultTLD),
-		lastHosts:  map[string]string{},
-		authHashes: map[string]string{},
-		incidents:  NewIncidentStore(0, 0),
+		// Unset on a stack materialized before the inventory existed: then
+		// there is no mount to write into, and nothing is written.
+		inventoryDir: os.Getenv("PROXIMO_INVENTORY_DIR"),
+		caDir:        filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
+		tld:          getenv("PROXIMO_TLD", config.DefaultTLD),
+		lastHosts:    map[string]string{},
+		authHashes:   map[string]string{},
+		incidents:    NewIncidentStore(0, 0),
 	}
 
 	caCert, caKey, err := tls.LoadCA(
@@ -424,7 +430,8 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 
 	traefikID, traefikNets := findStackContainer(containers, "traefik")
 	if traefikID == "" {
-		return nil // Traefik not running yet.
+		w.writeInventory(nil) // Traefik not running yet: nothing is served.
+		return nil
 	}
 	// The hop needs the same reach as Traefik, but only into the projects it
 	// actually serves. An absent id means an older stack with no hop: Inspection
@@ -489,7 +496,23 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 
 	w.syncDynamic(routed)
 	w.syncCerts(routed)
+	// The same rows `proximo status` prints, from the same classifier; the peer
+	// names are the ones this pass served.
+	peer := PeerNames{}
+	if w.peer != nil {
+		peer = w.peer.names
+	}
+	w.writeInventory(routesOf(ctx, w.cli.ContainerInspect, containers, w.tld, peer))
 	return nil
+}
+
+func (w *Watcher) writeInventory(routes []Route) {
+	if w.inventoryDir == "" {
+		return
+	}
+	if _, err := WriteInventory(w.inventoryDir, NewInventory(routes)); err != nil {
+		log.Printf("proximo watcher: inventory not written: %v", err)
+	}
 }
 
 // sharePeers gives every shared route its peer names, from the hosts it serves

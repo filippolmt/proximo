@@ -87,6 +87,7 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo errors transcript`](cli.md#proximo-errors-transcript) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
+[`proximo config inventory-dir`](cli.md#proximo-config-inventory-dir) ·
 [`proximo config machine`](cli.md#proximo-config-machine) ·
 [`proximo config peer-suffix`](cli.md#proximo-config-peer-suffix) ·
 [`proximo config address`](cli.md#proximo-config-address) ·

@@ -246,6 +246,18 @@ func DataDir() (string, error) {
 	return SubDir("data")
 }
 
+// InventoryDir resolves, without creating it, the directory the watcher keeps
+// the effective-route inventory in. It is a directory rather than the file
+// because the file is replaced by rename: a consumer bind-mounting the file
+// itself would keep the first inode it saw. `config inventory-dir` prints it.
+func InventoryDir() (string, error) {
+	home, err := HomePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "data", "inventory"), nil
+}
+
 // RemoveHome deletes the entire ~/.proximo state home (CA, secret, config,
 // materialized stack, and bind-mounted data). uninstall calls it after the
 // stack is down and host trust/resolver are reversed, for a full reversal. It

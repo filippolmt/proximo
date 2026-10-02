@@ -78,7 +78,7 @@ func materialize(tld, certDir, image string, cfg config.Config) (string, error) 
 	// routes/certs into data/traefik on its first reconcile; the metrics hub
 	// persists into data/beszel when the observability profile is active (an empty
 	// dir is harmless when it is not).
-	for _, sub := range []string{"traefik", "beszel"} {
+	for _, sub := range []string{"traefik", "beszel", "inventory"} {
 		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o755); err != nil {
 			return "", err
 		}
@@ -621,7 +621,19 @@ func downWith(c Composer) error {
 		return nil
 	}
 	// Both profiles, or their services outlive the core stack.
-	return c.Compose(dir, "--profile", observabilityProfile, "--profile", peerProfile, "down", "--remove-orphans")
+	if err := c.Compose(dir, "--profile", observabilityProfile, "--profile", peerProfile, "down", "--remove-orphans"); err != nil {
+		return err
+	}
+	// The watcher is gone, so nothing else will say the stack serves nothing.
+	inv, err := config.InventoryDir()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(inv); err != nil {
+		return nil // a stack materialized before the inventory existed
+	}
+	_, err = WriteInventory(inv, NewInventory(nil))
+	return err
 }
 
 // DownObservability stops and removes only the opt-in observability services,

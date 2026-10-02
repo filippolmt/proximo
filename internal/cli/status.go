@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -85,9 +84,12 @@ func newStatusCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				enc := json.NewEncoder(out)
-				enc.SetIndent("", "  ")
-				return enc.Encode(statusJSON(routes))
+				data, err := docker.NewInventory(routes).MarshalIndent()
+				if err != nil {
+					return err
+				}
+				_, err = out.Write(data)
+				return err
 			}
 			if len(routes) == 0 {
 				fmt.Fprintln(out, "No routed containers.")

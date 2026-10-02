@@ -23,6 +23,7 @@ func newConfigCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newConfigTLDCmd())
 	cmd.AddCommand(newConfigCAPathCmd())
+	cmd.AddCommand(newConfigInventoryDirCmd())
 	cmd.AddCommand(newConfigMachineCmd())
 	cmd.AddCommand(newConfigPeerSuffixCmd())
 	cmd.AddCommand(newConfigAddressCmd())
@@ -340,6 +341,27 @@ func newConfigCAPathCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := tls.CACertLocation()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), path)
+			return nil
+		},
+	}
+}
+
+func newConfigInventoryDirCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "inventory-dir",
+		Short: "Print the directory holding the effective-route inventory",
+		Long: "Print the absolute path of the directory the watcher keeps routes.json in:\n" +
+			"the `proximo status --json` document, kept current while the stack runs.\n" +
+			"Mount the directory, not the file — the file is replaced by rename. Like\n" +
+			"ca-path, the path is printed even when it does not exist yet, and the\n" +
+			"command never creates directories on the host.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := config.InventoryDir()
 			if err != nil {
 				return err
 			}

@@ -111,8 +111,12 @@ func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 	if err != nil {
 		return nil, err
 	}
-	cs := res.Items
+	return routesOf(ctx, cli.ContainerInspect, res.Items, tld, peer), nil
+}
 
+// routesOf is Routes over a container list the caller already holds — the
+// watcher's, which writes the same rows to the inventory every reconcile.
+func routesOf(ctx context.Context, inspect inspector, cs []container.Summary, tld string, peer PeerNames) []Route {
 	routes := dashboardRoutes(cs, tld)
 	var served []routedContainer
 	// Reasons a proximo.inspect label could not be honoured, keyed by container.
@@ -124,7 +128,7 @@ func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 		if !isRouted(c) {
 			continue
 		}
-		rc, ok, info := classify(ctx, cli.ContainerInspect, c, tld)
+		rc, ok, info := classify(ctx, inspect, c, tld)
 		if !ok && !info.portFailed {
 			continue // not a host route (e.g. a native container with no Host rule)
 		}
@@ -177,7 +181,7 @@ func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 		}
 		return routes[i].Container < routes[j].Container
 	})
-	return routes, nil
+	return routes
 }
 
 // observedRoutes lists the containers proximo observes without routing: the ones

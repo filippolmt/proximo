@@ -63,10 +63,13 @@ services:
       PROXIMO_CA_CERT: /ca/ca.pem
       PROXIMO_CA_KEY: /ca/ca-key.pem
       PROXIMO_DYNAMIC_DIR: /etc/traefik/dynamic
+      PROXIMO_INVENTORY_DIR: /inventory
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./ca:/ca:ro
       - __DATADIR__/traefik:/etc/traefik/dynamic
+      # The effective-route inventory (`proximo config inventory-dir`).
+      - __DATADIR__/inventory:/inventory
     ports:
       # The Incident read API, published on loopback only — `proximo errors` is
       # what reads it, and nothing outside this host can.
