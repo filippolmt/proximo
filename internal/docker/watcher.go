@@ -341,8 +341,12 @@ func (w *Watcher) Incidents() *IncidentStore { return w.incidents }
 func (w *Watcher) Run(ctx context.Context) error {
 	// Sweep temp files a prior crash mid-write may have stranded: atomicWrite
 	// removes its own temps, so only a hard kill leaves one behind — one sweep at
-	// startup is enough (covers the certs dir and the dynamic root).
+	// startup is enough (covers the certs dir, the dynamic root and the
+	// inventory, whose directory consumers mount).
 	cleanStrayTemps(filepath.Join(w.dynamicDir, "certs"), w.dynamicDir)
+	if w.inventoryDir != "" {
+		cleanStrayTemps(w.inventoryDir)
+	}
 	w.reconcileLogged(ctx)
 	w.restartPeerDNS(ctx)
 
@@ -363,6 +367,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			// Stopping the watcher is stopping the stack: say it serves nothing
+			// now, while there is still someone to say it. A kill skips this;
+			// the restart policy brings the watcher back to rewrite it.
+			w.writeInventory(nil)
 			return ctx.Err()
 		case <-ticker.C:
 			w.reconcileLogged(ctx)
@@ -427,10 +435,14 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	}
 	containers := result.Items
 	w.noteHealthy(containers)
+	// One answer per container for the whole pass, so the routers written and
+	// the inventory published cannot disagree over a transient inspect failure.
+	inspect := memoInspect(w.cli.ContainerInspect)
 
 	traefikID, traefikNets := findStackContainer(containers, "traefik")
 	if traefikID == "" {
-		w.writeInventory(nil) // Traefik not running yet: nothing is served.
+		// Traefik not running yet: the inventory says every route is down.
+		w.writeInventory(routesOf(ctx, inspect, containers, w.tld, PeerNames{}))
 		return nil
 	}
 	// The hop needs the same reach as Traefik, but only into the projects it
@@ -462,7 +474,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 				inspectDesired[netID] = true
 			}
 		}
-		if rc, ok := w.buildRouted(ctx, c); ok {
+		if rc, ok := w.buildRouted(ctx, inspect, c); ok {
 			routed = append(routed, rc)
 		}
 	}
@@ -496,14 +508,28 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 
 	w.syncDynamic(routed)
 	w.syncCerts(routed)
-	// The same rows `proximo status` prints, from the same classifier; the peer
-	// names are the ones this pass served.
-	peer := PeerNames{}
-	if w.peer != nil {
-		peer = w.peer.names
-	}
-	w.writeInventory(routesOf(ctx, w.cli.ContainerInspect, containers, w.tld, peer))
+	// The same rows `proximo status` prints, from the same classifier and the
+	// same inspections; the peer names are the ones this pass served.
+	w.writeInventory(routesOf(ctx, inspect, containers, w.tld, w.peer.Names()))
 	return nil
+}
+
+// memoInspect answers each container once — errors included — for the life of
+// the returned inspector: one reconcile pass.
+func memoInspect(inspect inspector) inspector {
+	type answer struct {
+		res client.ContainerInspectResult
+		err error
+	}
+	seen := map[string]answer{}
+	return func(ctx context.Context, id string, opts client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		if a, ok := seen[id]; ok {
+			return a.res, a.err
+		}
+		res, err := inspect(ctx, id, opts)
+		seen[id] = answer{res, err}
+		return res, err
+	}
 }
 
 func (w *Watcher) writeInventory(routes []Route) {
@@ -698,8 +724,8 @@ func classify(ctx context.Context, inspect inspector, c container.Summary, tld s
 // through the watcher's Docker client and logs the diagnostics classify returns.
 // ok=false means the container gets no route/cert (e.g. ambiguous port, or a
 // native container with no Host rule).
-func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedContainer, bool) {
-	rc, ok, info := classify(ctx, w.cli.ContainerInspect, c, w.tld)
+func (w *Watcher) buildRouted(ctx context.Context, inspect inspector, c container.Summary) (routedContainer, bool) {
+	rc, ok, info := classify(ctx, inspect, c, w.tld)
 	for _, h := range info.invalidHosts {
 		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
 	}

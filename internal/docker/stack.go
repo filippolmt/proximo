@@ -78,7 +78,7 @@ func materialize(tld, certDir, image string, cfg config.Config) (string, error) 
 	// routes/certs into data/traefik on its first reconcile; the metrics hub
 	// persists into data/beszel when the observability profile is active (an empty
 	// dir is harmless when it is not).
-	for _, sub := range []string{"traefik", "beszel", "inventory"} {
+	for _, sub := range []string{"traefik", "beszel", config.InventorySubdir} {
 		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o755); err != nil {
 			return "", err
 		}
@@ -621,19 +621,23 @@ func downWith(c Composer) error {
 		return nil
 	}
 	// Both profiles, or their services outlive the core stack.
-	if err := c.Compose(dir, "--profile", observabilityProfile, "--profile", peerProfile, "down", "--remove-orphans"); err != nil {
-		return err
-	}
-	// The watcher is gone, so nothing else will say the stack serves nothing.
-	inv, err := config.InventoryDir()
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(inv); err != nil {
-		return nil // a stack materialized before the inventory existed
-	}
-	_, err = WriteInventory(inv, NewInventory(nil))
+	err = c.Compose(dir, "--profile", observabilityProfile, "--profile", peerProfile, "down", "--remove-orphans")
+	emptyInventory()
 	return err
+}
+
+// emptyInventory says the stack serves nothing, after a down. The stopping
+// watcher says it first; this covers one that was already gone. It runs even
+// when compose failed — a watcher still running refills the file within a pass
+// — and it is best-effort: a directory a consumer's bind mount created as root
+// must not fail a down that did stop the stack. A var so down stays testable
+// without a home directory.
+var emptyInventory = func() {
+	dir, err := config.InventoryDir()
+	if err != nil || os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	_, _ = WriteInventory(dir, NewInventory(nil))
 }
 
 // DownObservability stops and removes only the opt-in observability services,

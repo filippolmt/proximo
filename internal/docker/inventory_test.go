@@ -1,10 +1,14 @@
 package docker
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/moby/moby/client"
 )
 
 // TestNewInventory: one entry per status row, carrying only the names the route
@@ -59,5 +63,40 @@ func TestWriteInventory(t *testing.T) {
 	var got Inventory
 	if err := json.Unmarshal(raw, &got); err != nil || got.Routes == nil || len(got.Routes) != 0 {
 		t.Fatalf("empty inventory = %s (%v), want {\"routes\": []}", raw, err)
+	}
+}
+
+// TestMarkStackDown: with no Traefik running nothing is served, so a row that
+// would be a working route is flagged instead — the table, --json and the file
+// all say so, rather than listing names nothing answers on.
+func TestMarkStackDown(t *testing.T) {
+	rows := markStackDown([]Route{
+		{Container: "a", Host: "a.test", Qualified: "a.shop.test", URL: "https://a.test"},
+		{Container: "w", Observed: true, Note: "no route — observed"},
+	})
+	if rows[0].Note != NoteStackDown || rows[0].URL != "" || rows[0].Kind() != RowFlagged {
+		t.Errorf("served row = %+v, want it flagged with NoteStackDown", rows[0])
+	}
+	if rows[1].Kind() != RowObserved {
+		t.Errorf("observed row = %+v, want it left alone", rows[1])
+	}
+}
+
+// TestMemoInspect: one pass asks Docker about a container once, so the routers
+// it writes and the inventory it publishes come from the same answer — a
+// failure included.
+func TestMemoInspect(t *testing.T) {
+	calls := 0
+	inspect := memoInspect(func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		calls++
+		return client.ContainerInspectResult{}, errors.New("transient")
+	})
+	for range 3 {
+		if _, err := inspect(context.Background(), "c1", client.ContainerInspectOptions{}); err == nil {
+			t.Fatal("want the cached error")
+		}
+	}
+	if calls != 1 {
+		t.Errorf("inspect reached Docker %d times, want 1", calls)
 	}
 }

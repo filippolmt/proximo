@@ -115,11 +115,11 @@ func PeerMissing(cfg config.Config) []string {
 	return missing
 }
 
-// peerServed reports whether the peer router may be emitted: the machine label,
+// PeerServed reports whether the peer router may be emitted: the machine label,
 // the Peer suffix, the team root and the intermediate are all configured. The
 // address is not needed for it — without one the names do not resolve, which
 // is a stated state rather than a reason to withhold the route.
-func peerServed(missing []string) bool {
+func PeerServed(missing []string) bool {
 	for _, m := range missing {
 		if m != "address" {
 			return false
@@ -133,7 +133,7 @@ func peerServed(missing []string) bool {
 // value withdraws every peer router at the next `up`.
 func copyPeer(caDir, certDir string, cfg config.Config) error {
 	files := []string{peerFile, peerIntermediateFile, peerKeyFile}
-	if certDir == "" || !peerServed(PeerMissing(cfg)) {
+	if certDir == "" || !PeerServed(PeerMissing(cfg)) {
 		for _, f := range files {
 			if err := os.Remove(filepath.Join(caDir, f)); err != nil && !os.IsNotExist(err) {
 				return err
@@ -169,6 +169,14 @@ type peerMaterial struct {
 	// fingerprint identifies the intermediate, so a new ceremony reissues every
 	// peer leaf rather than leaving them under the old one.
 	fingerprint string
+}
+
+// Names is the peer names the material serves, and the zero value without any.
+func (m *peerMaterial) Names() PeerNames {
+	if m == nil {
+		return PeerNames{}
+	}
+	return m.names
 }
 
 // loadPeerMaterial reads the peer material from the stack's ca directory, or

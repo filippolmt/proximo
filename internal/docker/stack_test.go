@@ -81,6 +81,10 @@ func TestMaterializeBindMounts(t *testing.T) {
 
 // recordComposer is a fake Composer that records the compose commands it is
 // asked to run, so Converge's sequencing is verifiable without Docker.
+type failComposer struct{}
+
+func (failComposer) Compose(string, ...string) error { return errors.New("compose down failed") }
+
 type recordComposer struct{ cmds [][]string }
 
 func (r *recordComposer) Compose(_ string, args ...string) error {
@@ -512,8 +516,10 @@ func TestDownEmptiesTheInventory(t *testing.T) {
 	if _, err := WriteInventory(dir, NewInventory([]Route{{Container: "a", Host: "a.test", URL: "https://a.test"}})); err != nil {
 		t.Fatalf("WriteInventory into the materialized dir: %v", err)
 	}
-	if err := downWith(&recordComposer{}); err != nil {
-		t.Fatalf("downWith: %v", err)
+	// Even a failed compose down empties it: a watcher still running refills it
+	// within one pass, and one that is gone cannot.
+	if err := downWith(failComposer{}); err == nil {
+		t.Fatal("downWith: want the compose error")
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, InventoryFile))
 	if err != nil || strings.TrimSpace(string(raw)) != "{\n  \"routes\": []\n}" {

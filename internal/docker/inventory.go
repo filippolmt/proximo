@@ -45,22 +45,22 @@ type InventoryCollision struct {
 
 // NewInventory mirrors the status rows one for one, keeping the names a route
 // answers on apart from the ones it claimed and does not: a row with a Note is
-// not served under its Host. A Collision loser keeps the qualified host it
+// not served under its Host (Route.Kind). A Collision loser keeps the qualified host it
 // still answers on; a flagged row (starting, ambiguous port) answers on nothing.
 func NewInventory(routes []Route) Inventory {
 	inv := Inventory{Routes: []InventoryEntry{}}
 	for _, r := range routes {
 		e := InventoryEntry{Container: r.Container, Path: r.Path}
-		switch {
-		case r.Observed:
+		switch r.Kind() {
+		case RowObserved:
 			e.Note = r.Note
-		case r.Collision:
+		case RowCollision:
 			e.Qualified = r.Qualified
 			e.Collision = &InventoryCollision{Host: r.Host, ServedBy: r.CollisionOwner}
-		case r.Note != "":
+		case RowFlagged:
 			e.Claimed = r.Host
 			e.Warning = r.Note
-		default:
+		case RowServed:
 			e.Scheme = "https"
 			if r.IsTCP() {
 				e.Scheme = "tcp"

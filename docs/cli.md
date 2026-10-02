@@ -269,8 +269,19 @@ shop-web-1      https://app.test  + app.shop.test
 shop-worker-1   no route — observed for Incidents (proximo.transcript), service shop/worker
 ```
 
-Prints `No routed containers.` when nothing is exposed — which implies the
-stack is down, since a running stack always serves the dashboard route.
+Prints `No routed containers.` when nothing is exposed. While the stack's
+Traefik is not running, nothing answers on any name, so every route that would
+be served is flagged instead of listed as a URL:
+
+```
+CONTAINER   URL
+shop-api-1  ⚠ not served — the stack's Traefik is not running
+```
+
+A host a `traefik.*` rule on a proximo container matches is listed as served by
+that container, with no qualified host: Traefik's own provider answers it, and
+proximo withdrew its router there (see
+[a host collision is reported](troubleshooting.md#a-host-collision-is-reported)).
 
 `status` is an **inventory**: it answers *what is running*, and it never prints
 a Remedy. Version skew, an `--image` override and a broken resolver are
@@ -340,6 +351,8 @@ so such a tool reads the names here rather than from labels.
 ]}
 ```
 
+- The stack's own dashboard, `traefik.<tld>`, is an entry like any other: it is
+  served, so a tool pinning names pins it too.
 - `bare` and `qualified` are **only names the route answers on**; a name it
   claims and does not get is kept apart. A container that lost a
   [Collision](troubleshooting.md#a-host-collision-is-reported) carries the host
@@ -353,7 +366,8 @@ so such a tool reads the names here rather than from labels.
   prefix, when the route has one.
 - `peer` holds the [peer names](sharing.md) only when the route is served on
   them, kept apart from the `.test` hosts so a tool pins only the names it means
-  to.
+  to. They are present even before `address` is set — Traefik answers on them —
+  though the `PEER` column then warns, because they resolve nowhere yet.
 - **The contract**: a field is omitted when it has no value; fields are only ever
   added, never renamed or removed. Exit codes and stderr are the table's, and on
   exit 0 stdout is always one JSON document — `{"routes": []}` when nothing is
@@ -703,8 +717,14 @@ a dev container re-pinning names as projects start and stop, for one.
 - **Mount the directory, not the file.** The file is replaced atomically, by
   rename, so a reader never sees half a document. A bind mount of the file itself
   would keep the inode it first saw and never see an update.
-- **Stopped means empty.** `proximo down` writes `{"routes": []}`, so a consumer
-  drops its names rather than pinning ones nothing answers on.
+- **Stopped means empty.** The watcher writes `{"routes": []}` as it stops, and
+  `proximo down` writes it again in case the watcher was already gone, so a
+  consumer drops its names rather than pinning ones nothing answers on. While
+  Traefik is not running, every would-be route is a flagged entry.
+- **A pass that fails changes nothing.** If the watcher cannot list containers,
+  the file keeps the last inventory until the next pass (at most 30 seconds).
+- **An existing install** gets the file after `proximo up` (or `proximo update`)
+  re-materializes the stack; until then nothing is written.
 - The path is printed even before `proximo install` creates it, and the command
   never creates directories.
 

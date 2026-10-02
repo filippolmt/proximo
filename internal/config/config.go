@@ -243,8 +243,15 @@ func SubDir(name string) (string, error) {
 // bind-mounted runtime data (Traefik routes/certs, Beszel metrics). It is the
 // host side of the data bind mounts the materialized compose declares.
 func DataDir() (string, error) {
-	return SubDir("data")
+	return SubDir(dataSubdir)
 }
+
+const (
+	dataSubdir = "data"
+	// InventorySubdir is the inventory's directory under DataDir; the stack's
+	// compose file mounts __DATADIR__/inventory, the same name.
+	InventorySubdir = "inventory"
+)
 
 // InventoryDir resolves, without creating it, the directory the watcher keeps
 // the effective-route inventory in. It is a directory rather than the file
@@ -255,7 +262,7 @@ func InventoryDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "data", "inventory"), nil
+	return filepath.Join(home, dataSubdir, InventorySubdir), nil
 }
 
 // RemoveHome deletes the entire ~/.proximo state home (CA, secret, config,

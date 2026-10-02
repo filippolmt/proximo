@@ -62,6 +62,47 @@ type Route struct {
 	PeerQualified string
 }
 
+// RowKind is what a status row says about its Host. It is derived in one place
+// so every reader of the rows — the table, the inventory — agrees on it.
+type RowKind int
+
+const (
+	RowServed    RowKind = iota // the route answers on Host
+	RowObserved                 // a container proximo observes and does not route
+	RowCollision                // Host went to another claimant
+	RowFlagged                  // opted in and not served: starting, unhealthy, an unresolved port, the stack down
+)
+
+// Kind classifies the row: a Note on a row that is neither observed nor a
+// Collision is the reason it is not served.
+func (r Route) Kind() RowKind {
+	switch {
+	case r.Observed:
+		return RowObserved
+	case r.Collision:
+		return RowCollision
+	case r.Note != "":
+		return RowFlagged
+	}
+	return RowServed
+}
+
+// NoteStackDown flags every would-be route while the stack's Traefik is not
+// running: nothing answers on any name. No command in it: status never prints
+// a Remedy, and `proximo doctor` names this one.
+const NoteStackDown = "not served — the stack's Traefik is not running"
+
+// markStackDown flags the rows that would be served, for a stack whose Traefik
+// is not running. Collisions and observed containers keep their own rows.
+func markStackDown(routes []Route) []Route {
+	for i, r := range routes {
+		if r.Kind() == RowServed {
+			routes[i].Note, routes[i].URL = NoteStackDown, ""
+		}
+	}
+	return routes
+}
+
 // IsTCP reports a TCP-over-TLS (SNI) route, as opposed to an HTTP one.
 func (r Route) IsTCP() bool { return len(r.TCPPorts) > 0 }
 
@@ -181,6 +222,9 @@ func routesOf(ctx context.Context, inspect inspector, cs []container.Summary, tl
 		}
 		return routes[i].Container < routes[j].Container
 	})
+	if id, _ := findStackContainer(cs, "traefik"); id == "" {
+		return markStackDown(routes)
+	}
 	return routes
 }
 
