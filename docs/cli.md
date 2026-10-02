@@ -322,27 +322,32 @@ There is no clipboard flag.
 one entry per table row, with every name the route answers on as its own field
 instead of display text. It exists for tools that make proximo's names reachable
 somewhere proximo's DNS does not answer — a dev container pinning them in its
-`/etc/hosts`, for one. The derivation of a
-[qualified host](routing.md#the-two-hosts-every-route-gets) is proximo's, and a
-tool that re-derives it from labels is how it goes missing.
+`/etc/hosts`, for one. Deriving a
+[qualified host](routing.md#the-two-hosts-every-route-gets) is proximo's job,
+so such a tool reads the names here rather than from labels.
 
 ```json
 {"routes": [
   {"container": "shop-api-1", "scheme": "https", "bare": "api.test", "qualified": "api.shop.test",
    "peer": {"bare": "api.studio-01.mesh.internal", "qualified": "api.shop.studio-01.mesh.internal"}},
-  {"container": "work-api-1", "scheme": "https", "qualified": "api.work.test",
+  {"container": "work-api-1", "qualified": "api.work.test",
    "collision": {"host": "api.test", "served_by": "shop-api-1"}},
-  {"container": "multi", "warning": "set proximo.port (exposes 2 TCP ports)"},
+  {"container": "multi", "claimed": "multi.test", "warning": "set proximo.port (exposes 2 TCP ports)"},
   {"container": "shop-worker-1", "note": "no route — observed for Incidents (proximo.transcript), service shop/worker"}
 ]}
 ```
 
-- An entry lists **only the names the route answers on**. A container that lost
-  a [Collision](troubleshooting.md#a-host-collision-is-reported) has no `bare`,
-  keeps its `qualified`, and names the winner under `collision`; a flagged row
-  carries its `warning` and no name at all; an observed container carries its
-  `note`.
-- `scheme` is `https` or `tcp` (an [SNI route](routing.md#proximotcpport--route-tcp-services-by-name-sni)).
+- `bare` and `qualified` are **only names the route answers on**; a name it
+  claims and does not get is kept apart. A container that lost a
+  [Collision](troubleshooting.md#a-host-collision-is-reported) carries the host
+  under `collision`, with the claimant that kept it, and keeps `qualified` when
+  it still answers there — an entry with neither is a container that lost every
+  host it declared. A flagged row (starting, unhealthy, an ambiguous port)
+  carries the host as `claimed` with its `warning`; an observed container
+  carries only its `note`.
+- `scheme` is `https` or `tcp` (an [SNI route](routing.md#proximotcpport--route-tcp-services-by-name-sni)),
+  on a served entry; `path` is the [`proximo.path`](routing.md#proximopath--split-one-host-across-containers)
+  prefix, when the route has one.
 - `peer` holds the [peer names](sharing.md) only when the route is served on
   them, kept apart from the `.test` hosts so a tool pins only the names it means
   to.

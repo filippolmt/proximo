@@ -17,6 +17,7 @@ func TestStatusJSON(t *testing.T) {
 			Collision: true, CollisionOwner: "shop-api-1"},
 		{Container: "db", Host: "db.test", Qualified: "db.shop.test", TCPPorts: []int{5432}, TLSMode: "terminate"},
 		{Container: "web", Host: "web.test", Note: "starting"},
+		{Container: "shop-docs-1", Host: "app.test", Qualified: "app.shop.test", Path: "/docs", URL: "https://app.test/docs"},
 		{Container: "worker", Observed: true, Note: "no route — observed"},
 	}
 	got, err := json.Marshal(statusJSON(routes))
@@ -25,9 +26,10 @@ func TestStatusJSON(t *testing.T) {
 	}
 	want := `{"routes":[` +
 		`{"container":"shop-api-1","scheme":"https","bare":"api.test","qualified":"api.shop.test","peer":{"bare":"api.m.mesh.internal","qualified":"api.shop.m.mesh.internal"}},` +
-		`{"container":"work-api-1","scheme":"https","qualified":"api.work.test","collision":{"host":"api.test","served_by":"shop-api-1"}},` +
+		`{"container":"work-api-1","qualified":"api.work.test","collision":{"host":"api.test","served_by":"shop-api-1"}},` +
 		`{"container":"db","scheme":"tcp","bare":"db.test","qualified":"db.shop.test"},` +
-		`{"container":"web","warning":"starting"},` +
+		`{"container":"web","claimed":"web.test","warning":"starting"},` +
+		`{"container":"shop-docs-1","scheme":"https","bare":"app.test","qualified":"app.shop.test","path":"/docs"},` +
 		`{"container":"worker","note":"no route — observed"}]}`
 	if string(got) != want {
 		t.Errorf("statusJSON =\n%s\nwant\n%s", got, want)

@@ -62,12 +62,15 @@ type Route struct {
 	PeerQualified string
 }
 
+// IsTCP reports a TCP-over-TLS (SNI) route, as opposed to an HTTP one.
+func (r Route) IsTCP() bool { return len(r.TCPPorts) > 0 }
+
 // Display renders the route's target for `proximo status`: the HTTPS URL for an
 // HTTP route, or a `tcp://host:ports (mode)` summary for a TCP-over-TLS route,
 // suffixed with a balanced marker when more than one backend serves it.
 func (r Route) Display() string {
 	s := r.URL
-	if len(r.TCPPorts) > 0 {
+	if r.IsTCP() {
 		ports := make([]string, len(r.TCPPorts))
 		for i, p := range r.TCPPorts {
 			ports[i] = strconv.Itoa(p)
