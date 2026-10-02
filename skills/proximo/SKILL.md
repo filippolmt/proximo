@@ -78,4 +78,5 @@ a slow first job from being reported unhealthy on the way there.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another
-container. Put the qualified host in `--host` and in `curl`.
+container. Put the qualified host in `--host` and in `curl`, and read it from
+`proximo status --json` (`qualified`) rather than out of the table.

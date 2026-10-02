@@ -1462,10 +1462,11 @@ func sanitizeName(name string) string {
 // the outcome and names the claimant — the watcher logs it and `proximo status`
 // shows it, so the two never tell different stories.
 type hostCollision struct {
-	name string // the container that did not get the host
-	host string // the host it did not get
-	path string // the path prefix both claimed ("" = bare host)
-	note string // why, naming the claimant
+	name  string // the container that did not get the host
+	host  string // the host it did not get
+	path  string // the path prefix both claimed ("" = bare host)
+	owner string // the claimant that kept the host
+	note  string // why, naming the claimant
 }
 
 // replicaKey identifies containers that back the same logical service — same
@@ -1641,7 +1642,7 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 	for _, l := range losses {
 		g := groups[l.group]
 		collisions = append(collisions, hostCollision{
-			name: g.name, host: l.host, path: g.path,
+			name: g.name, host: l.host, path: g.path, owner: l.owner,
 			note: g.collisionNote(l.host, l.owner, l.native, survivors[l.group]),
 		})
 	}

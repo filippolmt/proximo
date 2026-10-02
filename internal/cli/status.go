@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -52,7 +53,8 @@ func writeInspectionNotes(out io.Writer, routes []docker.Route) {
 }
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "List routed containers and their URLs",
 		Args:  cobra.NoArgs,
@@ -81,6 +83,11 @@ func newStatusCmd() *cobra.Command {
 			routes, err := docker.Routes(ctx, cfg.TLD, peer)
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				return enc.Encode(statusJSON(routes))
 			}
 			if len(routes) == 0 {
 				fmt.Fprintln(out, "No routed containers.")
@@ -129,6 +136,8 @@ func newStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit every name each route answers on as JSON, for tools that pin them")
+	return cmd
 }
 
 // peerCell renders a route's PEER cell, mirroring the URL cell: the Bare peer

@@ -50,6 +50,8 @@ type Route struct {
 	// collision to its own explanation without pattern-matching prose that is
 	// written for a human.
 	Collision bool
+	// CollisionOwner names the claimant that kept the host, on a Collision row.
+	CollisionOwner string
 	// Share is proximo.share on an HTTP route; ShareTCP the same label on a TCP
 	// route, where it is ignored. Peer and PeerQualified are the peer names
 	// the row's hosts answer on, set only when the route is served on them.
@@ -214,11 +216,13 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 	}
 	var routes []Route
 	for _, c := range resolved.collisions {
-		r := Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true}
-		// A container that lost its Bare host keeps only its Qualified peer
-		// name; the Collision itself speaks in URL.
+		r := Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true, CollisionOwner: c.owner}
+		// A container that lost its Bare host keeps only its Qualified host and
+		// Qualified peer name; the Collision itself speaks in URL. The table
+		// prints Note on this row, so Qualified is read only by `status --json`.
 		for _, rc := range resolved.kept {
 			if rc.name == c.name && rc.path == c.path {
+				r.Qualified = rc.servedQualified(c.host)
 				r.Share = rc.share
 				r.PeerQualified = peerName(rc, rc.servedQualified(c.host))
 			}

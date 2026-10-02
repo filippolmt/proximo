@@ -129,6 +129,23 @@ func TestServedRoutes(t *testing.T) {
 	}
 }
 
+// TestServedRoutesCollisionRowCarriesWhatItKeeps: the loser's row names the
+// claimant that kept the bare host and the qualified host the loser still
+// answers on, as fields — `status --json` must not read them out of the note.
+func TestServedRoutesCollisionRowCarriesWhatItKeeps(t *testing.T) {
+	resolved := routeResolution{
+		kept: []routedContainer{{
+			name: "work-api-1", hosts: []string{"api.work.test"}, port: 80, proximo: true,
+			ns: "work", qual: map[string]string{"api.test": "api.work.test"},
+		}},
+		collisions: []hostCollision{{name: "work-api-1", host: "api.test", owner: "shop-api-1", note: "api.test is served by shop-api-1"}},
+	}
+	routes := servedRoutes(resolved, nil, nil, "test", PeerNames{})
+	if len(routes) < 1 || routes[0].CollisionOwner != "shop-api-1" || routes[0].Qualified != "api.work.test" {
+		t.Fatalf("collision row = %+v, want owner shop-api-1 and qualified api.work.test", routes)
+	}
+}
+
 // TestServedRoutesDropsWithdrawnQualified: a qualified host that went to another
 // claimant must not be advertised on the bare host's row.
 func TestServedRoutesDropsWithdrawnQualified(t *testing.T) {
