@@ -52,7 +52,8 @@ func writeInspectionNotes(out io.Writer, routes []docker.Route) {
 }
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "List routed containers and their URLs",
 		Args:  cobra.NoArgs,
@@ -74,12 +75,23 @@ func newStatusCmd() *cobra.Command {
 			// Peer names are printed only when the route is served on them:
 			// with any value missing, the cell names what is missing instead.
 			missing := docker.PeerMissing(cfg)
+			// The same rule the watcher serves peer routers by, so the --json
+			// document and the inventory file agree; a missing address still
+			// warns in the PEER cell, because the names then resolve nowhere.
 			peer := docker.PeerNames{}
-			if len(missing) == 0 {
+			if docker.PeerServed(missing) {
 				peer = docker.PeerNames{Machine: cfg.Machine, Suffix: cfg.PeerSuffix}
 			}
 			routes, err := docker.Routes(ctx, cfg.TLD, peer)
 			if err != nil {
+				return err
+			}
+			if asJSON {
+				data, err := docker.NewInventory(routes).MarshalIndent()
+				if err != nil {
+					return err
+				}
+				_, err = out.Write(data)
 				return err
 			}
 			if len(routes) == 0 {
@@ -107,10 +119,10 @@ func newStatusCmd() *cobra.Command {
 				val := r.Display()
 				// An observed container's row is a fact about the inventory, not
 				// a warning: nothing is wrong with a worker that has no route.
-				switch {
-				case r.Observed:
+				switch r.Kind() {
+				case docker.RowObserved:
 					val = r.Note
-				case r.Note != "":
+				case docker.RowCollision, docker.RowFlagged:
 					val = warnPrefix + r.Note
 				}
 				cells := []string{r.Container, val}
@@ -129,6 +141,8 @@ func newStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit every name each route answers on as JSON, for tools that pin them")
+	return cmd
 }
 
 // peerCell renders a route's PEER cell, mirroring the URL cell: the Bare peer

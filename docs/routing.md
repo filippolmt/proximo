@@ -572,9 +572,10 @@ auth, CORS, and custom response headers. You can mix schemes across containers
 freely.
 
 > **Avoid declaring the same host in both schemes.** If a host appears in both a
-> `proximo.hosts` label and a native `traefik.*` router rule, Traefik sees a
-> duplicate router across providers; the watcher logs a warning (see
-> [where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings)).
+> `proximo.hosts` label and a native `traefik.*` router rule, proximo withdraws
+> its own router and the native rule serves the host alone; `proximo status`
+> lists the host under the container carrying the rule and reports the withdrawal
+> (see [a host collision is reported](troubleshooting.md#a-host-collision-is-reported)).
 > Use one scheme per host.
 
 ## Multiple networks

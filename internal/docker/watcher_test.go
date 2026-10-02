@@ -1340,6 +1340,9 @@ func TestResolveRouteCollisions(t *testing.T) {
 	if len(collisions) != 1 || collisions[0].name != "zzz" || collisions[0].host != "app.test" || collisions[0].path != "/api" {
 		t.Fatalf("collision = %+v, want {zzz app.test /api}", collisions)
 	}
+	if collisions[0].owner != "api" {
+		t.Errorf("collision owner = %q, want the claimant that kept the host (api)", collisions[0].owner)
+	}
 
 	// Native routes never lose a host (Traefik's Docker provider owns them).
 	nat1 := routedContainer{name: "n1", hosts: []string{"x.test"}}

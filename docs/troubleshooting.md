@@ -235,7 +235,8 @@ one of the two claims was its own:
   by hand the name proximo would have generated. The hand-written declaration wins.
 - `api.test is matched by a traefik.* rule on <name>; proximo withdrew its
   router` — a native Traefik label already routes that host, whether on that
-  container or on another. Use one scheme per host
+  container or on another. The host stays served, and `status` lists it under
+  the container carrying the rule. Use one scheme per host
   ([native Traefik labels](routing.md#native-traefik-labels-backward-compatible)).
 
 A container **outside a Compose project** has no Namespace, so it has no

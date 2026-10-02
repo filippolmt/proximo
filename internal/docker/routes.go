@@ -50,6 +50,8 @@ type Route struct {
 	// collision to its own explanation without pattern-matching prose that is
 	// written for a human.
 	Collision bool
+	// CollisionOwner names the claimant that kept the host, on a Collision row.
+	CollisionOwner string
 	// Share is proximo.share on an HTTP route; ShareTCP the same label on a TCP
 	// route, where it is ignored. Peer and PeerQualified are the peer names
 	// the row's hosts answer on, set only when the route is served on them.
@@ -60,12 +62,58 @@ type Route struct {
 	PeerQualified string
 }
 
+// RowKind is what a status row says about its Host. It is derived in one place
+// so every reader of the rows — the table, the inventory — agrees on it.
+type RowKind int
+
+const (
+	RowServed    RowKind = iota // the route answers on Host
+	RowObserved                 // a container proximo observes and does not route
+	RowCollision                // Host went to another claimant
+	RowFlagged                  // opted in and not served: starting, unhealthy, an unresolved port, the stack down
+)
+
+// Kind classifies the row: a Note on a row that is neither observed nor a
+// Collision is the reason it is not served.
+func (r Route) Kind() RowKind {
+	switch {
+	case r.Observed:
+		return RowObserved
+	case r.Collision:
+		return RowCollision
+	case r.Note != "":
+		return RowFlagged
+	}
+	return RowServed
+}
+
+// NoteStackDown flags every would-be route while the stack's Traefik is not
+// running: nothing answers on any name. No command in it: status never prints
+// a Remedy, and `proximo doctor` names this one.
+const NoteStackDown = "not served — the stack's Traefik is not running"
+
+// markStackDown flags the rows that would be served, for a stack whose Traefik
+// is not running, and takes every name off every row: nothing answers on any.
+// A Collision keeps its host and claimant, which diagnose rather than serve.
+func markStackDown(routes []Route) []Route {
+	for i, r := range routes {
+		if r.Kind() == RowServed {
+			routes[i].Note, routes[i].URL = NoteStackDown, ""
+		}
+		routes[i].Qualified, routes[i].Peer, routes[i].PeerQualified = "", "", ""
+	}
+	return routes
+}
+
+// IsTCP reports a TCP-over-TLS (SNI) route, as opposed to an HTTP one.
+func (r Route) IsTCP() bool { return len(r.TCPPorts) > 0 }
+
 // Display renders the route's target for `proximo status`: the HTTPS URL for an
 // HTTP route, or a `tcp://host:ports (mode)` summary for a TCP-over-TLS route,
 // suffixed with a balanced marker when more than one backend serves it.
 func (r Route) Display() string {
 	s := r.URL
-	if len(r.TCPPorts) > 0 {
+	if r.IsTCP() {
 		ports := make([]string, len(r.TCPPorts))
 		for i, p := range r.TCPPorts {
 			ports[i] = strconv.Itoa(p)
@@ -106,8 +154,12 @@ func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 	if err != nil {
 		return nil, err
 	}
-	cs := res.Items
+	return routesOf(ctx, cli.ContainerInspect, res.Items, tld, peer), nil
+}
 
+// routesOf is Routes over a container list the caller already holds — the
+// watcher's, which writes the same rows to the inventory every reconcile.
+func routesOf(ctx context.Context, inspect inspector, cs []container.Summary, tld string, peer PeerNames) []Route {
 	routes := dashboardRoutes(cs, tld)
 	var served []routedContainer
 	// Reasons a proximo.inspect label could not be honoured, keyed by container.
@@ -119,7 +171,7 @@ func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 		if !isRouted(c) {
 			continue
 		}
-		rc, ok, info := classify(ctx, cli.ContainerInspect, c, tld)
+		rc, ok, info := classify(ctx, inspect, c, tld)
 		if !ok && !info.portFailed {
 			continue // not a host route (e.g. a native container with no Host rule)
 		}
@@ -172,7 +224,10 @@ func Routes(ctx context.Context, tld string, peer PeerNames) ([]Route, error) {
 		}
 		return routes[i].Container < routes[j].Container
 	})
-	return routes, nil
+	if id, _ := findStackContainer(cs, "traefik"); id == "" {
+		return markStackDown(routes)
+	}
+	return routes
 }
 
 // observedRoutes lists the containers proximo observes without routing: the ones
@@ -214,16 +269,23 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 	}
 	var routes []Route
 	for _, c := range resolved.collisions {
-		r := Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true}
-		// A container that lost its Bare host keeps only its Qualified peer
-		// name; the Collision itself speaks in URL.
+		r := Route{Container: c.name, Host: c.host, Path: c.path, Note: c.note, Collision: true, CollisionOwner: c.owner}
+		// A container that lost its Bare host keeps only its Qualified host and
+		// Qualified peer name; the Collision itself speaks in URL. The table
+		// prints Note on this row, so Qualified is read only by `status --json`.
 		for _, rc := range resolved.kept {
 			if rc.name == c.name && rc.path == c.path {
+				r.Qualified = rc.servedQualified(c.host)
 				r.Share = rc.share
 				r.PeerQualified = peerName(rc, rc.servedQualified(c.host))
 			}
 		}
 		routes = append(routes, r)
+	}
+	// Traefik's own provider serves these; the row says only that the host
+	// answers, since proximo does not parse the rule's matchers.
+	for _, n := range resolved.proximoNatives {
+		routes = append(routes, Route{Container: n.name, Host: n.host, URL: "https://" + n.host})
 	}
 	for _, rc := range resolved.kept {
 		backends := len(rc.backends())

@@ -267,6 +267,9 @@ type Watcher struct {
 	caCert     *x509.Certificate
 	caKey      *ecdsa.PrivateKey
 	dynamicDir string
+	// inventoryDir is where the effective-route inventory is kept current for
+	// tools that read it without running the CLI ("" = not written).
+	inventoryDir string
 	// tld is the configured proximo TLD (from PROXIMO_TLD), used to build the
 	// dashboard self-route host traefik.<tld>.
 	tld string
@@ -308,11 +311,14 @@ func NewWatcher() (*Watcher, error) {
 	w := &Watcher{
 		cli:        cli,
 		dynamicDir: getenv("PROXIMO_DYNAMIC_DIR", "/etc/traefik/dynamic"),
-		caDir:      filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
-		tld:        getenv("PROXIMO_TLD", config.DefaultTLD),
-		lastHosts:  map[string]string{},
-		authHashes: map[string]string{},
-		incidents:  NewIncidentStore(0, 0),
+		// Unset on a stack materialized before the inventory existed: then
+		// there is no mount to write into, and nothing is written.
+		inventoryDir: os.Getenv("PROXIMO_INVENTORY_DIR"),
+		caDir:        filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
+		tld:          getenv("PROXIMO_TLD", config.DefaultTLD),
+		lastHosts:    map[string]string{},
+		authHashes:   map[string]string{},
+		incidents:    NewIncidentStore(0, 0),
 	}
 
 	caCert, caKey, err := tls.LoadCA(
@@ -335,8 +341,12 @@ func (w *Watcher) Incidents() *IncidentStore { return w.incidents }
 func (w *Watcher) Run(ctx context.Context) error {
 	// Sweep temp files a prior crash mid-write may have stranded: atomicWrite
 	// removes its own temps, so only a hard kill leaves one behind — one sweep at
-	// startup is enough (covers the certs dir and the dynamic root).
+	// startup is enough (covers the certs dir, the dynamic root and the
+	// inventory, whose directory consumers mount).
 	cleanStrayTemps(filepath.Join(w.dynamicDir, "certs"), w.dynamicDir)
+	if w.inventoryDir != "" {
+		cleanStrayTemps(w.inventoryDir)
+	}
 	w.reconcileLogged(ctx)
 	w.restartPeerDNS(ctx)
 
@@ -357,6 +367,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			// Stopping the watcher is stopping the stack: say it serves nothing
+			// now, while there is still someone to say it. A kill skips this;
+			// the restart policy brings the watcher back to rewrite it.
+			w.writeInventory(nil)
 			return ctx.Err()
 		case <-ticker.C:
 			w.reconcileLogged(ctx)
@@ -421,10 +435,15 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	}
 	containers := result.Items
 	w.noteHealthy(containers)
+	// One answer per container for the whole pass, so the routers written and
+	// the inventory published cannot disagree over a transient inspect failure.
+	inspect := memoInspect(w.cli.ContainerInspect)
 
 	traefikID, traefikNets := findStackContainer(containers, "traefik")
 	if traefikID == "" {
-		return nil // Traefik not running yet.
+		// Traefik not running yet: the inventory says every route is down.
+		w.writeInventory(routesOf(ctx, inspect, containers, w.tld, PeerNames{}))
+		return nil
 	}
 	// The hop needs the same reach as Traefik, but only into the projects it
 	// actually serves. An absent id means an older stack with no hop: Inspection
@@ -455,7 +474,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 				inspectDesired[netID] = true
 			}
 		}
-		if rc, ok := w.buildRouted(ctx, c); ok {
+		if rc, ok := w.buildRouted(ctx, inspect, c); ok {
 			routed = append(routed, rc)
 		}
 	}
@@ -489,7 +508,37 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 
 	w.syncDynamic(routed)
 	w.syncCerts(routed)
+	// The same rows `proximo status` prints, from the same classifier and the
+	// same inspections; the peer names are the ones this pass served.
+	w.writeInventory(routesOf(ctx, inspect, containers, w.tld, w.peer.Names()))
 	return nil
+}
+
+// memoInspect answers each container once — errors included — for the life of
+// the returned inspector: one reconcile pass.
+func memoInspect(inspect inspector) inspector {
+	type answer struct {
+		res client.ContainerInspectResult
+		err error
+	}
+	seen := map[string]answer{}
+	return func(ctx context.Context, id string, opts client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
+		if a, ok := seen[id]; ok {
+			return a.res, a.err
+		}
+		res, err := inspect(ctx, id, opts)
+		seen[id] = answer{res, err}
+		return res, err
+	}
+}
+
+func (w *Watcher) writeInventory(routes []Route) {
+	if w.inventoryDir == "" {
+		return
+	}
+	if _, err := WriteInventory(w.inventoryDir, NewInventory(routes)); err != nil {
+		log.Printf("proximo watcher: inventory not written: %v", err)
+	}
 }
 
 // sharePeers gives every shared route its peer names, from the hosts it serves
@@ -675,8 +724,8 @@ func classify(ctx context.Context, inspect inspector, c container.Summary, tld s
 // through the watcher's Docker client and logs the diagnostics classify returns.
 // ok=false means the container gets no route/cert (e.g. ambiguous port, or a
 // native container with no Host rule).
-func (w *Watcher) buildRouted(ctx context.Context, c container.Summary) (routedContainer, bool) {
-	rc, ok, info := classify(ctx, w.cli.ContainerInspect, c, w.tld)
+func (w *Watcher) buildRouted(ctx context.Context, inspect inspector, c container.Summary) (routedContainer, bool) {
+	rc, ok, info := classify(ctx, inspect, c, w.tld)
 	for _, h := range info.invalidHosts {
 		log.Printf("proximo watcher: container %s: ignoring invalid host %q in %s", rc.name, h, proximoHostsLabel)
 	}
@@ -1462,10 +1511,11 @@ func sanitizeName(name string) string {
 // the outcome and names the claimant — the watcher logs it and `proximo status`
 // shows it, so the two never tell different stories.
 type hostCollision struct {
-	name string // the container that did not get the host
-	host string // the host it did not get
-	path string // the path prefix both claimed ("" = bare host)
-	note string // why, naming the claimant
+	name  string // the container that did not get the host
+	host  string // the host it did not get
+	path  string // the path prefix both claimed ("" = bare host)
+	owner string // the claimant that kept the host
+	note  string // why, naming the claimant
 }
 
 // replicaKey identifies containers that back the same logical service — same
@@ -1520,7 +1570,15 @@ type routeResolution struct {
 	merges         []routeMerge
 	collisions     []hostCollision
 	inspectDropped []string // routes whose proximo.inspect could not be honoured
+	// proximoNatives are the hosts a traefik.* rule on a proximo container
+	// matches, by container. Traefik's own provider serves them, and no kept
+	// route lists them: the proximo router either never claimed them or
+	// withdrew, possibly taking the whole container out of kept.
+	proximoNatives []nativeHost
 }
+
+// nativeHost is a host a traefik.* rule on container name matches.
+type nativeHost struct{ name, host string }
 
 // resolveRoutes merges replica containers and settles host collisions.
 // Containers with identical routing config (see replicaKey) but different
@@ -1590,9 +1648,13 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 	// provider: it withdraws. Native rules are keyed by host alone because proximo
 	// does not parse their path matchers.
 	nativeRule := map[string]string{}
+	var proximoNatives []nativeHost
 	for _, g := range groups {
 		for _, h := range g.natives {
 			nativeRule[h] = g.name
+			if g.proximo {
+				proximoNatives = append(proximoNatives, nativeHost{name: g.name, host: h})
+			}
 		}
 	}
 
@@ -1641,7 +1703,7 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 	for _, l := range losses {
 		g := groups[l.group]
 		collisions = append(collisions, hostCollision{
-			name: g.name, host: l.host, path: g.path,
+			name: g.name, host: l.host, path: g.path, owner: l.owner,
 			note: g.collisionNote(l.host, l.owner, l.native, survivors[l.group]),
 		})
 	}
@@ -1657,7 +1719,7 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 		g.hosts = survivors[i]
 		kept = append(kept, *g)
 	}
-	return routeResolution{kept: kept, merges: merges, collisions: collisions, inspectDropped: inspectDropped}
+	return routeResolution{kept: kept, merges: merges, collisions: collisions, inspectDropped: inspectDropped, proximoNatives: proximoNatives}
 }
 
 // collisionNote explains, in one line a developer can act on, why rc did not get

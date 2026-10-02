@@ -21,6 +21,7 @@ proximo <command> [args]
 | [`doctor`](#proximo-doctor) | Report every check, with a remedy per failure | no | no |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
+| [`config inventory-dir`](#proximo-config-inventory-dir) | Print the directory holding the effective-route inventory | no | no |
 | [`config machine <label>`](#proximo-config-machine) | Set this machine's label in its peer names | no | no |
 | [`config peer-suffix <suffix>`](#proximo-config-peer-suffix) | Set the suffix every peer name lives under | no | no |
 | [`config address <ip>`](#proximo-config-address) | Set the mesh address this machine's peer names answer with | no | no |
@@ -268,8 +269,19 @@ shop-web-1      https://app.test  + app.shop.test
 shop-worker-1   no route — observed for Incidents (proximo.transcript), service shop/worker
 ```
 
-Prints `No routed containers.` when nothing is exposed — which implies the
-stack is down, since a running stack always serves the dashboard route.
+Prints `No routed containers.` when nothing is exposed. While the stack's
+Traefik is not running, nothing answers on any name, so every route that would
+be served is flagged instead of listed as a URL:
+
+```
+CONTAINER   URL
+shop-api-1  ⚠ not served — the stack's Traefik is not running
+```
+
+A host a `traefik.*` rule on a proximo container matches is listed as served by
+that container, with no qualified host: Traefik's own provider answers it, and
+proximo withdrew its router there (see
+[a host collision is reported](troubleshooting.md#a-host-collision-is-reported)).
 
 `status` is an **inventory**: it answers *what is running*, and it never prints
 a Remedy. Version skew, an `--image` override and a broken resolver are
@@ -314,7 +326,52 @@ web            https://app.test  + app.shop.test            ⚠ proximo.share is
 - `(balanced ×N)` is never repeated in `PEER`: it is a property of the service.
 - `proximo.path` is not printed, here or in `URL`.
 
-There is no clipboard flag and no `status --json`.
+There is no clipboard flag.
+
+### --json
+
+`proximo status --json` is the same inventory for a tool rather than a person:
+one entry per table row, with every name the route answers on as its own field
+instead of display text. It exists for tools that make proximo's names reachable
+somewhere proximo's DNS does not answer — a dev container pinning them in its
+`/etc/hosts`, for one. The watcher keeps the same document in a file, for tools
+that cannot run the CLI: see
+[`config inventory-dir`](#proximo-config-inventory-dir). Deriving a
+[qualified host](routing.md#the-two-hosts-every-route-gets) is proximo's job,
+so such a tool reads the names here rather than from labels.
+
+```json
+{"routes": [
+  {"container": "shop-api-1", "scheme": "https", "bare": "api.test", "qualified": "api.shop.test",
+   "peer": {"bare": "api.studio-01.mesh.internal", "qualified": "api.shop.studio-01.mesh.internal"}},
+  {"container": "work-api-1", "qualified": "api.work.test",
+   "collision": {"host": "api.test", "served_by": "shop-api-1"}},
+  {"container": "multi", "claimed": "multi.test", "warning": "set proximo.port (exposes 2 TCP ports)"},
+  {"container": "shop-worker-1", "note": "no route — observed for Incidents (proximo.transcript), service shop/worker"}
+]}
+```
+
+- The stack's own dashboard, `traefik.<tld>`, is an entry like any other: it is
+  served, so a tool pinning names pins it too.
+- `bare` and `qualified` are **only names the route answers on**; a name it
+  claims and does not get is kept apart. A container that lost a
+  [Collision](troubleshooting.md#a-host-collision-is-reported) carries the host
+  under `collision`, with the claimant that kept it, and keeps `qualified` when
+  it still answers there — an entry with neither is a container that lost every
+  host it declared. A flagged row (starting, unhealthy, an ambiguous port)
+  carries the host as `claimed` with its `warning`; an observed container
+  carries only its `note`.
+- `scheme` is `https` or `tcp` (an [SNI route](routing.md#proximotcpport--route-tcp-services-by-name-sni)),
+  on a served entry; `path` is the [`proximo.path`](routing.md#proximopath--split-one-host-across-containers)
+  prefix, when the route has one.
+- `peer` holds the [peer names](sharing.md) only when the route is served on
+  them, kept apart from the `.test` hosts so a tool pins only the names it means
+  to. They are present even before `address` is set — Traefik answers on them —
+  though the `PEER` column then warns, because they resolve nowhere yet.
+- **The contract**: a field is omitted when it has no value; fields are only ever
+  added, never renamed or removed. Exit codes and stderr are the table's, and on
+  exit 0 stdout is always one JSON document — `{"routes": []}` when nothing is
+  exposed. Inspection notes are not part of it.
 
 ## proximo doctor
 
@@ -641,6 +698,36 @@ of hardcoding the state-home layout. The path is printed even when the file
 does not exist yet (proximo not installed yet), so callers must check existence
 themselves; the command itself is side-effect free and never creates
 directories.
+
+## proximo config inventory-dir
+
+Print the absolute path of the directory holding the effective-route inventory:
+
+```sh
+proximo config inventory-dir
+# /Users/you/.proximo/data/inventory
+```
+
+The directory holds `routes.json`, the [`status --json`](#--json) document. The
+watcher keeps it current: it rewrites the file on every reconcile where the
+content changed, and never otherwise. It is the same contract as `ca-path`, for
+a tool that must follow routes **while** they change without running the CLI —
+a dev container re-pinning names as projects start and stop, for one.
+
+- **Mount the directory, not the file.** The file is replaced atomically, by
+  rename, so a reader never sees half a document. A bind mount of the file itself
+  would keep the inode it first saw and never see an update.
+- **Stopped means empty.** The watcher writes `{"routes": []}` as it stops, and
+  `proximo down` writes it again in case the watcher was already gone, so a
+  consumer drops its names rather than pinning ones nothing answers on. While
+  Traefik is not running, every would-be route is a flagged entry and no entry
+  carries a name — a Collision keeps only its `collision`.
+- **A pass that fails changes nothing.** If the watcher cannot list containers,
+  the file keeps the last inventory until the next pass (at most 30 seconds).
+- **An existing install** gets the file after `proximo up` (or `proximo update`)
+  re-materializes the stack; until then nothing is written.
+- The path is printed even before `proximo install` creates it, and the command
+  never creates directories.
 
 ## proximo config machine
 
