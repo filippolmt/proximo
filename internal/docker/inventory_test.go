@@ -100,3 +100,27 @@ func TestMemoInspect(t *testing.T) {
 		t.Errorf("inspect reached Docker %d times, want 1", calls)
 	}
 }
+
+// TestInventoryStackDownPublishesNoName: with Traefik down nothing answers, so
+// no entry may carry a pinnable name — not the collision loser's qualified host
+// nor any peer name. The collision itself stays, for diagnosis.
+func TestInventoryStackDownPublishesNoName(t *testing.T) {
+	rows := markStackDown([]Route{
+		{Container: "shop-api-1", Host: "api.test", Qualified: "api.shop.test", URL: "https://api.test",
+			Share: true, Peer: "api.m.mesh.internal", PeerQualified: "api.shop.m.mesh.internal"},
+		{Container: "work-api-1", Host: "api.test", Qualified: "api.work.test", Note: "api.test is served by shop-api-1",
+			Collision: true, CollisionOwner: "shop-api-1", Share: true, PeerQualified: "api.work.m.mesh.internal"},
+		{Container: "worker", Observed: true, Note: "no route — observed"},
+	})
+	got, err := json.Marshal(NewInventory(rows))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"routes":[` +
+		`{"container":"shop-api-1","claimed":"api.test","warning":"` + NoteStackDown + `"},` +
+		`{"container":"work-api-1","collision":{"host":"api.test","served_by":"shop-api-1"}},` +
+		`{"container":"worker","note":"no route — observed"}]}`
+	if string(got) != want {
+		t.Errorf("stack-down inventory =\n%s\nwant\n%s", got, want)
+	}
+}

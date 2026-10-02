@@ -93,12 +93,14 @@ func (r Route) Kind() RowKind {
 const NoteStackDown = "not served — the stack's Traefik is not running"
 
 // markStackDown flags the rows that would be served, for a stack whose Traefik
-// is not running. Collisions and observed containers keep their own rows.
+// is not running, and takes every name off every row: nothing answers on any.
+// A Collision keeps its host and claimant, which diagnose rather than serve.
 func markStackDown(routes []Route) []Route {
 	for i, r := range routes {
 		if r.Kind() == RowServed {
 			routes[i].Note, routes[i].URL = NoteStackDown, ""
 		}
+		routes[i].Qualified, routes[i].Peer, routes[i].PeerQualified = "", "", ""
 	}
 	return routes
 }

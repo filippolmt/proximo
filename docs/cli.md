@@ -720,7 +720,8 @@ a dev container re-pinning names as projects start and stop, for one.
 - **Stopped means empty.** The watcher writes `{"routes": []}` as it stops, and
   `proximo down` writes it again in case the watcher was already gone, so a
   consumer drops its names rather than pinning ones nothing answers on. While
-  Traefik is not running, every would-be route is a flagged entry.
+  Traefik is not running, every would-be route is a flagged entry and no entry
+  carries a name — a Collision keeps only its `collision`.
 - **A pass that fails changes nothing.** If the watcher cannot list containers,
   the file keeps the last inventory until the next pass (at most 30 seconds).
 - **An existing install** gets the file after `proximo up` (or `proximo update`)

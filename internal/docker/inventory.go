@@ -56,6 +56,7 @@ func NewInventory(routes []Route) Inventory {
 			e.Note = r.Note
 		case RowCollision:
 			e.Qualified = r.Qualified
+			e.Peer = inventoryPeer(r)
 			e.Collision = &InventoryCollision{Host: r.Host, ServedBy: r.CollisionOwner}
 		case RowFlagged:
 			e.Claimed = r.Host
@@ -67,13 +68,20 @@ func NewInventory(routes []Route) Inventory {
 			}
 			e.Bare = r.Host
 			e.Qualified = r.Qualified
-		}
-		if r.Peer != "" || r.PeerQualified != "" {
-			e.Peer = &InventoryPeer{Bare: r.Peer, Qualified: r.PeerQualified}
+			e.Peer = inventoryPeer(r)
 		}
 		inv.Routes = append(inv.Routes, e)
 	}
 	return inv
+}
+
+// inventoryPeer is a row's peer names, nil when it has none. Only a row that
+// answers on a name carries any: a flagged or observed row never does.
+func inventoryPeer(r Route) *InventoryPeer {
+	if r.Peer == "" && r.PeerQualified == "" {
+		return nil
+	}
+	return &InventoryPeer{Bare: r.Peer, Qualified: r.PeerQualified}
 }
 
 // MarshalIndent is the inventory's one encoding, shared by the CLI and the file
