@@ -82,6 +82,10 @@ compiler will not enforce:
   it may be repository-relative:
   [The published skill](docs/development.md#the-published-skill-skills),
   [docs/adr/0005](docs/adr/0005-the-agent-skill-ships-in-the-cli.md)
+- Any change to a command, a label or an output: check `skills/proximo/SKILL.md`
+  against it. Agents outside this repository (e.g. inside toolbox) operate proximo
+  through the Skill, and `make skill-refs` guards only the generated `references/`,
+  never the hand-written `SKILL.md`
 - Version → image ref (`imageRef()` re-adds the `v` GoReleaser strips, and pins
   the stack image to the CLI version):
   [Version and image ref](docs/development.md#version-and-image-ref)
