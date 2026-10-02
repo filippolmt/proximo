@@ -146,6 +146,31 @@ func TestServedRoutesCollisionRowCarriesWhatItKeeps(t *testing.T) {
 	}
 }
 
+// TestServedRoutesListsNativeHostsOfProximoContainers: a host a traefik.* rule
+// on a proximo container matches is served by Traefik's own provider, so it is
+// listed as served — including when proximo withdrew its own router on it,
+// which used to leave the name in no row at all.
+func TestServedRoutesListsNativeHostsOfProximoContainers(t *testing.T) {
+	both := routedContainer{name: "aaa", hosts: []string{"x.test"}, natives: []string{"x.test"}, proximo: true}
+	rows := servedRoutes(resolveRoutes([]routedContainer{both}), nil, nil, "test", PeerNames{})
+	var served bool
+	for _, r := range rows {
+		if r.Container == "aaa" && r.Host == "x.test" && r.Note == "" && r.URL == "https://x.test" {
+			served = true
+		}
+	}
+	if !served {
+		t.Fatalf("rows = %+v, want x.test listed as served by aaa's native rule", rows)
+	}
+
+	// A native-only container is already a row of its own: never listed twice.
+	nat := routedContainer{name: "zzz", hosts: []string{"y.test"}, natives: []string{"y.test"}}
+	rows = servedRoutes(resolveRoutes([]routedContainer{nat}), nil, nil, "test", PeerNames{})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the native container once", rows)
+	}
+}
+
 // TestServedRoutesDropsWithdrawnQualified: a qualified host that went to another
 // claimant must not be advertised on the bare host's row.
 func TestServedRoutesDropsWithdrawnQualified(t *testing.T) {

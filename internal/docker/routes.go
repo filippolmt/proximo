@@ -232,6 +232,11 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 		}
 		routes = append(routes, r)
 	}
+	// Traefik's own provider serves these; the row says only that the host
+	// answers, since proximo does not parse the rule's matchers.
+	for _, n := range resolved.proximoNatives {
+		routes = append(routes, Route{Container: n.name, Host: n.host, URL: "https://" + n.host})
+	}
 	for _, rc := range resolved.kept {
 		backends := len(rc.backends())
 		for _, host := range rc.bareHosts() {

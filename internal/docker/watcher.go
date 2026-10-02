@@ -1521,7 +1521,15 @@ type routeResolution struct {
 	merges         []routeMerge
 	collisions     []hostCollision
 	inspectDropped []string // routes whose proximo.inspect could not be honoured
+	// proximoNatives are the hosts a traefik.* rule on a proximo container
+	// matches, by container. Traefik's own provider serves them, and no kept
+	// route lists them: the proximo router either never claimed them or
+	// withdrew, possibly taking the whole container out of kept.
+	proximoNatives []nativeHost
 }
+
+// nativeHost is a host a traefik.* rule on container name matches.
+type nativeHost struct{ name, host string }
 
 // resolveRoutes merges replica containers and settles host collisions.
 // Containers with identical routing config (see replicaKey) but different
@@ -1591,9 +1599,13 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 	// provider: it withdraws. Native rules are keyed by host alone because proximo
 	// does not parse their path matchers.
 	nativeRule := map[string]string{}
+	var proximoNatives []nativeHost
 	for _, g := range groups {
 		for _, h := range g.natives {
 			nativeRule[h] = g.name
+			if g.proximo {
+				proximoNatives = append(proximoNatives, nativeHost{name: g.name, host: h})
+			}
 		}
 	}
 
@@ -1658,7 +1670,7 @@ func resolveRoutes(routed []routedContainer) routeResolution {
 		g.hosts = survivors[i]
 		kept = append(kept, *g)
 	}
-	return routeResolution{kept: kept, merges: merges, collisions: collisions, inspectDropped: inspectDropped}
+	return routeResolution{kept: kept, merges: merges, collisions: collisions, inspectDropped: inspectDropped, proximoNatives: proximoNatives}
 }
 
 // collisionNote explains, in one line a developer can act on, why rc did not get
