@@ -1,6 +1,6 @@
 ---
 name: proximo
-description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when exposing a container through proximo.* labels, when a .test host does not answer or returns 502/503, when a browser distrusts a local certificate, when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
+description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when exposing a container through proximo.* labels or giving a service a local hostname, when calling or testing a containerized service (curl, wget, a test suite), when a .test host does not answer or returns 502/503, when a browser distrusts a local certificate, when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
 metadata:
   short-description: Expose a container at https://<name>.test, and diagnose one that is broken
 ---
@@ -75,6 +75,32 @@ advancing — Docker then says *unhealthy*, and a healthcheck that was passing a
 stopped is an Incident. It has to pass once first — a check that never passed
 declares nothing when it fails — so propose a `start_period` with it, which keeps
 a slow first job from being reported unhealthy on the way there.
+
+**A call to a local container goes through its route.** A request that checks a
+service running in a local container — `curl`, `wget`, a test suite, a script —
+goes to `https://<qualified host>`, resolved by
+proximo's DNS and verified against its CA: the path the developer's browser takes,
+so the result covers the name, the certificate, the router and the health gate.
+Read the host from `proximo status --json`. A name that does not resolve or a
+certificate that is refused is itself the finding: run `proximo doctor`, read
+[`references/routing.md`](references/routing.md), and keep the call unchanged.
+`localhost:<port>`, the container's IP, `-k`, `--resolve` and `/etc/hosts` each
+answer a different question and hide the one you were asked. Any other host —
+`google.com`, a staging API — is outside proximo: call it as it is.
+
+**A hostname is a proximo label.** When a service needs a name, declare it with
+`proximo.hosts` under the configured TLD (`proximo config tld`), or
+`proximo.tcp.port` for a TCP service: proximo issues the DNS record, the
+certificate and the route together, and it owns the local zone. The host
+resolver, `/etc/hosts` and DNS containers stay as they are. How:
+[`references/expose.md`](references/expose.md).
+
+**Ask the binary.** For anything about proximo — routes and their names, the CA
+(`proximo config ca-path`), the inventory (`proximo config inventory-dir`), what a
+container wrote (`proximo errors`) — the `proximo` CLI is the interface, and
+`proximo --help` lists it. The files under `~/.proximo` and the stack's
+containers are its implementation. The first rule still holds: a command that
+changes the host is the developer's to run.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another
