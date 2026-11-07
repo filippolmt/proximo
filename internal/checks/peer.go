@@ -3,7 +3,9 @@ package checks
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ const (
 	IDPeerIntermediate = "peer-intermediate"
 	IDPeerRoutes       = "peer-routes"
 	IDPeerDNS          = "peer-dns"
+	IDPeerRelay        = "peer-relay"
 	IDMesh             = "mesh"
 )
 
@@ -40,6 +43,15 @@ func peerSkip(env Env, needAddress bool) (Result, bool) {
 		return Skipped("machine or peer-suffix is not configured"), false
 	}
 	return Result{}, true
+}
+
+// heldDetail is the one cause of a failed peer bind proximo can see: whether
+// any interface of this machine holds the mesh address at all.
+func heldDetail(env Env, addr string) string {
+	if addrs, err := env.InterfaceAddrs(); err == nil && !config.AddressHeld(addr, addrs) {
+		return config.AddressNotHeld
+	}
+	return "is held by an interface of this machine"
 }
 
 func peerChecks(env Env) []Check {
@@ -132,15 +144,32 @@ func peerChecks(env Env) []Check {
 				if err == nil && addr == p.Address {
 					return Passed("%s answers %s on %s", sentinel, p.Address, server)
 				}
-				// The one cause of a failed bind proximo can see.
-				held := "is held by an interface of this machine"
-				if addrs, aerr := env.InterfaceAddrs(); aerr == nil && !config.AddressHeld(p.Address, addrs) {
-					held = "is held by no interface of this machine"
-				}
+				held := heldDetail(env, p.Address)
 				if err != nil {
 					return Failed("proximo up", "%s did not answer %s: %v; %s %s", server, sentinel, err, p.Address, held)
 				}
 				return Failed("proximo up", "%s answered %q for %s, want %s; %s %s", server, addr, sentinel, p.Address, p.Address, held)
+			},
+		},
+		{
+			ID:    IDPeerRelay,
+			Name:  "Traefik answers TLS on the mesh address, through the peer relay",
+			Doc:   "proximo-does-not-answer-on-the-mesh-address",
+			Needs: []string{IDStack},
+			Run: func(ctx context.Context) Result {
+				if skip, ok := peerSkip(env, true); !ok {
+					return skip
+				}
+				// Traefik listens on the loopback only; a colleague reaches it
+				// through the relay. A completed handshake is the proof: whether
+				// the certificate is valid is peer-intermediate's question.
+				server := net.JoinHostPort(p.Address, strconv.Itoa(config.PeerRelayPort))
+				err := env.TLSHandshake(ctx, server, sentinel)
+				if err == nil {
+					return Passed("%s completes a TLS handshake for %s", server, sentinel)
+				}
+				held := heldDetail(env, p.Address)
+				return Failed("proximo up", "%s did not complete a TLS handshake for %s: %v; %s %s", server, sentinel, err, p.Address, held)
 			},
 		},
 		{

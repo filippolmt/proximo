@@ -11,7 +11,7 @@ the stack image published under that same version.
 
 - **The CLI is the unit you upgrade** (`brew upgrade`, `go install`, or a release
   tarball). The stack's Go services come from **one published multi-arch image**,
-  `ghcr.io/filippolmt/proximo`, holding all three binaries; compose picks one per
+  `ghcr.io/filippolmt/proximo`, holding every in-stack binary; compose picks one per
   service with an `entrypoint`. Nothing is compiled on your host.
 - **The image tag is the CLI's own version**, never `latest`. A binary installed
   at `v0.4.0` asks for `:v0.4.0` for as long as it stays installed, so it can

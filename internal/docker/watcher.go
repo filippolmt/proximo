@@ -283,9 +283,9 @@ type Watcher struct {
 	// nil on a machine that has not opted in.
 	caDir string
 	peer  *peerMaterial
-	// peerDNSFailing is set while the peer DNS service will not start, so the
+	// peerFailing holds each peer service that will not start, so its
 	// failure is logged once rather than every 30 s.
-	peerDNSFailing bool
+	peerFailing map[string]bool
 	// defaultIssued records that this process issued the default certificate,
 	// so it is issued once per watcher start, under the CA it holds.
 	defaultIssued bool
@@ -318,6 +318,7 @@ func NewWatcher() (*Watcher, error) {
 		tld:          getenv("PROXIMO_TLD", config.DefaultTLD),
 		lastHosts:    map[string]string{},
 		authHashes:   map[string]string{},
+		peerFailing:  map[string]bool{},
 		incidents:    NewIncidentStore(0, 0),
 	}
 
@@ -348,7 +349,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		cleanStrayTemps(w.inventoryDir)
 	}
 	w.reconcileLogged(ctx)
-	w.restartPeerDNS(ctx)
+	w.restartPeerServices(ctx)
 
 	// Subscribe to all container and network events. The container type already
 	// carries Docker `health_status` actions (no event-action filter is added —
@@ -374,7 +375,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			w.reconcileLogged(ctx)
-			w.restartPeerDNS(ctx)
+			w.restartPeerServices(ctx)
 		case msg := <-msgs:
 			// The same subscription answers both questions: what the routing
 			// state should be now, and what the runtime just declared about a
@@ -439,7 +440,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// the inventory published cannot disagree over a transient inspect failure.
 	inspect := memoInspect(w.cli.ContainerInspect)
 
-	traefikID, traefikNets := findStackContainer(containers, "traefik")
+	traefikID, traefikNets := findStackContainer(containers, traefikRole)
 	if traefikID == "" {
 		// Traefik not running yet: the inventory says every route is down.
 		w.writeInventory(routesOf(ctx, inspect, containers, w.tld, PeerNames{}))

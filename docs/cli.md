@@ -116,8 +116,8 @@ HTTP→HTTPS redirect, so `http://logs.<tld>` / `http://metrics.<tld>` auto-redi
 to the trusted https host. Off by default: a plain `up` starts neither. `down` /
 `uninstall` tear them down too. See [Dev-time observability](observability.md).
 
-**Peer sharing.** When the peer DNS service cannot start, `up` succeeds, prints a
-warning naming `peer-dns` and, when it is the one it can see, the cause — the
+**Peer sharing.** When the peer services cannot start, `up` succeeds, prints a
+warning naming `peer-dns` and `peer-relay` and, when it is the one it can see, the cause — the
 address is held by no interface of this machine — and exits 0, because `.test`
 works. A peer-side failure never fails
 the command that serves `.test`.
@@ -288,6 +288,17 @@ something to go wrong. The row names the service to pass to
 CONTAINER       URL
 shop-web-1      https://app.test  + app.shop.test
 shop-worker-1   no route — observed for Incidents (proximo.transcript), service shop/worker
+```
+
+Under the table, `status` says where routed traffic is accepted, as Docker
+reports it for Traefik and the [peer relay](architecture.md#the-peer-relay):
+`Listening on 127.0.0.1:80, 127.0.0.1:443`, plus `<address>:443` on a machine
+that shares. A stack still published on an unspecified address — one not
+converged since [ADR 0014](adr/0014-the-stack-listens-on-the-loopback.md) — is
+flagged, because every route is then reachable from other hosts on the network:
+
+```
+⚠ Listening on 0.0.0.0:443: every route is reachable from other hosts on this network
 ```
 
 Prints `No routed containers.` when nothing is exposed. While the stack's
@@ -477,7 +488,7 @@ touches. Both print only what failed.
 
 ### The peer Checks
 
-Four Checks. On a machine
+Five Checks. On a machine
 that has not opted in, every one of them is Skipped, and `dns-server` and
 `dns-resolver` return exactly the Result they return on a machine that never
 configured a peer value ([constraint 9](sharing.md#constraints)).
@@ -487,6 +498,7 @@ configured a peer value ([constraint 9](sharing.md#constraints)).
 | `peer-intermediate` | The machine's intermediate is valid for at least 30 more days | — | no intermediate installed, or `machine` or `peer-suffix` unset | `proximo config csr` |
 | `peer-routes` | Every shared route is served on its peer names | `stack` | `machine` or `peer-suffix` unset | `docker inspect <container>` |
 | `peer-dns` | The proximo DNS server answers the Peer suffix | `stack` | `machine`, `peer-suffix` or `address` unset | `proximo up` |
+| `peer-relay` | Traefik answers TLS on the mesh address, through the peer relay | `stack` | `machine`, `peer-suffix` or `address` unset | `proximo up` |
 | `mesh` | This machine's peer names resolve through the system resolver | `peer-dns` | only by inheritance from `peer-dns` | the configured `mesh-remedy`, else `scutil --dns` (macOS) / `resolvectl status` (Linux) |
 
 - **`peer-intermediate`** Fails under 30 days and when expired, so `doctor` exits
@@ -501,6 +513,11 @@ configured a peer value ([constraint 9](sharing.md#constraints)).
   `proximo-doctor.<machine>.<suffix>` and requires `<address>` back. When it
   fails, its Detail says whether the address is held by any interface of this
   machine — the one cause of a failed bind.
+- **`peer-relay`** completes a TLS handshake on `<address>:443` with the sentinel
+  as SNI, without judging the certificate — that is `peer-intermediate`'s
+  question. Traefik listens on the loopback only, so this is the path a
+  colleague's browser takes. Its Detail says whether the address is held, as
+  `peer-dns`'s does.
 - **`mesh`** asks the **system** resolver for the same sentinel and requires the
   configured `<address>`. That one lookup walks the whole local chain: system
   resolver, the mesh's routing of the subtree, this machine's address on 5354,
@@ -514,7 +531,7 @@ passing and `mesh` failing means proximo answers and the mesh does not route the
 suffix to it. A publishing machine that is not itself a resolving peer fails
 `mesh` while others can reach it; that cause has a section of its own.
 
-`stack` never fails for a peer problem: the peer DNS service is not one of the
+`stack` never fails for a peer problem: neither peer service is one of the
 stack's core services. There is **no Check that a shared route is reachable**:
 proximo cannot observe another machine's view. There is no Check on the
 *quality* of a configured value either — whether a label names a person is not a

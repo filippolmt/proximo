@@ -13,7 +13,8 @@ names it answers to, and what it can be made to say about itself.
 **Stack**:
 The set of long-running services proximo itself manages — `traefik`, `dns`,
 `watcher`, `inspector`, plus the opt-in observability services. There is exactly one per host:
-it owns `:80`, `:443`, the DNS port, and the compose project name `proximo`.
+it owns `:80` and `:443` on the loopback (and `:443` on the mesh address, on a
+machine that shares), the DNS port, and the compose project name `proximo`.
 _Avoid_: proxy, infrastructure, services (when the user's containers are meant)
 
 **Stack network**:

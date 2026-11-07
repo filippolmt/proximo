@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# The published stack image: ONE multi-arch image holding all three in-stack
-# binaries. Compose picks one per service with an `entrypoint:` — see
+# The published stack image: ONE multi-arch image holding every in-stack
+# binary. Compose picks one per service with an `entrypoint:` — see
 # docs/adr/0002-stack-services-ship-as-one-published-image.md for why one image
-# rather than three, and why the tag is the CLI's own version.
+# rather than one per binary, and why the tag is the CLI's own version.
 #
 # It is also the image `PROXIMO_SRC` builds from a local checkout (the dev
 # override in internal/docker/stack.go points `build:` here), so the published
@@ -30,7 +30,7 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
         -X github.com/filippolmt/proximo/internal/version.Version=${VERSION} \
         -X github.com/filippolmt/proximo/internal/version.Commit=${COMMIT} \
         -X github.com/filippolmt/proximo/internal/version.Date=${DATE}" \
-      -o /out/ ./cmd/dnsserver ./cmd/watcher ./cmd/inspector
+      -o /out/ ./cmd/...
 
 FROM alpine:3.24
 RUN apk add --no-cache ca-certificates

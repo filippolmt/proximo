@@ -64,6 +64,8 @@ Why a design is the way it is, and what was rejected on the way.
 
 [0013 — proximo's DNS server answers the peer subtree](adr/0013-proximo-answers-the-peer-subtree.md)
 
+[0014 — The stack listens on the loopback](adr/0014-the-stack-listens-on-the-loopback.md)
+
 ### [Installation](installation.md)
 
 [Requirements](installation.md#requirements) ·

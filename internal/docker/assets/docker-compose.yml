@@ -1,6 +1,6 @@
 name: proximo
 
-# The image the three Go services run — one image, one ref. PROXIMO_IMAGE comes
+# The image every proximo service runs — one image, one ref. PROXIMO_IMAGE comes
 # from the .env the CLI writes on every converge; the default is materialized
 # from the CLI's own canonical ref (__IMAGE__), so the asset holds no second
 # copy of the repo name to drift from internal/docker.
@@ -26,8 +26,12 @@ services:
     command:
       - --configfile=/etc/traefik/traefik.yml
     ports:
-      - "80:80"
-      - "443:443"
+      # Loopback only, like every other stack service: a route has no
+      # authentication unless it opts in, so every interface would put each
+      # routed container on the LAN. A shared route reaches Traefik through the
+      # peer-relay service on the mesh address instead (docs/adr/0014).
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
@@ -38,7 +42,7 @@ services:
 
   dns:
     image: *proximo-image
-    # One image, three services: the entrypoint picks the binary.
+    # One image, several services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/dnsserver"]
     restart: unless-stopped
     logging: *proximo-logging
@@ -54,7 +58,7 @@ services:
 
   watcher:
     image: *proximo-image
-    # One image, three services: the entrypoint picks the binary.
+    # One image, several services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/watcher"]
     restart: unless-stopped
     logging: *proximo-logging
@@ -87,7 +91,7 @@ services:
     # than behind a profile: labelling a container must not require restarting
     # the stack. It holds Exchanges in memory only and writes nothing to disk.
     image: *proximo-image
-    # One image, three services: the entrypoint picks the binary.
+    # One image, several services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/inspector"]
     restart: unless-stopped
     logging: *proximo-logging

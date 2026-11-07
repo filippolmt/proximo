@@ -81,10 +81,11 @@ sudo lsof -nP -iUDP:5354           # a process on this host holds it
 
 ## Port 443 or 80 already in use
 
-Traefik publishes `443` and `80` on the host. If another service already
+Traefik publishes `443` and `80` on `127.0.0.1`. If another service already
 listens there (another reverse proxy, a local web server, an old Traefik), the
 stack fails to start with a Docker error like
-`Bind for 0.0.0.0:443 failed: port is already allocated`.
+`Bind for 127.0.0.1:443 failed: port is already allocated`. On Linux a listener
+on every interface (`0.0.0.0:443`) holds the loopback address too.
 
 `proximo install` and `proximo up` check this before touching anything, and
 `proximo doctor` reports it any time. All three ask *who* holds the port rather
@@ -669,7 +670,9 @@ route, which is never shared. `docker inspect <container>` shows the labels; dro
 
 ## proximo does not answer on the mesh address
 
-`peer-dns` failed. The peer DNS service is not answering on `<address>:5354`:
+`peer-dns` or `peer-relay` failed. The peer DNS service is not answering on
+`<address>:5354`, or the [peer relay](architecture.md#the-peer-relay) does not
+complete a TLS handshake on `<address>:443`. The causes are the same for both:
 
 - **The address is held by no interface** (the Detail says so): the mesh client
   was down when the service last tried to start. The watcher retries on its own
@@ -680,7 +683,9 @@ route, which is never shared. `docker inspect <container>` shows the labels; dro
   says the address is held by an interface. The query from the machine to itself
   times out although colleagues get an answer
   ([#144](https://github.com/filippolmt/proximo/issues/144)). Ask from another
-  machine on the mesh: `dig @<address> -p 5354 proximo-doctor.<machine>.<suffix>`.
+  machine on the mesh: `dig @<address> -p 5354 proximo-doctor.<machine>.<suffix>`
+  for `peer-dns`, `openssl s_client -connect <address>:443 -servername
+  proximo-doctor.<machine>.<suffix>` for `peer-relay`.
 
 Until this passes, the nameserver group that routes the subtree to this machine
 resolves nothing — which is why it is created only after this passes.

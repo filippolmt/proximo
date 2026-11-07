@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"net/netip"
 	"testing"
 
 	"github.com/filippolmt/proximo/internal/docker"
@@ -42,6 +43,25 @@ func TestStackNote(t *testing.T) {
 	for _, tc := range cases {
 		if got := stackNote(tc.info); got != tc.want {
 			t.Errorf("%s: stackNote = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestListenNote(t *testing.T) {
+	ap := netip.MustParseAddrPort
+	cases := []struct {
+		name string
+		info docker.StackInfo
+		want string
+	}{
+		{"loopback", docker.StackInfo{Running: true, Listens: []netip.AddrPort{ap("127.0.0.1:80"), ap("127.0.0.1:443")}}, "Listening on 127.0.0.1:80, 127.0.0.1:443"},
+		{"shared", docker.StackInfo{Running: true, Listens: []netip.AddrPort{ap("127.0.0.1:443"), ap("100.89.88.2:443")}}, "Listening on 127.0.0.1:443, 100.89.88.2:443"},
+		{"wildcard", docker.StackInfo{Running: true, Listens: []netip.AddrPort{ap("0.0.0.0:443")}}, warnPrefix + "Listening on 0.0.0.0:443: every route is reachable from other hosts on this network"},
+		{"down", docker.StackInfo{}, ""},
+	}
+	for _, tc := range cases {
+		if got := listenNote(tc.info); got != tc.want {
+			t.Errorf("%s: listenNote = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

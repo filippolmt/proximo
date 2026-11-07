@@ -32,12 +32,13 @@ first: what it shows picks the branch.
 | `proximo status` shows | Read |
 | --- | --- |
 | A last line saying the proximo stack is not running or degraded | Run `proximo doctor`. A Remedy of `proximo up` is yours to run; any other is the developer's. Then run `proximo status` again: until the line is gone the routes listed may not answer, so no other row applies |
+| A line `⚠ Listening on 0.0.0.0:…` (or `[::]`) | The stack predates the loopback-only Traefik: `proximo up` is yours to run, and it narrows it. A developer who wants a route reachable from another host has no setting for it; only a shared route is, on the mesh ([sharing](https://filippolmt.github.io/proximo/sharing.html)) |
 | No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
 | A route, the host answers, and a request fails on the server — a 500, or an API call that comes back wrong | [`references/transcript.md`](references/transcript.md) |
 | Nothing is visibly broken, and the developer says something is **not progressing** — a queue not draining, a job that never finishes, a worker that keeps dying | [`references/transcript.md`](references/transcript.md) — ask for **Incidents** |
-| A route carries `proximo.share`, or a **colleague** reports a shared link that times out, lands on a `.test` address, loses its login, or fails at the certificate | The `PEER` column says whether the route is served on its peer names; then [sharing](https://filippolmt.github.io/proximo/sharing.html) and the matching section of [troubleshooting](https://filippolmt.github.io/proximo/troubleshooting.html#a-shared-link-does-not-resolve-or-times-out). `proximo doctor` checks this machine's side (`peer-intermediate`, `peer-routes`, `peer-dns`, `mesh`); nothing here can see the colleague's |
+| A route carries `proximo.share`, or a **colleague** reports a shared link that times out, lands on a `.test` address, loses its login, or fails at the certificate | The `PEER` column says whether the route is served on its peer names; then [sharing](https://filippolmt.github.io/proximo/sharing.html) and the matching section of [troubleshooting](https://filippolmt.github.io/proximo/troubleshooting.html#a-shared-link-does-not-resolve-or-times-out). `proximo doctor` checks this machine's side (`peer-intermediate`, `peer-routes`, `peer-dns`, `peer-relay`, `mesh`); nothing here can see the colleague's |
 
 When the developer's account does not settle which row it is, ask the host
 itself and let the status code decide:

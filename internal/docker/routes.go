@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"regexp"
 	"slices"
@@ -224,7 +225,7 @@ func routesOf(ctx context.Context, inspect inspector, cs []container.Summary, tl
 		}
 		return routes[i].Container < routes[j].Container
 	})
-	if id, _ := findStackContainer(cs, "traefik"); id == "" {
+	if id, _ := findStackContainer(cs, traefikRole); id == "" {
 		return markStackDown(routes)
 	}
 	return routes
@@ -310,7 +311,7 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 // instead of classifying the role-labeled container (which never routes).
 func dashboardRoutes(cs []container.Summary, tld string) []Route {
 	for _, c := range cs {
-		if c.Labels[RoleLabel] == "traefik" {
+		if c.Labels[RoleLabel] == traefikRole {
 			host := dashboardHost(tld)
 			return []Route{{Container: primaryName(c), Host: host, URL: "https://" + host}}
 		}
@@ -349,6 +350,41 @@ type StackInfo struct {
 	// degraded stack (traefik up, watcher gone) is distinguishable from a
 	// healthy one — which "is anything running?" alone cannot tell.
 	Roles []string
+	// Listens are the host addresses Traefik and the peer relay are published
+	// on, as Docker reports them — so a stack not yet converged since Traefik
+	// moved to the loopback shows its wildcard rather than what the asset says.
+	Listens []netip.AddrPort
+}
+
+// traefikRole is the proximo.role of the stack's Traefik.
+const traefikRole = "traefik"
+
+// listenRoles are the stack services that carry routed traffic.
+var listenRoles = []string{traefikRole, peerRelayRole}
+
+// OnEveryInterface reports whether any routed-traffic port is published on an
+// unspecified address, which puts every route on the LAN.
+func (s StackInfo) OnEveryInterface() bool {
+	return slices.ContainsFunc(s.Listens, func(a netip.AddrPort) bool { return a.Addr().IsUnspecified() })
+}
+
+// listensOf collects the published TCP addresses of the listenRoles
+// containers, sorted and without duplicates.
+func listensOf(cs []container.Summary) []netip.AddrPort {
+	var out []netip.AddrPort
+	for _, c := range cs {
+		if !slices.Contains(listenRoles, c.Labels[RoleLabel]) {
+			continue
+		}
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 || p.Type != "tcp" || !p.IP.IsValid() {
+				continue
+			}
+			out = append(out, netip.AddrPortFrom(p.IP, p.PublicPort))
+		}
+	}
+	slices.SortFunc(out, func(a, b netip.AddrPort) int { return a.Compare(b) })
+	return slices.Compact(out)
 }
 
 // coreRoles are the stack services routing depends on — the three that
@@ -357,7 +393,7 @@ type StackInfo struct {
 // inspector is deliberately not one: it is idle unless a route carries
 // proximo.inspect, and an older stack that predates it is a version skew, not a
 // degraded stack.
-var coreRoles = []string{"traefik", "dns", "watcher"}
+var coreRoles = []string{traefikRole, "dns", "watcher"}
 
 // MissingRoles returns the core stack services that are not running, in the
 // order they are named above. Empty means the stack is whole.
@@ -402,6 +438,7 @@ func StackStatus(ctx context.Context) (StackInfo, error) {
 			info.Image = c.Labels[imageLabel]
 		}
 	}
+	info.Listens = listensOf(res.Items)
 	return info, nil
 }
 
@@ -440,7 +477,7 @@ func StackRecordsAccessLog(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, c := range res.Items {
-		if c.Labels[RoleLabel] != "traefik" {
+		if c.Labels[RoleLabel] != traefikRole {
 			continue
 		}
 		got, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})

@@ -28,6 +28,10 @@ const (
 	// shares the loopback port's number, on another address.
 	PeerDNSPort = 5354
 
+	// PeerRelayPort is the port the peer relay accepts on, on this machine's
+	// mesh address: the one a colleague's browser connects to.
+	PeerRelayPort = 443
+
 	// ObsHubPort is the loopback TCP host port the metrics hub is published on
 	// (only when the observability profile is active) so the one-shot bootstrap
 	// can reach the hub API directly, without depending on DNS/Traefik/TLS being
@@ -182,6 +186,10 @@ func ParseAddress(raw string) (string, error) {
 // AddressRule is printed on every `config address`: the held-by-an-interface
 // check catches a typo or a stale value, never a wrong-but-local address.
 const AddressRule = "The address must be this machine's own address on the mesh. proximo checks only that some interface holds it: it cannot tell the mesh address from the LAN address or 127.0.0.1."
+
+// AddressNotHeld is the one cause of a failed peer bind proximo can see,
+// worded once for every place that reports it.
+const AddressNotHeld = "is held by no interface of this machine"
 
 // AddressHeld reports whether one of addrs (as net.InterfaceAddrs returns
 // them) is exactly addr. Exact, never subnet membership: a mesh range is

@@ -364,12 +364,13 @@ func testWatcher(t *testing.T) *Watcher {
 		t.Fatalf("LoadCA: %v", err)
 	}
 	return &Watcher{
-		incidents:  NewIncidentStore(0, 0),
-		caCert:     caCert,
-		caKey:      caKey,
-		dynamicDir: t.TempDir(),
-		tld:        config.DefaultTLD,
-		lastHosts:  map[string]string{},
+		incidents:   NewIncidentStore(0, 0),
+		caCert:      caCert,
+		caKey:       caKey,
+		dynamicDir:  t.TempDir(),
+		tld:         config.DefaultTLD,
+		lastHosts:   map[string]string{},
+		peerFailing: map[string]bool{},
 	}
 }
 
@@ -379,11 +380,12 @@ func testWatcher(t *testing.T) *Watcher {
 func plainWatcher(t *testing.T, cli dockerAPI) *Watcher {
 	t.Helper()
 	return &Watcher{
-		incidents:  NewIncidentStore(0, 0),
-		cli:        cli,
-		dynamicDir: t.TempDir(),
-		tld:        "test",
-		lastHosts:  map[string]string{},
+		incidents:   NewIncidentStore(0, 0),
+		cli:         cli,
+		dynamicDir:  t.TempDir(),
+		tld:         "test",
+		lastHosts:   map[string]string{},
+		peerFailing: map[string]bool{},
 	}
 }
 

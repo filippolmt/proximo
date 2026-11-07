@@ -2,6 +2,7 @@ package checks
 
 import (
 	"context"
+	cryptotls "crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
@@ -97,6 +98,9 @@ type Env struct {
 	// InterfaceAddrs lists every interface address of this machine, so a
 	// failed peer DNS bind can say whether the mesh address is held at all.
 	InterfaceAddrs func() ([]net.Addr, error)
+	// TLSHandshake completes a TLS handshake with addr for serverName, without
+	// judging the certificate: it proves something answered TLS there.
+	TLSHandshake func(ctx context.Context, addr, serverName string) error
 }
 
 // DefaultEnv wires the checks to the real host. It fails only where proximo
@@ -125,6 +129,7 @@ func DefaultEnv(tld string) (Env, error) {
 		Intermediate:        tls.Intermediate,
 		QueryAt:             dns.QueryAt,
 		InterfaceAddrs:      net.InterfaceAddrs,
+		TLSHandshake:        tlsHandshake,
 		TLD:                 tld,
 		CLIVersion:          version.Version,
 		CanonicalImage:      docker.CanonicalImage(),
@@ -230,3 +235,20 @@ func held(port int, proto string) bool {
 // listener answers or the kernel refuses immediately; the timeout is for the
 // pathological case, not the normal one.
 const dialTimeout = time.Second
+
+// handshakeTimeout bounds the peer relay's TLS question. Unlike dialTimeout it
+// dials the mesh address, where a dropped packet looks like silence.
+const handshakeTimeout = 5 * time.Second
+
+func tlsHandshake(ctx context.Context, addr, serverName string) error {
+	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	// The certificate is not judged here: peer-intermediate owns that, and a
+	// leaf under the team root is not in this machine's trust store anyway.
+	d := cryptotls.Dialer{Config: &cryptotls.Config{ServerName: serverName, InsecureSkipVerify: true}}
+	c, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	return c.Close()
+}

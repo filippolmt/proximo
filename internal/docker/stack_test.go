@@ -85,11 +85,104 @@ type failComposer struct{}
 
 func (failComposer) Compose(string, ...string) error { return errors.New("compose down failed") }
 
+// recordComposer records every compose command and panics on one that names a
+// service the Compose file in dir does not define — the command real Compose
+// refuses outright. A panic, not an error: converge turns some compose errors
+// into warnings, and a returned error would pass the test that should fail.
 type recordComposer struct{ cmds [][]string }
 
-func (r *recordComposer) Compose(_ string, args ...string) error {
+func (r *recordComposer) Compose(dir string, args ...string) error {
 	r.cmds = append(r.cmds, append([]string(nil), args...))
+	if err := undefinedService(dir, args); err != nil {
+		panic(fmt.Sprintf("compose %v: %v", args, err))
+	}
 	return nil
+}
+
+// undefinedService returns Compose's own error for the first service args
+// names that the Compose file in dir lacks. Without a file there is nothing to
+// check against.
+func undefinedService(dir string, args []string) error {
+	data, err := os.ReadFile(filepath.Join(dir, "docker-compose.yml"))
+	if err != nil {
+		return nil
+	}
+	defined := composeServices(string(data))
+	for _, name := range namedServices(args) {
+		if !slices.Contains(defined, name) {
+			return fmt.Errorf("no such service: %s", name)
+		}
+	}
+	return nil
+}
+
+// composeServices lists the keys of the top-level services mapping.
+func composeServices(file string) []string {
+	var names []string
+	in := false
+	for _, line := range strings.Split(file, "\n") {
+		switch {
+		case line == "services:":
+			in = true
+		case line != "" && line[0] != ' ' && line[0] != '#':
+			in = false
+		case in && strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") && strings.HasSuffix(line, ":"):
+			names = append(names, strings.TrimSuffix(strings.TrimSpace(line), ":"))
+		}
+	}
+	return names
+}
+
+// namedServices returns the services a compose command names: the
+// positional arguments after a subcommand that takes them.
+func namedServices(args []string) []string {
+	// Before the subcommand -f is --file; after it, rm's -f is --force. Only
+	// the value-taking flags of each side swallow the next argument.
+	global := map[string]bool{"--profile": true, "-f": true, "--file": true, "-p": true, "--project-name": true, "--env-file": true}
+	local := map[string]bool{"--pull": true}
+	takesServices := map[string]bool{"up": true, "rm": true, "pull": true, "start": true, "stop": true, "restart": true, "create": true}
+	var sub string
+	var names []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case sub == "" && global[a], sub != "" && local[a]:
+			i++
+		case strings.HasPrefix(a, "-"):
+		case sub == "":
+			sub = a
+		case takesServices[sub]:
+			names = append(names, a)
+		}
+	}
+	return names
+}
+
+func TestRecordComposerRefusesAnUndefinedService(t *testing.T) {
+	dir := t.TempDir()
+	file := "name: proximo\nservices:\n  traefik:\n    image: x\n  peer-dns:\n    profiles: [peer]\nnetworks:\n  default:\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := undefinedService(dir, []string{"--profile", "peer", "rm", "-s", "-f", "peer-dns"}); err != nil {
+		t.Errorf("a defined service refused: %v", err)
+	}
+	if err := undefinedService(dir, []string{"up", "-d", "--build", "--pull", "missing"}); err != nil {
+		t.Errorf("a flag value read as a service: %v", err)
+	}
+	if err := undefinedService(dir, []string{"--profile", "peer", "rm", "-s", "-f", "peer-dns", "peer-relay"}); err == nil || err.Error() != "no such service: peer-relay" {
+		t.Errorf("an undefined service = %v, want no such service: peer-relay", err)
+	}
+	// networks.default is not a service.
+	if err := undefinedService(dir, []string{"up", "-d", "default"}); err == nil {
+		t.Error("a network key read as a service")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("recordComposer ran a command naming an undefined service")
+		}
+	}()
+	_ = (&recordComposer{}).Compose(dir, "--profile", "peer", "rm", "-s", "-f", "peer-relay")
 }
 
 // TestConvergeRunsCommandSequence asserts convergeWith issues exactly the
@@ -348,7 +441,8 @@ func TestComposeRunsThePublishedImage(t *testing.T) {
 			t.Errorf("compose missing %q", want)
 		}
 	}
-	// One image, three services — plus the label that records it, so a running
+	// One image for the core services (the peer services are appended only on a
+	// machine that shares) — plus the label that records it, so a running
 	// stack can never declare a ref it is not running.
 	if n := strings.Count(compose, "image: *proximo-image"); n != 3 {
 		t.Errorf("compose points %d services at the shared image anchor, want 3", n)
