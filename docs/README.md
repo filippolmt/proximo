@@ -76,6 +76,7 @@ Why a design is the way it is, and what was rejected on the way.
 
 ### [CLI reference](cli.md)
 
+[proximo under sudo](cli.md#proximo-under-sudo) ·
 [`proximo install`](cli.md#proximo-install) ·
 [`proximo up`](cli.md#proximo-up) ·
 [`proximo down`](cli.md#proximo-down) ·
@@ -215,6 +216,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Login on a shared link does not stick](troubleshooting.md#login-on-a-shared-link-does-not-stick) ·
 [A shared link answers 404](troubleshooting.md#a-shared-link-answers-404) ·
 [A colleague sees a certificate error on a shared link](troubleshooting.md#a-colleague-sees-a-certificate-error-on-a-shared-link) ·
+[proximo was run under sudo](troubleshooting.md#proximo-was-run-under-sudo) ·
 [A shared link is slow](troubleshooting.md#a-shared-link-is-slow) ·
 [A shared route is not served on its peer names](troubleshooting.md#a-shared-route-is-not-served-on-its-peer-names) ·
 [proximo does not answer on the mesh address](troubleshooting.md#proximo-does-not-answer-on-the-mesh-address) ·

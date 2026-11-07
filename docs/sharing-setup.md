@@ -77,9 +77,8 @@ On the colleague's machine:
 
 5. Fully restart the browser. Use Chrome 126 or later, or Firefox.
 
-Run `proximo trust` as yourself, never under `sudo`: it asks for `sudo` itself.
-Under `sudo`, Ubuntu sets `HOME` to root's, so proximo reads root's
-configuration, finds no team root and installs nothing for you.
+Run `proximo trust` as yourself: it asks for `sudo` itself, and refuses to run
+under `sudo` ([why](cli.md#proximo-under-sudo)).
 
 ## Enrolling a sharing machine
 
