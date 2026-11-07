@@ -64,7 +64,7 @@ func Materialize(tld, certDir, image string) (string, error) {
 }
 
 // materialize is Materialize from a configuration the caller already holds,
-// which decides the peer material and the peer DNS service.
+// which decides the peer material and the peer services.
 func materialize(tld, certDir, image string, cfg config.Config) (string, error) {
 	dir, err := StackDir()
 	if err != nil {
@@ -127,8 +127,8 @@ func materialize(tld, certDir, image string, cfg config.Config) (string, error) 
 	if err := writeDevOverride(dir, image); err != nil {
 		return "", err
 	}
-	if peerDNSConfigured(cfg) {
-		if err := appendPeerDNS(dir, cfg); err != nil {
+	if peerConfigured(cfg) {
+		if err := appendPeerServices(dir, cfg); err != nil {
 			return "", err
 		}
 	}
@@ -256,7 +256,7 @@ const imageEnvKey = "PROXIMO_IMAGE"
 func writeEnv(stackDir, tld, image string) error {
 	// PROXIMO_VERSION stamps the materialized services with the CLI version (a
 	// proximo.version label) so the running stack's version can be read back for
-	// skew detection; PROXIMO_IMAGE is the image the three Go services run, and
+	// skew detection; PROXIMO_IMAGE is the image every proximo service runs, and
 	// is stamped back as proximo.image so a stack can never run one thing and
 	// declare another.
 	content := fmt.Sprintf("PROXIMO_TLD=%s\n%s=%s\nPROXIMO_VERSION=%s\n",
@@ -287,7 +287,7 @@ func EnvImage() (string, error) {
 	return "", nil
 }
 
-// imageRepo is the published multi-architecture image holding all three
+// imageRepo is the published multi-architecture image holding all four
 // in-stack binaries. Old version tags are load-bearing: a binary installed at
 // vX.Y.Z asks for that tag for as long as it stays installed.
 const imageRepo = "ghcr.io/filippolmt/proximo"
@@ -411,12 +411,14 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	if err != nil {
 		return "", err
 	}
-	// A value unset since the last converge leaves a peer DNS service that only
-	// the previous Compose file still describes: remove it before that file is
-	// rewritten. A machine that never configured one runs nothing here.
-	if stack, err := StackDir(); err == nil && composeHasPeerDNS(stack) && !peerDNSConfigured(cfg) {
-		if err := c.Compose(stack, peerDNSRemoveCmd...); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ %s: could not remove the peer DNS service: %v\n", peerDNSRole, err)
+	// A value unset since the last converge leaves peer services that only the
+	// previous Compose file still describes: remove them before that file is
+	// rewritten. A machine that never configured them runs nothing here.
+	if stack, err := StackDir(); err == nil && !peerConfigured(cfg) {
+		if roles := composePeerRoles(stack); len(roles) > 0 {
+			if err := c.Compose(stack, peerRemoveCmd(roles)...); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ %s: could not remove the peer services: %v\n", strings.Join(roles, ", "), err)
+			}
 		}
 	}
 	// Asked before the converge recreates Traefik on the loopback, so the one
@@ -432,10 +434,14 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 		}
 	}
 	if wasEverywhere {
-		fmt.Fprintln(os.Stderr, "traefik: now listening on 127.0.0.1 only; routes are no longer reachable from other hosts (shared routes still are, on the mesh address)")
+		note := "traefik: now listening on 127.0.0.1 only; routes are no longer reachable from other hosts"
+		if peerConfigured(cfg) {
+			note += " (shared routes still are, on the mesh address)"
+		}
+		fmt.Fprintln(os.Stderr, note)
 	}
-	if peerDNSConfigured(cfg) {
-		startPeerDNS(c, dir, tld, cfg)
+	if peerConfigured(cfg) {
+		startPeerServices(c, dir, tld, cfg)
 	}
 	return dir, nil
 }
@@ -577,7 +583,7 @@ func composeConvergeCmds(image string, force bool) [][]string {
 // observability dashboards — without touching host configuration. A plain
 // `docker compose down` leaves profile-gated services running, so the
 // observability and peer profiles must be enabled (and --remove-orphans added)
-// for the dashboards and the peer DNS service to be torn down with the core.
+// for the dashboards and the peer services to be torn down with the core.
 func Down() error {
 	return downWith(defaultComposer)
 }

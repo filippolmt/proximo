@@ -86,7 +86,7 @@ func TestComposeGainsThePeerDNSService(t *testing.T) {
 		`"100.89.88.2:5354:5354/tcp"`,
 		`"proximo.role=` + peerDNSRole + `"`,
 		"\n  peer-relay:\n",
-		`PROXIMO_RELAY_TARGET: "traefik:443"`,
+		`entrypoint: ["/usr/local/bin/peerrelay"]`,
 		`"100.89.88.2:443:443/tcp"`,
 		`"proximo.role=` + peerRelayRole + `"`,
 	} {
@@ -107,7 +107,7 @@ func TestConvergeStartsPeerDNSApart(t *testing.T) {
 	if err := convergeWith(c, "test", "", ConvergeOpts{Image: "ghcr.io/filippolmt/proximo:v0.1.0"}); err != nil {
 		t.Fatalf("a peer DNS failure failed the converge: %v", err)
 	}
-	want := append(composeConvergeCmds("ghcr.io/filippolmt/proximo:v0.1.0", false), peerDNSUpCmd)
+	want := append(composeConvergeCmds("ghcr.io/filippolmt/proximo:v0.1.0", false), peerUpCmd)
 	if !slices.EqualFunc(c.cmds, want, slices.Equal[[]string]) {
 		t.Errorf("ran %v, want %v", c.cmds, want)
 	}
@@ -147,14 +147,14 @@ func TestWatcherRestartsPeerDNS(t *testing.T) {
 		{ID: "app", State: container.StateExited, Labels: map[string]string{}},
 	}}
 	w := plainWatcher(t, f)
-	w.restartPeerDNS(context.Background())
+	w.restartPeerServices(context.Background())
 	if !slices.Equal(f.started, []string{"peer", "relay"}) {
 		t.Errorf("started %v, want [peer relay]", f.started)
 	}
 	f.started = nil
 	f.containers[0].State = container.StateRunning
 	f.containers[1].State = container.StateRunning
-	w.restartPeerDNS(context.Background())
+	w.restartPeerServices(context.Background())
 	if len(f.started) != 0 {
 		t.Errorf("started a running peer DNS service: %v", f.started)
 	}
@@ -195,7 +195,7 @@ func TestConvergeRemovesAStalePeerDNS(t *testing.T) {
 	if err := convergeWith(c, "test", "", ConvergeOpts{Image: img}); err != nil {
 		t.Fatal(err)
 	}
-	want := append([][]string{peerDNSRemoveCmd}, composeConvergeCmds(img, false)...)
+	want := append([][]string{peerRemoveCmd(peerRoles)}, composeConvergeCmds(img, false)...)
 	if !slices.EqualFunc(c.cmds, want, slices.Equal[[]string]) {
 		t.Errorf("ran %v, want %v", c.cmds, want)
 	}
@@ -260,5 +260,43 @@ func TestConvergeSaysWhenItLeavesTheWildcard(t *testing.T) {
 		if got := strings.Contains(string(out), "now listening on 127.0.0.1 only"); got != was {
 			t.Errorf("stack on every interface = %v: notice printed = %v (%q)", was, got, out)
 		}
+	}
+}
+
+// A Compose file written before the peer relay describes peer-dns alone, and
+// Compose refuses an rm naming a service the file lacks — which would leave
+// peer-dns running. Only the roles the file defines are removed.
+func TestConvergeRemovesOnlyThePeerServicesTheFileDefines(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	savePeerDNSConfig(t)
+	img := "ghcr.io/filippolmt/proximo:v0.1.0"
+	if err := convergeWith(&recordComposer{}, "test", "", ConvergeOpts{Image: img}); err != nil {
+		t.Fatal(err)
+	}
+	stack, err := StackDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(stack, "docker-compose.yml")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := string(data)[:strings.Index(string(data), "\n  "+peerRelayRole+":\n")+1]
+	if err := os.WriteFile(file, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Load()
+	cfg.Address = ""
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordComposer{}
+	if err := convergeWith(c, "test", "", ConvergeOpts{Image: img}); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.cmds) == 0 || !slices.Equal(c.cmds[0], peerRemoveCmd([]string{peerDNSRole})) {
+		t.Errorf("first command %v, want %v", c.cmds, peerRemoveCmd([]string{peerDNSRole}))
 	}
 }

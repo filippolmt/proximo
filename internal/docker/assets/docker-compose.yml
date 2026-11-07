@@ -1,6 +1,6 @@
 name: proximo
 
-# The image the three Go services run — one image, one ref. PROXIMO_IMAGE comes
+# The image every proximo service runs — one image, one ref. PROXIMO_IMAGE comes
 # from the .env the CLI writes on every converge; the default is materialized
 # from the CLI's own canonical ref (__IMAGE__), so the asset holds no second
 # copy of the repo name to drift from internal/docker.
@@ -42,7 +42,7 @@ services:
 
   dns:
     image: *proximo-image
-    # One image, three services: the entrypoint picks the binary.
+    # One image, several services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/dnsserver"]
     restart: unless-stopped
     logging: *proximo-logging
@@ -58,7 +58,7 @@ services:
 
   watcher:
     image: *proximo-image
-    # One image, three services: the entrypoint picks the binary.
+    # One image, several services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/watcher"]
     restart: unless-stopped
     logging: *proximo-logging
@@ -91,7 +91,7 @@ services:
     # than behind a profile: labelling a container must not require restarting
     # the stack. It holds Exchanges in memory only and writes nothing to disk.
     image: *proximo-image
-    # One image, three services: the entrypoint picks the binary.
+    # One image, several services: the entrypoint picks the binary.
     entrypoint: ["/usr/local/bin/inspector"]
     restart: unless-stopped
     logging: *proximo-logging

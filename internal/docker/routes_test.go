@@ -318,3 +318,19 @@ func TestListensAreTraefikAndThePeerRelay(t *testing.T) {
 		t.Error("a stack on 0.0.0.0 not reported as on every interface")
 	}
 }
+
+// Traefik on the loopback and a stranger on another address can both publish
+// :443; the stack's claim is the one the port checks see.
+func TestPortOwnersKeepsTheStackOverAStrangerOnAnotherAddress(t *testing.T) {
+	stranger := container.Summary{Names: []string{"/lan-nginx"}, Ports: []container.PortSummary{
+		{IP: netip.MustParseAddr("192.168.1.10"), PublicPort: 443, PrivatePort: 443, Type: "tcp"},
+	}}
+	traefik := container.Summary{Names: []string{"/proximo-traefik-1"}, Labels: map[string]string{RoleLabel: "traefik"}, Ports: []container.PortSummary{
+		{IP: netip.MustParseAddr("127.0.0.1"), PublicPort: 443, PrivatePort: 443, Type: "tcp"},
+	}}
+	for _, cs := range [][]container.Summary{{traefik, stranger}, {stranger, traefik}} {
+		if got := portOwners(cs)[PortKey(443, "tcp")]; got.Container != "proximo-traefik-1" || !got.Stack {
+			t.Errorf(":443 owner = %+v, want the stack's traefik", got)
+		}
+	}
+}

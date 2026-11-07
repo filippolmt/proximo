@@ -28,6 +28,10 @@ const (
 	// shares the loopback port's number, on another address.
 	PeerDNSPort = 5354
 
+	// PeerRelayPort is the port the peer relay accepts on, on this machine's
+	// mesh address: the one a colleague's browser connects to.
+	PeerRelayPort = 443
+
 	// ObsHubPort is the loopback TCP host port the metrics hub is published on
 	// (only when the observability profile is active) so the one-shot bootstrap
 	// can reach the hub API directly, without depending on DNS/Traefik/TLS being

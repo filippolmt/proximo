@@ -67,12 +67,13 @@ make e2e-down   # stop demo + uninstall
 ## Local source builds
 
 The stack's `dns`, `watcher` and `inspector` services normally run the
-**published image** `ghcr.io/filippolmt/proximo:<version>` (one image, three
-binaries, selected per service with an `entrypoint`). Setting `PROXIMO_SRC` to
+**published image** `ghcr.io/filippolmt/proximo:<version>` (one image, four
+binaries, selected per service with an `entrypoint`; the peer services run it too). Setting `PROXIMO_SRC` to
 the checkout path (the Make lifecycle targets do this) generates a
 `docker-compose.override.yml` that builds that image **from local source** —
 the same root `Dockerfile` the release pipeline uses, so the two paths cannot
-drift — tags it `proximo:src` and points all three services at it. No push, no
+drift — tags it `proximo:src` and points all three services at it (the peer services
+reach it through `PROXIMO_IMAGE`). No push, no
 pull. Run the binary without `PROXIMO_SRC` to use the published image instead.
 
 To run a *published* image other than the pinned one — a `sha-…` build, a
@@ -84,7 +85,7 @@ than `PROXIMO_SRC`.
 
 Build metadata is injected via ldflags into `internal/version` (`Version`,
 `Commit`, `Date`) — for the CLI *and*, through the root `Dockerfile`, for the
-three in-stack binaries. GoReleaser's `{{ .Version }}` strips the leading `v`,
+four in-stack binaries. GoReleaser's `{{ .Version }}` strips the leading `v`,
 so `version.Version` is a **bare semver** (`0.1.0`) while the published image
 tag keeps it — so `internal/docker/stack.go:imageRef()` re-adds it
 (`0.1.0`→`:v0.1.0`; `dev`/empty→`:main`). Keep `version.Version` usable as a

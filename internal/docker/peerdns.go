@@ -33,24 +33,27 @@ const (
 	peerDNSRole   = "peer-dns"
 	peerRelayRole = "peer-relay"
 	peerDNSPort   = config.PeerDNSPort
-	peerRelayPort = 443
+	peerRelayPort = config.PeerRelayPort
 )
 
 // peerRoles are the peer services, in the order they are appended.
 var peerRoles = []string{peerDNSRole, peerRelayRole}
 
-// peerDNSUpCmd starts the peer services after the core converge;
-// peerDNSRemoveCmd removes those the previous Compose file still describes.
-var (
-	peerDNSUpCmd     = append([]string{"--profile", peerProfile, "up", "-d"}, peerRoles...)
-	peerDNSRemoveCmd = append([]string{"--profile", peerProfile, "rm", "-s", "-f"}, peerRoles...)
-)
+// peerUpCmd starts the peer services after the core converge.
+var peerUpCmd = append([]string{"--profile", peerProfile, "up", "-d"}, peerRoles...)
 
-// peerDNSConfigured reports whether the peer DNS service belongs in the stack:
+// peerRemoveCmd removes the peer services the previous Compose file still
+// describes. Only those: Compose refuses the whole command over a service the
+// file does not define, which a file from before the peer relay is.
+func peerRemoveCmd(roles []string) []string {
+	return append([]string{"--profile", peerProfile, "rm", "-s", "-f"}, roles...)
+}
+
+// peerConfigured reports whether the peer services belong in the stack:
 // machine, peer-suffix and an address it can answer with. The address is
 // judged again here, so a value saved before config address refused IPv6, or
 // a hand-edited file, yields no service rather than one that crash-loops.
-func peerDNSConfigured(cfg config.Config) bool {
+func peerConfigured(cfg config.Config) bool {
 	if cfg.Machine == "" || cfg.PeerSuffix == "" {
 		return false
 	}
@@ -58,21 +61,30 @@ func peerDNSConfigured(cfg config.Config) bool {
 	return err == nil
 }
 
-// composeHasPeerDNS reports whether the Compose file materialized last time
-// describes the peer DNS service — the only state in which unsetting a value
-// leaves one behind to remove.
-func composeHasPeerDNS(stackDir string) bool {
+// composePeerRoles returns the peer services the Compose file materialized
+// last time describes — the only state in which unsetting a value leaves them
+// behind to remove.
+func composePeerRoles(stackDir string) []string {
 	data, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
-	return err == nil && strings.Contains(string(data), "\n  "+peerDNSRole+":\n")
+	if err != nil {
+		return nil
+	}
+	var roles []string
+	for _, r := range peerRoles {
+		if strings.Contains(string(data), "\n  "+r+":\n") {
+			roles = append(roles, r)
+		}
+	}
+	return roles
 }
 
-// peerDNSService is the pair of peer services appended to the materialized
-// Compose file.
-// It runs the dnsserver binary with the peer handler, published only on the
-// mesh address — every interface would expose it on the LAN, and Docker
-// refuses a second publish of the loopback port. It is the last top-level
+// peerServices is the pair of peer services appended to the materialized
+// Compose file: the dnsserver binary with the peer handler, and the peer
+// relay. Both are published only on the mesh address — every interface would
+// expose them on the LAN, and Docker refuses a second publish of the loopback
+// port. It is the last top-level
 // mapping's last entry, so appending keeps the file well-formed.
-func peerDNSService(cfg config.Config) string {
+func peerServices(cfg config.Config) string {
 	return fmt.Sprintf(`
   %[1]s:
     # The peer DNS service: answers %[2]s on the mesh address. Present only
@@ -104,7 +116,6 @@ func peerDNSService(cfg config.Config) string {
     logging: *proximo-logging
     environment:
       PROXIMO_RELAY_LISTEN: ":%[8]d"
-      PROXIMO_RELAY_TARGET: "traefik:443"
     ports:
       - "%[5]s:%[8]d:%[8]d/tcp"
     labels:
@@ -114,42 +125,42 @@ func peerDNSService(cfg config.Config) string {
 `, peerDNSRole, tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), peerProfile, peerDNSPort, cfg.Address, CanonicalImage(), peerRelayRole, peerRelayPort)
 }
 
-// appendPeerDNS adds the peer DNS service to the materialized Compose file.
-func appendPeerDNS(stackDir string, cfg config.Config) error {
+// appendPeerServices adds the peer services to the materialized Compose file.
+func appendPeerServices(stackDir string, cfg config.Config) error {
 	f, err := os.OpenFile(filepath.Join(stackDir, "docker-compose.yml"), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(peerDNSService(cfg)); err != nil {
+	if _, err := f.WriteString(peerServices(cfg)); err != nil {
 		f.Close()
 		return err
 	}
 	return f.Close()
 }
 
-// startPeerDNS starts the peer DNS service and, when it cannot start, warns
+// startPeerServices starts the peer services and, when they cannot start, warns
 // and returns nothing: a peer-side failure never fails the command that serves
 // .test. The one cause of a failed bind it can name is the address being held
 // by no interface — the mesh client was down — which the watcher then retries.
-func startPeerDNS(c Composer, dir, tld string, cfg config.Config) {
-	if err := c.Compose(dir, peerDNSUpCmd...); err == nil {
+func startPeerServices(c Composer, dir, tld string, cfg config.Config) {
+	if err := c.Compose(dir, peerUpCmd...); err == nil {
 		return
 	}
 	cause := "see the error above"
 	if addrs, err := net.InterfaceAddrs(); err == nil && !config.AddressHeld(cfg.Address, addrs) {
-		cause = fmt.Sprintf("%s is held by no interface of this machine; the watcher starts the service once it is", cfg.Address)
+		cause = fmt.Sprintf("%s is held by no interface of this machine; the watcher starts the services once it is", cfg.Address)
 	}
 	fmt.Fprintf(os.Stderr, "⚠ %s: the peer services did not start (%s). .%s is unaffected.\n", strings.Join(peerRoles, ", "), cause, tld)
 }
 
-// restartPeerDNS starts each peer service whenever it is created or exited.
+// restartPeerServices starts each peer service whenever it is created or exited.
 // Docker Desktop and the mesh client both start at login, in no fixed order,
 // and Docker's restart policy never retries a container left `created`. It
 // runs on the watcher's fixed 30 s tick, never on an event, so a failed start
 // is retried at that pace and logged once per service until it succeeds. It
 // inspects no host interface, touches no other service, and finds nothing on
 // a machine where the services do not exist.
-func (w *Watcher) restartPeerDNS(ctx context.Context) {
+func (w *Watcher) restartPeerServices(ctx context.Context) {
 	// Docker ANDs repeated label filters, so filter on the key and pick the
 	// roles here.
 	res, err := w.cli.ContainerList(ctx, client.ContainerListOptions{

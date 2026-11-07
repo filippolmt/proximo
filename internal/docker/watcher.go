@@ -348,7 +348,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		cleanStrayTemps(w.inventoryDir)
 	}
 	w.reconcileLogged(ctx)
-	w.restartPeerDNS(ctx)
+	w.restartPeerServices(ctx)
 
 	// Subscribe to all container and network events. The container type already
 	// carries Docker `health_status` actions (no event-action filter is added —
@@ -374,7 +374,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			w.reconcileLogged(ctx)
-			w.restartPeerDNS(ctx)
+			w.restartPeerServices(ctx)
 		case msg := <-msgs:
 			// The same subscription answers both questions: what the routing
 			// state should be now, and what the runtime just declared about a

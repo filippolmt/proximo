@@ -32,6 +32,7 @@ first: what it shows picks the branch.
 | `proximo status` shows | Read |
 | --- | --- |
 | A last line saying the proximo stack is not running or degraded | Run `proximo doctor`. A Remedy of `proximo up` is yours to run; any other is the developer's. Then run `proximo status` again: until the line is gone the routes listed may not answer, so no other row applies |
+| A line `⚠ Listening on 0.0.0.0:…` (or `[::]`) | The stack predates the loopback-only Traefik: `proximo up` is yours to run, and it narrows it. A developer who wants a route reachable from another host has no setting for it; only a shared route is, on the mesh ([sharing](https://filippolmt.github.io/proximo/sharing.html)) |
 | No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
