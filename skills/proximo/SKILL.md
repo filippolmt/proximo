@@ -31,6 +31,7 @@ first: what it shows picks the branch.
 
 | `proximo status` shows | Read |
 | --- | --- |
+| A last line saying the proximo stack is not running or degraded | Run `proximo doctor` and hand its Remedy to the developer; until then the routes listed may not answer, so no other row applies |
 | No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
