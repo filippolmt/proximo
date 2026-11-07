@@ -37,10 +37,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Offline mode: validates relative file links and #anchor fragments
-      # without touching the network — external URLs never block a PR.
+      # The same command a contributor runs locally, so the two file lists
+      # cannot drift apart. Offline: relative links and #anchor fragments only,
+      # so an external URL never blocks a PR.
       - name: Check Markdown links and anchors
-        uses: lycheeverse/lychee-action@v2
-        with:
-          args: --offline --include-fragments --no-progress --root-dir "${{ github.workspace }}" README.md CLAUDE.md CONTEXT.md docs/**/*.md
-          fail: true
+        run: make check-links
