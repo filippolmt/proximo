@@ -198,8 +198,8 @@ func writeDevOverride(stackDir, image string) error {
 	if err != nil {
 		return err
 	}
-	// The three services share one build definition, so compose builds it once
-	// and the other two reuse the tag.
+	// The services share one build definition, so compose builds it once and
+	// the others reuse the tag.
 	// The same build identity the CLI carries, so a locally built stack logs the
 	// commit it was built from rather than "none". The values are quoted because
 	// YAML would otherwise read the RFC 3339 date as a timestamp and hand
