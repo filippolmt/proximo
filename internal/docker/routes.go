@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"regexp"
 	"slices"
@@ -349,6 +350,38 @@ type StackInfo struct {
 	// degraded stack (traefik up, watcher gone) is distinguishable from a
 	// healthy one — which "is anything running?" alone cannot tell.
 	Roles []string
+	// Listens are the host addresses Traefik and the peer relay are published
+	// on, as Docker reports them — so a stack not yet converged since Traefik
+	// moved to the loopback shows its wildcard rather than what the asset says.
+	Listens []netip.AddrPort
+}
+
+// listenRoles are the stack services that carry routed traffic.
+var listenRoles = []string{"traefik", peerRelayRole}
+
+// OnEveryInterface reports whether any routed-traffic port is published on an
+// unspecified address, which puts every route on the LAN.
+func (s StackInfo) OnEveryInterface() bool {
+	return slices.ContainsFunc(s.Listens, func(a netip.AddrPort) bool { return a.Addr().IsUnspecified() })
+}
+
+// listensOf collects the published TCP addresses of the listenRoles
+// containers, sorted and without duplicates.
+func listensOf(cs []container.Summary) []netip.AddrPort {
+	var out []netip.AddrPort
+	for _, c := range cs {
+		if !slices.Contains(listenRoles, c.Labels[RoleLabel]) {
+			continue
+		}
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 || p.Type != "tcp" || !p.IP.IsValid() {
+				continue
+			}
+			out = append(out, netip.AddrPortFrom(p.IP, p.PublicPort))
+		}
+	}
+	slices.SortFunc(out, func(a, b netip.AddrPort) int { return a.Compare(b) })
+	return slices.Compact(out)
 }
 
 // coreRoles are the stack services routing depends on — the three that
@@ -402,6 +435,7 @@ func StackStatus(ctx context.Context) (StackInfo, error) {
 			info.Image = c.Labels[imageLabel]
 		}
 	}
+	info.Listens = listensOf(res.Items)
 	return info, nil
 }
 

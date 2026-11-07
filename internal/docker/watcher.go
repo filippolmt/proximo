@@ -283,9 +283,9 @@ type Watcher struct {
 	// nil on a machine that has not opted in.
 	caDir string
 	peer  *peerMaterial
-	// peerDNSFailing is set while the peer DNS service will not start, so the
+	// peerFailing holds each peer service that will not start, so its
 	// failure is logged once rather than every 30 s.
-	peerDNSFailing bool
+	peerFailing map[string]bool
 	// defaultIssued records that this process issued the default certificate,
 	// so it is issued once per watcher start, under the CA it holds.
 	defaultIssued bool

@@ -79,7 +79,7 @@ func TestHealthyMachineFailsNothing(t *testing.T) {
 	rep := Run(context.Background(), All(healthyEnv()))
 	// A healthy machine that has not opted in to sharing skips the peer
 	// Checks; TestPeerChecksSkippedUnconfigured asserts they pass on one that has.
-	peer := map[string]bool{IDPeerIntermediate: true, IDPeerRoutes: true, IDPeerDNS: true, IDMesh: true}
+	peer := map[string]bool{IDPeerIntermediate: true, IDPeerRoutes: true, IDPeerDNS: true, IDPeerRelay: true, IDMesh: true}
 	for _, o := range rep.Outcomes {
 		if peer[o.Check.ID] {
 			continue

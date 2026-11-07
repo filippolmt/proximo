@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -84,6 +85,10 @@ func TestComposeGainsThePeerDNSService(t *testing.T) {
 		`"100.89.88.2:5354:5354/udp"`,
 		`"100.89.88.2:5354:5354/tcp"`,
 		`"proximo.role=` + peerDNSRole + `"`,
+		"\n  peer-relay:\n",
+		`PROXIMO_RELAY_TARGET: "traefik:443"`,
+		`"100.89.88.2:443:443/tcp"`,
+		`"proximo.role=` + peerRelayRole + `"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Compose file lacks %q", want)
@@ -133,20 +138,22 @@ func (f *failingComposer) Compose(dir string, args ...string) error {
 	return nil
 }
 
-// The watcher starts a created or exited peer DNS service, and nothing else.
+// The watcher starts a created or exited peer service, and nothing else.
 func TestWatcherRestartsPeerDNS(t *testing.T) {
 	f := &fakeDocker{containers: []container.Summary{
 		{ID: "peer", State: container.StateCreated, Labels: map[string]string{RoleLabel: peerDNSRole}},
+		{ID: "relay", State: container.StateExited, Labels: map[string]string{RoleLabel: peerRelayRole}},
 		{ID: "dns", State: container.StateExited, Labels: map[string]string{RoleLabel: "dns"}},
 		{ID: "app", State: container.StateExited, Labels: map[string]string{}},
 	}}
 	w := plainWatcher(t, f)
 	w.restartPeerDNS(context.Background())
-	if !slices.Equal(f.started, []string{"peer"}) {
-		t.Errorf("started %v, want [peer]", f.started)
+	if !slices.Equal(f.started, []string{"peer", "relay"}) {
+		t.Errorf("started %v, want [peer relay]", f.started)
 	}
 	f.started = nil
 	f.containers[0].State = container.StateRunning
+	f.containers[1].State = container.StateRunning
 	w.restartPeerDNS(context.Background())
 	if len(f.started) != 0 {
 		t.Errorf("started a running peer DNS service: %v", f.started)
@@ -207,5 +214,51 @@ func TestConvergeRemovesAStalePeerDNS(t *testing.T) {
 func TestPeerDNSIsNotACoreRole(t *testing.T) {
 	if missing := (StackInfo{Running: true, Roles: []string{"traefik", "dns", "watcher"}}).MissingRoles(); len(missing) != 0 {
 		t.Errorf("a stack without %s is missing %v", peerDNSRole, missing)
+	}
+}
+
+// Traefik is published on the loopback only, like every other stack service:
+// every interface would put each routed container on the LAN (#122).
+func TestTraefikListensOnTheLoopbackOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	got := materializedCompose(t)
+	for _, want := range []string{`"127.0.0.1:80:80"`, `"127.0.0.1:443:443"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Compose file lacks %s", want)
+		}
+	}
+	for _, bad := range []string{`- "80:80"`, `- "443:443"`} {
+		if strings.Contains(got, bad) {
+			t.Errorf("Compose file publishes %s on every interface", bad)
+		}
+	}
+}
+
+// The converge that moves a stack off the wildcard says so once; one already
+// on the loopback says nothing.
+func TestConvergeSaysWhenItLeavesTheWildcard(t *testing.T) {
+	for _, was := range []bool{true, false} {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		orig := onEveryInterface
+		onEveryInterface = func() bool { return was }
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stderr := os.Stderr
+		os.Stderr = w
+		err = convergeWith(&recordComposer{}, "test", "", ConvergeOpts{Image: "ghcr.io/filippolmt/proximo:v0.1.0"})
+		os.Stderr = stderr
+		onEveryInterface = orig
+		w.Close()
+		out, _ := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(out), "now listening on 127.0.0.1 only"); got != was {
+			t.Errorf("stack on every interface = %v: notice printed = %v (%q)", was, got, out)
+		}
 	}
 }

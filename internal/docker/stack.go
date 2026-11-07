@@ -5,6 +5,7 @@ package docker
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/observability"
@@ -417,6 +419,9 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 			fmt.Fprintf(os.Stderr, "⚠ %s: could not remove the peer DNS service: %v\n", peerDNSRole, err)
 		}
 	}
+	// Asked before the converge recreates Traefik on the loopback, so the one
+	// converge that narrows a stack published on every interface says so.
+	wasEverywhere := onEveryInterface()
 	dir, err := materialize(tld, certDir, image, cfg)
 	if err != nil {
 		return "", err
@@ -426,10 +431,23 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 			return "", remedyFor(image, err)
 		}
 	}
+	if wasEverywhere {
+		fmt.Fprintln(os.Stderr, "traefik: now listening on 127.0.0.1 only; routes are no longer reachable from other hosts (shared routes still are, on the mesh address)")
+	}
 	if peerDNSConfigured(cfg) {
 		startPeerDNS(c, dir, tld, cfg)
 	}
 	return dir, nil
+}
+
+// onEveryInterface reports whether the running stack publishes routed
+// traffic on an unspecified address. A var so converge is testable without
+// Docker; no stack, or no Docker, is false.
+var onEveryInterface = func() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info, err := StackStatus(ctx)
+	return err == nil && info.OnEveryInterface()
 }
 
 // imagePresent reports whether the image is already on the host. A var so the

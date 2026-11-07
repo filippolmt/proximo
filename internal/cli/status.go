@@ -69,6 +69,24 @@ func stackNote(info docker.StackInfo) string {
 	return ""
 }
 
+// listenNote says where routed traffic is accepted, as Docker reports it: the
+// loopback alone, plus the mesh address when a route is shared. A wildcard is
+// the one state worth a warning, because it puts every route on the LAN.
+func listenNote(info docker.StackInfo) string {
+	if !info.Running || len(info.Listens) == 0 {
+		return ""
+	}
+	addrs := make([]string, len(info.Listens))
+	for i, a := range info.Listens {
+		addrs[i] = a.String()
+	}
+	note := "Listening on " + strings.Join(addrs, ", ")
+	if info.OnEveryInterface() {
+		note = warnPrefix + note + ": every route is reachable from other hosts on this network"
+	}
+	return note
+}
+
 func newStatusCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -115,9 +133,14 @@ func newStatusCmd() *cobra.Command {
 			// Best-effort: Docker is reachable, so an error here only loses the note.
 			// Deferred so it prints last, under the table and the inspection notes.
 			if info, err := docker.StackStatus(ctx); err == nil {
-				if note := stackNote(info); note != "" {
-					defer fmt.Fprintln(out, "\n"+note)
-				}
+				defer func() {
+					if note := listenNote(info); note != "" {
+						fmt.Fprintln(out, "\n"+note)
+					}
+					if note := stackNote(info); note != "" {
+						fmt.Fprintln(out, "\n"+note)
+					}
+				}()
 			}
 			if len(routes) == 0 {
 				fmt.Fprintln(out, "No routed containers.")

@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ const (
 	IDPeerIntermediate = "peer-intermediate"
 	IDPeerRoutes       = "peer-routes"
 	IDPeerDNS          = "peer-dns"
+	IDPeerRelay        = "peer-relay"
 	IDMesh             = "mesh"
 )
 
@@ -141,6 +143,30 @@ func peerChecks(env Env) []Check {
 					return Failed("proximo up", "%s did not answer %s: %v; %s %s", server, sentinel, err, p.Address, held)
 				}
 				return Failed("proximo up", "%s answered %q for %s, want %s; %s %s", server, addr, sentinel, p.Address, p.Address, held)
+			},
+		},
+		{
+			ID:    IDPeerRelay,
+			Name:  "Traefik answers TLS on the mesh address, through the peer relay",
+			Doc:   "proximo-does-not-answer-on-the-mesh-address",
+			Needs: []string{IDStack},
+			Run: func(ctx context.Context) Result {
+				if skip, ok := peerSkip(env, true); !ok {
+					return skip
+				}
+				// Traefik listens on the loopback only; a colleague reaches it
+				// through the relay. A completed handshake is the proof: whether
+				// the certificate is valid is peer-intermediate's question.
+				server := net.JoinHostPort(p.Address, "443")
+				err := env.TLSHandshake(ctx, server, sentinel)
+				if err == nil {
+					return Passed("%s completes a TLS handshake for %s", server, sentinel)
+				}
+				held := "is held by an interface of this machine"
+				if addrs, aerr := env.InterfaceAddrs(); aerr == nil && !config.AddressHeld(p.Address, addrs) {
+					held = "is held by no interface of this machine"
+				}
+				return Failed("proximo up", "%s did not complete a TLS handshake for %s: %v; %s %s", server, sentinel, err, p.Address, held)
 			},
 		},
 		{

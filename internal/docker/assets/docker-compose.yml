@@ -26,8 +26,12 @@ services:
     command:
       - --configfile=/etc/traefik/traefik.yml
     ports:
-      - "80:80"
-      - "443:443"
+      # Loopback only, like every other stack service: a route has no
+      # authentication unless it opts in, so every interface would put each
+      # routed container on the LAN. A shared route reaches Traefik through the
+      # peer-relay service on the mesh address instead (docs/adr/0014).
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro

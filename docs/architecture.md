@@ -63,11 +63,12 @@ services speaking a label contract it has never seen
 
 | Service | Image | Role |
 | --- | --- | --- |
-| **traefik** | `traefik:v3.7` | Reverse proxy. Terminates HTTPS on `:443`, listens on `:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. Its built-in **dashboard** (`api.dashboard`, read-only — `api.insecure` stays off) is served at `https://traefik.<tld>`. |
+| **traefik** | `traefik:v3.7` | Reverse proxy. Published on the loopback only ([ADR 0014](adr/0014-the-stack-listens-on-the-loopback.md)): terminates HTTPS on `127.0.0.1:443`, listens on `127.0.0.1:80` (no redirect by default — a host opts in with `proximo.redirect`), routes by `Host`. Two providers: the **Docker provider** (native `traefik.*` labels) and the **file provider** watching `/etc/traefik/dynamic`. Its built-in **dashboard** (`api.dashboard`, read-only — `api.insecure` stays off) is served at `https://traefik.<tld>`. |
 | **dns** | `proximo` (`dnsserver`) | Wildcard DNS server (`miekg/dns`). Answers `*.<tld>` → `127.0.0.1`, forwards everything else upstream. Published on `127.0.0.1:5354/udp`. |
 | **watcher** | `proximo` (`watcher`) | Reads container labels, writes Traefik dynamic config + per-container certificates, and attaches Traefik and the inspector to backend networks. Records [Incidents](observability.md#incidents--what-the-runtime-declared) from the Docker event stream and publishes them on a loopback-only read API for `proximo errors`. Keeps the [effective-route inventory](cli.md#proximo-config-inventory-dir) in `~/.proximo/data/inventory`. Mounts the Docker socket and the CA. |
 | **inspector** | `proximo` (`inspector`) | The [Inspection](observability.md#inspection--what-the-browser-saw) hop. In the request path only for containers labelled `proximo.inspect`; idle otherwise. Publishes a loopback-only read API for `proximo errors` and holds Exchanges in memory, never on disk. |
 | **peer-dns** | `proximo` (`dnsserver`) | Only on a machine that [shares](sharing.md): answers this machine's peer subtree on its mesh address, `<address>:5354`, and refuses every other name. Profile-gated and not a core service — see [the peer DNS service](#the-peer-dns-service). |
+| **peer-relay** | `proximo` (`peerrelay`) | Only on a machine that [shares](sharing.md): published on `<address>:443`, copies TCP to Traefik, which listens on the loopback only. Profile-gated and not a core service — see [the peer relay](#the-peer-relay). |
 
 The watcher and Traefik share the host directory `~/.proximo/data/traefik`
 (**bind-mounted** into both at `/etc/traefik/dynamic`, not a Docker named volume):
@@ -225,6 +226,28 @@ for its names; nothing else answers for it with a stale address.
   machine where the service does not exist.
 - **Not a core service.** It is not one of the services `stack` requires, so a
   mesh problem never fails `stack` and never skips the rest of `doctor`.
+
+### The peer relay
+
+*[ADR 0014](adr/0014-the-stack-listens-on-the-loopback.md).*
+
+Traefik is published on `127.0.0.1` only, so a colleague's request cannot reach
+it directly. The peer relay is what listens on `<address>:443`: it accepts TCP
+and copies each connection, byte for byte, to `traefik:443` over the Stack
+network.
+
+- **TLS terminates at Traefik.** The relay reads nothing, so the SNI a
+  colleague's browser sends arrives intact and [the peer route](#the-peer-route)
+  matches it as before.
+- **No PROXY protocol.** Nothing in proximo reads the client address. Traefik's
+  access log records the relay's address for a shared request, which on Docker
+  Desktop was already a rewritten one.
+- **The peer DNS service's lifecycle, exactly.** Same profile, present under the
+  same three values, started after the core converge, restarted by the watcher
+  on the same tick, never a core service. A publish on an address no interface
+  holds leaves it `created` without touching Traefik, which is why `<address>:443`
+  is not one of Traefik's own publishes.
+- **Only `:443`.** The mesh admits TCP 443 and 5354 between peers.
 
 ### The peer route
 

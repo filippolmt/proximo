@@ -33,6 +33,12 @@ func sharingEnv() Env {
 		return "127.0.0.1", nil
 	}
 	env.InterfaceAddrs = func() ([]net.Addr, error) { return nil, nil }
+	env.TLSHandshake = func(_ context.Context, addr, _ string) error {
+		if addr != "100.89.88.2:443" {
+			return errors.New("wrong address " + addr)
+		}
+		return nil
+	}
 	return env
 }
 
@@ -48,7 +54,7 @@ func outcomes(env Env) map[string]Result {
 // local DNS Checks return exactly what they do configured (constraint 9).
 func TestPeerChecksSkippedUnconfigured(t *testing.T) {
 	unset, set := outcomes(healthyEnv()), outcomes(sharingEnv())
-	for _, id := range []string{IDPeerIntermediate, IDPeerRoutes, IDPeerDNS, IDMesh} {
+	for _, id := range []string{IDPeerIntermediate, IDPeerRoutes, IDPeerDNS, IDPeerRelay, IDMesh} {
 		if unset[id].Status != Skip {
 			t.Errorf("%s = %s unconfigured, want skip", id, unset[id].Status)
 		}
@@ -115,6 +121,21 @@ func TestPeerDNSSaysWhetherTheAddressIsHeld(t *testing.T) {
 	}
 }
 
+// The relay is what a colleague reaches, now that Traefik is on the loopback:
+// a handshake that does not complete fails with proximo up and says whether
+// the mesh address is held at all.
+func TestPeerRelaySaysWhetherTheAddressIsHeld(t *testing.T) {
+	env := sharingEnv()
+	env.TLSHandshake = func(context.Context, string, string) error { return errors.New("connection refused") }
+	r := outcomes(env)
+	if r[IDPeerRelay].Status != Fail || r[IDPeerRelay].Remedy != "proximo up" || !strings.Contains(r[IDPeerRelay].Detail, "held by no interface") {
+		t.Errorf("peer-relay = %+v", r[IDPeerRelay])
+	}
+	if r[IDStack].Status != Pass {
+		t.Errorf("stack = %+v", r[IDStack])
+	}
+}
+
 func TestMeshRemedy(t *testing.T) {
 	env := sharingEnv()
 	env.SystemResolve = func(context.Context, string) (string, error) { return "", nil }
@@ -133,7 +154,7 @@ func TestPeerChecksNameAnUnreadableConfig(t *testing.T) {
 	env := healthyEnv()
 	env.PeerErr = errors.New("invalid character 'x'")
 	got := outcomes(env)
-	for _, id := range []string{IDPeerIntermediate, IDPeerRoutes, IDPeerDNS} {
+	for _, id := range []string{IDPeerIntermediate, IDPeerRoutes, IDPeerDNS, IDPeerRelay} {
 		if got[id].Status != Skip || !strings.Contains(got[id].Detail, "could not be read") {
 			t.Errorf("%s = %+v", id, got[id])
 		}

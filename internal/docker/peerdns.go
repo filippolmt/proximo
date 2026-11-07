@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/filippolmt/proximo/internal/config"
@@ -22,17 +23,27 @@ import (
 // publish bound to an address no interface holds leaves its container
 // `created`, and inside the dns service that would take .test down whenever
 // the mesh is down at start.
+//
+// The peer relay is its sibling, for the same reason: Traefik listens on the
+// loopback only, and the relay is what publishes :443 on the mesh address
+// (docs/adr/0014-the-stack-listens-on-the-loopback.md). Both appear, start and
+// go together; each is restarted on its own.
 const (
-	peerProfile = "peer"
-	peerDNSRole = "peer-dns"
-	peerDNSPort = config.PeerDNSPort
+	peerProfile   = "peer"
+	peerDNSRole   = "peer-dns"
+	peerRelayRole = "peer-relay"
+	peerDNSPort   = config.PeerDNSPort
+	peerRelayPort = 443
 )
 
-// peerDNSUpCmd starts the peer DNS service after the core converge;
-// peerDNSRemoveCmd removes one the previous Compose file still describes.
+// peerRoles are the peer services, in the order they are appended.
+var peerRoles = []string{peerDNSRole, peerRelayRole}
+
+// peerDNSUpCmd starts the peer services after the core converge;
+// peerDNSRemoveCmd removes those the previous Compose file still describes.
 var (
-	peerDNSUpCmd     = []string{"--profile", peerProfile, "up", "-d", peerDNSRole}
-	peerDNSRemoveCmd = []string{"--profile", peerProfile, "rm", "-s", "-f", peerDNSRole}
+	peerDNSUpCmd     = append([]string{"--profile", peerProfile, "up", "-d"}, peerRoles...)
+	peerDNSRemoveCmd = append([]string{"--profile", peerProfile, "rm", "-s", "-f"}, peerRoles...)
 )
 
 // peerDNSConfigured reports whether the peer DNS service belongs in the stack:
@@ -55,7 +66,8 @@ func composeHasPeerDNS(stackDir string) bool {
 	return err == nil && strings.Contains(string(data), "\n  "+peerDNSRole+":\n")
 }
 
-// peerDNSService is the service appended to the materialized Compose file.
+// peerDNSService is the pair of peer services appended to the materialized
+// Compose file.
 // It runs the dnsserver binary with the peer handler, published only on the
 // mesh address — every interface would expose it on the LAN, and Docker
 // refuses a second publish of the loopback port. It is the last top-level
@@ -81,7 +93,25 @@ func peerDNSService(cfg config.Config) string {
       - "proximo.role=%[1]s"
       - "proximo.image=${PROXIMO_IMAGE:-%[6]s}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
-`, peerDNSRole, tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), peerProfile, peerDNSPort, cfg.Address, CanonicalImage())
+
+  %[7]s:
+    # The peer relay: copies TCP from the mesh address to Traefik, which
+    # listens on the loopback only. TLS terminates at Traefik, SNI intact.
+    image: *proximo-image
+    entrypoint: ["/usr/local/bin/peerrelay"]
+    profiles: [%[3]s]
+    restart: unless-stopped
+    logging: *proximo-logging
+    environment:
+      PROXIMO_RELAY_LISTEN: ":%[8]d"
+      PROXIMO_RELAY_TARGET: "traefik:443"
+    ports:
+      - "%[5]s:%[8]d:%[8]d/tcp"
+    labels:
+      - "proximo.role=%[7]s"
+      - "proximo.image=${PROXIMO_IMAGE:-%[6]s}"
+      - "proximo.version=${PROXIMO_VERSION:-dev}"
+`, peerDNSRole, tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), peerProfile, peerDNSPort, cfg.Address, CanonicalImage(), peerRelayRole, peerRelayPort)
 }
 
 // appendPeerDNS adds the peer DNS service to the materialized Compose file.
@@ -109,39 +139,45 @@ func startPeerDNS(c Composer, dir, tld string, cfg config.Config) {
 	if addrs, err := net.InterfaceAddrs(); err == nil && !config.AddressHeld(cfg.Address, addrs) {
 		cause = fmt.Sprintf("%s is held by no interface of this machine; the watcher starts the service once it is", cfg.Address)
 	}
-	fmt.Fprintf(os.Stderr, "⚠ %s: the peer DNS service did not start (%s). .%s is unaffected.\n", peerDNSRole, cause, tld)
+	fmt.Fprintf(os.Stderr, "⚠ %s: the peer services did not start (%s). .%s is unaffected.\n", strings.Join(peerRoles, ", "), cause, tld)
 }
 
-// restartPeerDNS starts the peer DNS service whenever it is created or exited.
+// restartPeerDNS starts each peer service whenever it is created or exited.
 // Docker Desktop and the mesh client both start at login, in no fixed order,
 // and Docker's restart policy never retries a container left `created`. It
 // runs on the watcher's fixed 30 s tick, never on an event, so a failed start
-// is retried at that pace and logged once until it succeeds. It inspects no
-// host interface, touches no other service, and finds nothing on a machine
-// where the service does not exist.
+// is retried at that pace and logged once per service until it succeeds. It
+// inspects no host interface, touches no other service, and finds nothing on
+// a machine where the services do not exist.
 func (w *Watcher) restartPeerDNS(ctx context.Context) {
+	// Docker ANDs repeated label filters, so filter on the key and pick the
+	// roles here.
 	res, err := w.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
-		Filters: make(client.Filters).Add("label", RoleLabel+"="+peerDNSRole),
+		Filters: make(client.Filters).Add("label", RoleLabel),
 	})
 	if err != nil {
 		return
 	}
+	if w.peerFailing == nil {
+		w.peerFailing = map[string]bool{}
+	}
 	for _, c := range res.Items {
-		if c.Labels[RoleLabel] != peerDNSRole {
+		role := c.Labels[RoleLabel]
+		if !slices.Contains(peerRoles, role) {
 			continue
 		}
 		if c.State != container.StateCreated && c.State != container.StateExited {
 			continue
 		}
 		if _, err := w.cli.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err != nil {
-			if !w.peerDNSFailing {
-				log.Printf("proximo watcher: start %s: %v; retrying every 30s", peerDNSRole, err)
+			if !w.peerFailing[role] {
+				log.Printf("proximo watcher: start %s: %v; retrying every 30s", role, err)
 			}
-			w.peerDNSFailing = true
+			w.peerFailing[role] = true
 			continue
 		}
-		w.peerDNSFailing = false
-		log.Printf("proximo watcher: started %s", peerDNSRole)
+		delete(w.peerFailing, role)
+		log.Printf("proximo watcher: started %s", role)
 	}
 }

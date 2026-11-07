@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -281,5 +282,39 @@ func TestObservedRoutesListTheContainersProximoWatchesWithoutRouting(t *testing.
 		t.Errorf("note = %q, want it to say there is no route and name the service to ask about", row.Note)
 	case strings.Contains(row.Note, "`"):
 		t.Errorf("note = %q, want no command: `status` is an inventory and never prints a Remedy", row.Note)
+	}
+}
+
+// status says where routed traffic is listened on from what Docker reports,
+// so a stack still on the wildcard is told apart from one on the loopback.
+func TestListensAreTraefikAndThePeerRelay(t *testing.T) {
+	lo, mesh, any := netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("100.89.88.2"), netip.MustParseAddr("0.0.0.0")
+	cs := []container.Summary{
+		{Labels: map[string]string{RoleLabel: "traefik"}, Ports: []container.PortSummary{
+			{IP: lo, PublicPort: 443, PrivatePort: 443, Type: "tcp"},
+			{IP: lo, PublicPort: 80, PrivatePort: 80, Type: "tcp"},
+		}},
+		{Labels: map[string]string{RoleLabel: peerRelayRole}, Ports: []container.PortSummary{
+			{IP: mesh, PublicPort: 443, PrivatePort: 443, Type: "tcp"},
+		}},
+		// The DNS ports and a Project container are not routed traffic.
+		{Labels: map[string]string{RoleLabel: "dns"}, Ports: []container.PortSummary{{IP: lo, PublicPort: 5354, Type: "udp"}}},
+		{Ports: []container.PortSummary{{IP: any, PublicPort: 8080, Type: "tcp"}}},
+	}
+	info := StackInfo{Listens: listensOf(cs)}
+	want := []netip.AddrPort{
+		netip.AddrPortFrom(mesh, 443), netip.AddrPortFrom(lo, 80), netip.AddrPortFrom(lo, 443),
+	}
+	if !slices.Equal(info.Listens, want) {
+		t.Errorf("Listens = %v, want %v", info.Listens, want)
+	}
+	if info.OnEveryInterface() {
+		t.Error("a loopback stack reported as on every interface")
+	}
+	old := StackInfo{Listens: listensOf([]container.Summary{{Labels: map[string]string{RoleLabel: "traefik"}, Ports: []container.PortSummary{
+		{IP: any, PublicPort: 443, PrivatePort: 443, Type: "tcp"},
+	}}})}
+	if !old.OnEveryInterface() {
+		t.Error("a stack on 0.0.0.0 not reported as on every interface")
 	}
 }

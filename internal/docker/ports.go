@@ -54,9 +54,14 @@ func portOwners(cs []container.Summary) map[string]PortOwner {
 			if p.PublicPort == 0 {
 				continue
 			}
-			// Two containers cannot publish one host port at the same time —
-			// Docker refuses the second — so there is nothing to arbitrate here.
-			owners[PortKey(int(p.PublicPort), p.Type)] = PortOwner{Container: primaryName(c), Stack: isStack}
+			// One port can be published on two addresses — Traefik on the
+			// loopback, the peer relay on the mesh address — so the stack's
+			// claim is never overwritten by a stranger's on another address.
+			k := PortKey(int(p.PublicPort), p.Type)
+			if owners[k].Stack && !isStack {
+				continue
+			}
+			owners[k] = PortOwner{Container: primaryName(c), Stack: isStack}
 		}
 	}
 	return owners
