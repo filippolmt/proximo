@@ -78,7 +78,7 @@ On the colleague's machine:
 5. Fully restart the browser. Use Chrome 126 or later, or Firefox.
 
 Run `proximo trust` as yourself: it asks for `sudo` itself, and refuses to run
-under `sudo` ([why](cli.md#proximo-under-sudo)).
+under `sudo` ([why](cli.md#running-under-sudo)).
 
 ## Enrolling a sharing machine
 

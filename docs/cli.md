@@ -35,18 +35,16 @@ proximo <command> [args]
 | [`uninstall`](#proximo-uninstall) | Reverse all host changes + stop the stack | yes | yes |
 | [`version`](#proximo-version) | Print version, commit, build date | no | no |
 
-Run every command as yourself. A command that needs administrator rights asks
-for `sudo` itself, for each privileged write.
-
 ---
 
-## proximo under sudo
+## Running under sudo
 
-Every command refuses to run under `sudo` and prints the same command without
+Run every command as yourself: a command that needs administrator rights asks
+for `sudo` itself, for each privileged write. Every command refuses to run under `sudo` and prints the same command without
 it. Under `sudo`, Ubuntu sets `HOME` to root's, so proximo would read and write
 root's configuration, CA and team root instead of yours, and split the state
 across two homes. Root without `sudo` (no `SUDO_USER`) is not refused, nor is
-`--help`.
+reading the help (`help`, `--help`).
 
 ## proximo install
 

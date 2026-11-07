@@ -28,13 +28,34 @@ func TestRefuseUnderSudo(t *testing.T) {
 		{"plain user", 1000, "", false},
 	}
 	for _, c := range cases {
-		err := refuseUnderSudo(c.euid, env(c.user), args)
+		err := refuseUnderSudo(c.euid, env(c.user), args, false)
 		if (err != nil) != c.refuse {
 			t.Errorf("%s: err = %v, want refusal %v", c.name, err, c.refuse)
 		}
 	}
-	err := refuseUnderSudo(0, env("me"), args)
-	if want := "\n  proximo config team-root '/home/me/team root.crt'"; err == nil || !strings.HasSuffix(err.Error(), want) {
+	if err := refuseUnderSudo(0, env("me"), args, true); err != nil {
+		t.Errorf("help under sudo refused: %v", err)
+	}
+	err := refuseUnderSudo(0, env("me"), args, false)
+	if want := "\n    Remedy: proximo config team-root '/home/me/team root.crt'"; err == nil || !strings.HasSuffix(err.Error(), want) {
 		t.Errorf("remedy = %q, want suffix %q", err, want)
+	}
+}
+
+func TestAsksForHelp(t *testing.T) {
+	root := newRootCmd()
+	for args, want := range map[string]bool{
+		"help":                   true,
+		"help trust":             true,
+		"trust --help":           true,
+		"config team-root -h":    true,
+		"trust":                  false,
+		"config team-root x.crt": false,
+		"trust --typo":           false,
+		"":                       false,
+	} {
+		if got := asksForHelp(root, strings.Fields(args)); got != want {
+			t.Errorf("asksForHelp(%q) = %v, want %v", args, got, want)
+		}
 	}
 }

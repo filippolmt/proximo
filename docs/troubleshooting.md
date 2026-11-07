@@ -135,6 +135,18 @@ nor the stack, so it works while proximo is up, without a `down`/`up` cycle.
 Restart the browser again afterwards. To confirm the CA landed in both stores,
 run [`proximo doctor`](cli.md#proximo-doctor).
 
+## proximo was run under sudo
+
+proximo refuses to run under `sudo` ([why](cli.md#running-under-sudo)). A
+version that did not refuse used root's home on Ubuntu: it created a local CA in
+`/root/.proximo`, trusted it in place of yours, and never installed a team root
+configured for you. On Linux, as yourself:
+
+```sh
+proximo trust                # puts your local CA back in the system store
+sudo rm -rf /root/.proximo   # root's CA and key, no longer trusted
+```
+
 ## Traefik logs failed to find any PEM data
 
 Older versions logged a recurring, harmless error on every container restart:
@@ -642,18 +654,6 @@ Read what the certificate names:
   diagnostic that matches one alert string is wrong on some client. It means a
   certificate was issued outside the machine's subtree, which the configuration
   refusals exist to prevent.
-
-## proximo was run under sudo
-
-proximo refuses to run under `sudo` ([why](cli.md#proximo-under-sudo)). A
-version that did not refuse used root's home on Ubuntu: it created a local CA in
-`/root/.proximo`, trusted it in place of yours, and never installed a team root
-configured for you. On Linux, as yourself:
-
-```sh
-proximo trust                # puts your local CA back in the system store
-sudo rm -rf /root/.proximo   # root's CA and key, no longer trusted
-```
 
 ## A shared link is slow
 
