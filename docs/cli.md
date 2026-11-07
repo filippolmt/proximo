@@ -227,6 +227,18 @@ work-api-1  ⚠ api.test is served by shop-api-1; this container answers at api.
 A collision costs a bare host, not a service — see
 [a host collision is reported](troubleshooting.md#a-host-collision-is-reported).
 
+The routes are read off the containers' labels, so they are listed whether or not
+the stack is serving them. When it is not, a last line says so, and `proximo
+doctor` names what is missing and the command that brings it back:
+
+```
+⚠ the proximo stack is not running, so none of these URLs answers — `proximo doctor`
+```
+
+A stack missing one of its core services (`traefik`, `dns`, `watcher`) prints the
+same line as *degraded*, naming the service — see
+[degraded stack](troubleshooting.md#degraded-stack).
+
 The `traefik.<tld>` route is the stack's own
 [dashboard](#proximo-up) — listed whenever the stack is running, since the
 watcher serves it unconditionally.

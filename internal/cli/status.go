@@ -51,6 +51,24 @@ func writeInspectionNotes(out io.Writer, routes []docker.Route) {
 	}
 }
 
+// stackNote is the one line status prints about the stack itself: the routes
+// are read off container labels, so without it a stopped stack lists every route
+// as if it answered. A fact about reachability, not a Remedy — that is doctor's.
+func stackNote(info docker.StackInfo) string {
+	if !info.Running {
+		return warnPrefix + "the proximo stack is not running, so none of these URLs answers — `proximo doctor`"
+	}
+	if missing := info.MissingRoles(); len(missing) > 0 {
+		verb := "is"
+		if len(missing) > 1 {
+			verb = "are"
+		}
+		return fmt.Sprintf("%sthe proximo stack is degraded (%s %s not running), so these URLs may not answer — `proximo doctor`",
+			warnPrefix, strings.Join(missing, " and "), verb)
+	}
+	return ""
+}
+
 func newStatusCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
@@ -93,6 +111,13 @@ func newStatusCmd() *cobra.Command {
 				}
 				_, err = out.Write(data)
 				return err
+			}
+			// Best-effort: Docker is reachable, so an error here only loses the note.
+			// Deferred so it prints last, under the table and the inspection notes.
+			if info, err := docker.StackStatus(ctx); err == nil {
+				if note := stackNote(info); note != "" {
+					defer fmt.Fprintln(out, "\n"+note)
+				}
 			}
 			if len(routes) == 0 {
 				fmt.Fprintln(out, "No routed containers.")

@@ -31,6 +31,7 @@ first: what it shows picks the branch.
 
 | `proximo status` shows | Read |
 | --- | --- |
+| A last line saying the proximo stack is not running or degraded | Run `proximo doctor`. A Remedy of `proximo up` is yours to run; any other is the developer's. Then run `proximo status` again: until the line is gone the routes listed may not answer, so no other row applies |
 | No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
@@ -48,10 +49,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://<host>
 ## Rules, in every branch
 
 **A Remedy that changes the host is the developer's to run.** `proximo doctor`
-reports Checks, and every failed Check carries a Remedy — the exact command.
-Hand over the ones that install, trust, or ask for a password: proximo's contract
-is that every mutation of a machine stays a command its owner typed. Run the
-read-only commands yourself, and say which one you are running.
+reports Checks, and every failed Check carries a Remedy — the exact command. Hand
+over the ones that install, trust, or ask for a password: proximo's contract is
+that every mutation of a machine stays a command its owner typed. Run the
+read-only commands yourself, and `proximo up` when the stack is down or degraded:
+it starts the stack's containers and changes nothing on the host. Say which
+command you are running.
 
 **Recreating the stack empties the Exchange buffer.** Exchanges are held in
 memory and bounded, so whatever recreates the `inspector` — `proximo down` then
