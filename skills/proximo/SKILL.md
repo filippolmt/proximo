@@ -79,18 +79,19 @@ stopped is an Incident. It has to pass once first — a check that never passed
 declares nothing when it fails — so propose a `start_period` with it, which keeps
 a slow first job from being reported unhealthy on the way there.
 
-**A call to a local container goes through its route.** A request made from the
-host that checks a service running in a local container — `curl`, `wget`, a test
-suite, a script — goes to `https://<qualified host>`, resolved by proximo's DNS
-and verified against its CA: the path the developer's browser takes, so the result
-covers the name, the certificate, the router and the health gate. A name that
-does not resolve or a certificate that is refused is itself the finding: run
-`proximo doctor`, read [`references/routing.md`](references/routing.md), and keep
-the call unchanged.
-`localhost:<port>`, the container's IP, `-k`, `--resolve` and `/etc/hosts` each
-answer a different question and hide the one you were asked. Any other host —
-`google.com`, a staging API — is outside proximo: call it as it is. A call made
-from inside a container follows that container's own networking.
+**A call to a local container goes through its route.** A request that checks a
+service running in a local container — `curl`, `wget`, a test suite, a script —
+made from the host, or from a dev container that pins proximo's names, goes to
+`https://<qualified host>`, resolved through proximo and verified against its CA:
+the path the developer's browser takes, so the result covers the name, the
+certificate, the router and the health gate. A name that does not resolve or a
+certificate that is refused is itself the finding: run `proximo doctor`, read
+[`references/routing.md`](references/routing.md), and keep the call unchanged.
+`localhost:<port>`, the container's IP, `-k`, `--resolve` and a hand-written
+`/etc/hosts` entry each answer a different question and hide the one you were
+asked. Any other host — `google.com`, a staging API — is outside proximo: call it
+as it is. A call made from any other container follows that container's own
+networking.
 
 **A hostname is a proximo label.** When a service needs a name, declare it with
 `proximo.hosts` under the configured TLD (`proximo config tld`), or
