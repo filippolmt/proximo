@@ -18,43 +18,22 @@ Targets, the single-test invocation, and the lifecycle targets
 ## Doc map (question → section)
 
 Architecture lives in `docs/`, never here. Whole picture:
-[docs/architecture.md](docs/architecture.md); every guide, section by section:
-[docs/README.md](docs/README.md).
+[docs/architecture.md](docs/architecture.md). Any other question about a guide: find its
+heading in [docs/README.md](docs/README.md), which links every `##` section. The rows below
+are the questions a heading does not answer:
 
 | Question | Read |
 | --- | --- |
 | Which component owns what | [docs/architecture.md — Source map](docs/architecture.md#source-map) |
 | What a domain term means, and which words to avoid | [CONTEXT.md](CONTEXT.md) |
 | Why a design is the way it is, and what was rejected | [docs/adr/](docs/adr/) |
-| Routing label contract & port resolution | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels) |
-| Which hosts are reserved for the stack | [docs/routing.md — proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
-| The bare + qualified host every route answers on | [docs/routing.md — The two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets) |
-| Sharing a route with colleagues (`proximo.share`, peer names, the team root, the mesh) | [docs/sharing.md](docs/sharing.md), [docs/routing.md — proximo.share](docs/routing.md#proximoshare--share-a-route-with-colleagues) |
-| The steps to set up sharing for a team, in order | [docs/sharing-setup.md](docs/sharing-setup.md) |
+| Routing label contract & port resolution; which hosts are reserved for the stack | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels), [proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
+| Sharing a route with colleagues, and the team setup steps in order | [docs/sharing.md](docs/sharing.md), [docs/sharing-setup.md](docs/sharing-setup.md) |
 | How peer routes, peer leaves and the peer DNS service are built, and why they are inert unconfigured | [docs/architecture.md — Peer sharing](docs/architecture.md#peer-sharing), [docs/adr/0010–0013](docs/adr/) |
-| A host collision: what is reported and what to do | [docs/troubleshooting.md — A host collision is reported](docs/troubleshooting.md#a-host-collision-is-reported) |
 | What a Check reports, and why `status` never prints a Remedy | [docs/cli.md — proximo doctor](docs/cli.md#proximo-doctor) |
 | The Skill proximo ships to agents, and what makes a copy Managed | [docs/skill.md](docs/skill.md) |
-| `skills/` (published) vs `.claude/skills/` (consumed), and `make skill-refs` | [docs/development.md — The published skill](docs/development.md#the-published-skill-skills) |
-| HTTP→HTTPS redirect semantics (opt-in, 302) | [docs/routing.md — proximo.redirect](docs/routing.md#proximoredirect--opt-in-to-the-httphttps-redirect) |
-| Health-gated routing & the `proximo.health=false` opt-out | [docs/routing.md — proximo.health](docs/routing.md#proximohealth--wait-for-the-container-to-be-healthy) |
-| Curated middleware labels (auth/CORS/custom headers) & escape hatch | [docs/routing.md — proximo middlewares](docs/routing.md#proximo-middlewares--auth-cors-custom-headers) |
-| Browser stops trusting the cert; re-trust the CA stack-safe | [docs/cli.md — proximo trust](docs/cli.md#proximo-trust) / [troubleshooting.md — Certificate warnings](docs/troubleshooting.md#certificate-warnings-in-firefox-or-chrome) |
-| Where watcher warnings appear | [docs/troubleshooting.md — Where to read watcher warnings](docs/troubleshooting.md#where-to-read-watcher-warnings) |
-| 502/503 right after a container restarts (health gating fix) | [docs/troubleshooting.md — 502/503 right after a container restarts](docs/troubleshooting.md#502503-right-after-a-container-restarts) |
-| A stack image pull that failed (the Remedy) | [docs/troubleshooting.md — The stack image cannot be pulled](docs/troubleshooting.md#the-stack-image-cannot-be-pulled) |
-| Version skew & how updates apply | [docs/updating.md — proximo update](docs/updating.md#proximo-update) |
-| Where the stack's Go binaries come from; running a different image | [docs/updating.md — Running a different image](docs/updating.md#running-a-different-image) |
-| What `install` changes on the host (sudo, reversal) | [docs/installation.md — What install changes on your host](docs/installation.md#what-install-changes-on-your-host) |
-| What a container wrote during a request, and why proximo stores none of it | [docs/observability.md — Transcripts](docs/observability.md#transcripts--what-the-container-said) |
-| What proximo remembers about a container with no route (Incidents), and the label that makes one known | [docs/observability.md — Incidents](docs/observability.md#incidents--what-the-runtime-declared), [docs/adr/0007](docs/adr/0007-proximo-remembers-what-the-runtime-declares.md) |
-| A container that keeps dying but reports no Incident | [docs/troubleshooting.md — proximo errors reports no Incident](docs/troubleshooting.md#proximo-errors-reports-no-incident) |
-| What proximo answers about a live container that may be stuck, and the conclusion it refuses to draw | [docs/observability.md — Readings](docs/observability.md#readings--what-the-runtime-says-right-now) |
-| How a project makes "not progressing" an Incident without proximo inferring anything | [docs/observability.md — Making "not progressing" an Incident](docs/observability.md#making-not-progressing-an-incident), [docs/adr/0008](docs/adr/0008-proximo-measures-the-project-concludes.md) |
-| Client-side errors correlated with the response (`proximo.inspect`) | [docs/observability.md — Inspection](docs/observability.md#inspection--what-the-browser-saw) |
+| Transcript, Incident, Reading, Inspection: what each records, and what proximo refuses to store or conclude | [docs/observability.md](docs/observability.md), [docs/adr/0006–0008](docs/adr/) |
 | The `proximo errors` output contract & the DOM snapshot | [docs/cli.md — proximo errors](docs/cli.md#proximo-errors) |
-| Reading a whole Transcript, the window an Incident fixes, and the `--since` instant | [docs/cli.md — proximo errors transcript](docs/cli.md#proximo-errors-transcript) |
-| Observability bootstrap (Beszel hub/agent) | [docs/observability.md — How it is wired](docs/observability.md#how-it-is-wired) |
 
 ## Conventions & gotchas
 
@@ -98,7 +77,8 @@ compiler will not enforce:
 - Releases (tag → GoReleaser) and the CI workflows:
   [Releases](docs/development.md#releases)
 - Documentation-only changes (Markdown, `docs/`, agent files — no code, no
-  generated files): open the PR and merge it straight away, **without running CI**.
+  generated files): run `make check-links` locally — `[skip ci]` also skips the docs
+  link-check — then open the PR and merge it straight away, **without running CI**.
   Put `[skip ci]` in the commit message, the PR title and the squash-merge subject,
   so neither the `pull_request` nor the `push` to `main` triggers a workflow. A change
   under `docs/` that `make skill-refs` would regenerate is not documentation-only.
