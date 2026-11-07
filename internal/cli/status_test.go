@@ -27,3 +27,21 @@ func TestPeerCell(t *testing.T) {
 		}
 	}
 }
+
+func TestStackNote(t *testing.T) {
+	cases := []struct {
+		name string
+		info docker.StackInfo
+		want string
+	}{
+		{"whole", docker.StackInfo{Running: true, Roles: []string{"traefik", "dns", "inspector", "watcher"}}, ""},
+		{"down", docker.StackInfo{}, warnPrefix + "the proximo stack is not running, so none of these URLs answers — `proximo doctor`"},
+		{"degraded", docker.StackInfo{Running: true, Roles: []string{"traefik", "dns"}}, warnPrefix + "the proximo stack is degraded (watcher is not running), so these URLs may not answer — `proximo doctor`"},
+		{"degraded twice", docker.StackInfo{Running: true, Roles: []string{"traefik"}}, warnPrefix + "the proximo stack is degraded (dns and watcher are not running), so these URLs may not answer — `proximo doctor`"},
+	}
+	for _, tc := range cases {
+		if got := stackNote(tc.info); got != tc.want {
+			t.Errorf("%s: stackNote = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
