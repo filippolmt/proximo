@@ -266,8 +266,9 @@ container is gone or its log has rotated past that window. It says so in those
 words rather than printing an empty quote, and it never substitutes the output of
 whatever container answers to that name now.
 
-Incidents are held in memory, so `proximo up` discards them along with the
-Exchange buffer.
+Incidents are held in memory, so recreating the stack — `proximo down` then `up`,
+`proximo update`, or an `up` that brings a new stack image — discards them along
+with the Exchange buffer. An `up` over an unchanged running stack keeps both.
 
 ## Readings — what the runtime says right now
 
@@ -453,8 +454,9 @@ usually already point at real files.
 ### Where the data lives
 
 In memory in the hop, in a ring buffer bounded by bytes (64 MiB by default),
-oldest evicted first — and **lost when the stack restarts**, `proximo up`
-included. Reproduce a problem after a restart, not before; `proximo errors` tells
+oldest evicted first — and **lost when the stack is recreated**: `proximo down`
+then `up`, `proximo update`, or an `up` that brings a new stack image. An `up` over
+an unchanged running stack keeps it. Reproduce a problem after a recreate, not before; `proximo errors` tells
 you when a recent restart is why it has nothing to show. That is deliberate:
 client reports carry exception messages, breadcrumbs and a copy of the page,
 which in development routinely means tokens, session data and whatever you were
