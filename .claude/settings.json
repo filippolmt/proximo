@@ -21,24 +21,9 @@
           }
         ]
       }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "codegraph prompt-hook"
-          }
-        ]
-      }
     ]
   },
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true
-  },
-  "permissions": {
-    "allow": [
-      "mcp__codegraph__*"
-    ]
   }
 }
