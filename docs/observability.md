@@ -266,9 +266,8 @@ container is gone or its log has rotated past that window. It says so in those
 words rather than printing an empty quote, and it never substitutes the output of
 whatever container answers to that name now.
 
-Incidents are held in memory, so recreating the stack — `proximo down` then `up`,
-`proximo update`, or an `up` that brings a new stack image — discards them along
-with the Exchange buffer. An `up` over an unchanged running stack keeps both.
+Incidents are held in memory, and are lost on the same occasions as the Exchange
+buffer: [when the stack is recreated](#where-the-data-lives).
 
 ## Readings — what the runtime says right now
 
