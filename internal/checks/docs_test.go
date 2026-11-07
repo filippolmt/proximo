@@ -29,6 +29,7 @@ var unverifiable = map[string]string{
 	"a-colleague-sees-a-certificate-error-on-a-shared-link":       "read off the certificate in a colleague's browser; the sharing machine's side is peer-intermediate",
 	"a-shared-link-is-slow":                                       "the relayed path between two machines, which neither side's Check can measure",
 	"a-publishing-machine-is-not-a-resolving-peer":                "which machines the mesh distributes a nameserver group to is visible only from the mesh; this machine sees it as mesh failing, whose section points here",
+	"proximo-was-run-under-sudo":                                  "leftovers of a version that did not refuse sudo; reading root's home needs the privilege a Check never asks for",
 	"a-transcript-is-empty-or-says-the-container-is-gone":         "each outcome is a fact about one Exchange or Incident, named by `proximo errors` as it prints it; there is nothing about the host to state up front",
 }
 

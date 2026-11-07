@@ -76,6 +76,7 @@ Why a design is the way it is, and what was rejected on the way.
 
 ### [CLI reference](cli.md)
 
+[Running under sudo](cli.md#running-under-sudo) ·
 [`proximo install`](cli.md#proximo-install) ·
 [`proximo up`](cli.md#proximo-up) ·
 [`proximo down`](cli.md#proximo-down) ·
@@ -193,6 +194,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Port 443 or 80 already in use](troubleshooting.md#port-443-or-80-already-in-use) ·
 [macOS UDP forwarding](troubleshooting.md#macos-udp-forwarding) ·
 [Certificate warnings in Firefox or Chrome](troubleshooting.md#certificate-warnings-in-firefox-or-chrome) ·
+[proximo was run under sudo](troubleshooting.md#proximo-was-run-under-sudo) ·
 [Traefik logs failed to find any PEM data](troubleshooting.md#traefik-logs-failed-to-find-any-pem-data) ·
 [macOS Gatekeeper blocks the binary](troubleshooting.md#macos-gatekeeper-blocks-the-binary) ·
 [Where to read watcher warnings](troubleshooting.md#where-to-read-watcher-warnings) ·

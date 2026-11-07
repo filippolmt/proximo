@@ -37,6 +37,15 @@ proximo <command> [args]
 
 ---
 
+## Running under sudo
+
+Run every command as yourself: a command that needs administrator rights asks
+for `sudo` itself, for each privileged write. Every command refuses to run under `sudo` and prints the same command without
+it. Under `sudo`, Ubuntu sets `HOME` to root's, so proximo would read and write
+root's configuration, CA and team root instead of yours, and split the state
+across two homes. Root without `sudo` (no `SUDO_USER`) is not refused, nor is
+reading the help (`help`, `--help`).
+
 ## proximo install
 
 Preflight, generate the CA, configure the host resolver, install CA trust, and

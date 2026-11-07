@@ -158,7 +158,7 @@ _Avoid_: test, validation, probe
 
 **Remedy**:
 The exact command a developer runs after a failed Check, and every failed check
-carries one. Where a cure exists the remedy is the cure; where the cause is
+carries one. A refused invocation carries one too. Where a cure exists the remedy is the cure; where the cause is
 unknown it is the command whose own output names it — a port held by an unnamed
 process has no fix, but it has a question. proximo prints remedies; the
 developer runs them, so every mutation of the host stays a verb the developer

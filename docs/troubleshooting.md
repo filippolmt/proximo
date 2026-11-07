@@ -135,6 +135,18 @@ nor the stack, so it works while proximo is up, without a `down`/`up` cycle.
 Restart the browser again afterwards. To confirm the CA landed in both stores,
 run [`proximo doctor`](cli.md#proximo-doctor).
 
+## proximo was run under sudo
+
+proximo refuses to run under `sudo` ([why](cli.md#running-under-sudo)). A
+version that did not refuse used root's home on Ubuntu: it created a local CA in
+`/root/.proximo`, trusted it in place of yours, and never installed a team root
+configured for you. On Linux, as yourself:
+
+```sh
+proximo trust                # puts your local CA back in the system store
+sudo rm -rf /root/.proximo   # root's CA and key, no longer trusted
+```
+
 ## Traefik logs failed to find any PEM data
 
 Older versions logged a recurring, harmless error on every container restart:
@@ -617,11 +629,11 @@ Read what the certificate names:
   installed on the colleague's machine: macOS reports `CSSMERR_TP_NOT_TRUSTED`,
   Chrome shows a warning that cannot be clicked through, Firefox
   `SEC_ERROR_UNKNOWN_ISSUER`. Install it
-  ([enrolling a colleague](sharing-setup.md#enrolling-a-colleague)). On Linux two
-  causes leave it out with no error: `proximo trust` run under `sudo`, which
-  reads root's configuration instead of yours, and a Chrome that had never
-  started, so its certificate store did not exist yet. Run `proximo trust` as
-  yourself once Chrome has started once.
+  ([enrolling a colleague](sharing-setup.md#enrolling-a-colleague)). On Linux a Chrome
+  that had never started leaves it out with no error: its certificate store did
+  not exist yet. Run `proximo trust` once Chrome has started once. A
+  `sudo proximo trust` from before proximo refused `sudo` also left it out
+  ([cleaning up](#proximo-was-run-under-sudo)).
 - **The intermediate has expired.** proximo keeps issuing valid leaves under it,
   so only the colleague's browser sees the failure. On the sharing machine
   `peer-intermediate` fails a month ahead.
