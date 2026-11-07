@@ -236,8 +236,12 @@ func held(port int, proto string) bool {
 // pathological case, not the normal one.
 const dialTimeout = time.Second
 
+// handshakeTimeout bounds the peer relay's TLS question. Unlike dialTimeout it
+// dials the mesh address, where a dropped packet looks like silence.
+const handshakeTimeout = 5 * time.Second
+
 func tlsHandshake(ctx context.Context, addr, serverName string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	// The certificate is not judged here: peer-intermediate owns that, and a
 	// leaf under the team root is not in this machine's trust store anyway.

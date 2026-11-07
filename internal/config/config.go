@@ -187,6 +187,10 @@ func ParseAddress(raw string) (string, error) {
 // check catches a typo or a stale value, never a wrong-but-local address.
 const AddressRule = "The address must be this machine's own address on the mesh. proximo checks only that some interface holds it: it cannot tell the mesh address from the LAN address or 127.0.0.1."
 
+// AddressNotHeld is the one cause of a failed peer bind proximo can see,
+// worded once for every place that reports it.
+const AddressNotHeld = "is held by no interface of this machine"
+
 // AddressHeld reports whether one of addrs (as net.InterfaceAddrs returns
 // them) is exactly addr. Exact, never subnet membership: a mesh range is
 // typically a /8, and membership in it asserts almost nothing.

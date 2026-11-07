@@ -225,7 +225,7 @@ func routesOf(ctx context.Context, inspect inspector, cs []container.Summary, tl
 		}
 		return routes[i].Container < routes[j].Container
 	})
-	if id, _ := findStackContainer(cs, "traefik"); id == "" {
+	if id, _ := findStackContainer(cs, traefikRole); id == "" {
 		return markStackDown(routes)
 	}
 	return routes
@@ -311,7 +311,7 @@ func servedRoutes(resolved routeResolution, refused map[string]string, shareTCP 
 // instead of classifying the role-labeled container (which never routes).
 func dashboardRoutes(cs []container.Summary, tld string) []Route {
 	for _, c := range cs {
-		if c.Labels[RoleLabel] == "traefik" {
+		if c.Labels[RoleLabel] == traefikRole {
 			host := dashboardHost(tld)
 			return []Route{{Container: primaryName(c), Host: host, URL: "https://" + host}}
 		}
@@ -356,8 +356,11 @@ type StackInfo struct {
 	Listens []netip.AddrPort
 }
 
+// traefikRole is the proximo.role of the stack's Traefik.
+const traefikRole = "traefik"
+
 // listenRoles are the stack services that carry routed traffic.
-var listenRoles = []string{"traefik", peerRelayRole}
+var listenRoles = []string{traefikRole, peerRelayRole}
 
 // OnEveryInterface reports whether any routed-traffic port is published on an
 // unspecified address, which puts every route on the LAN.
@@ -390,7 +393,7 @@ func listensOf(cs []container.Summary) []netip.AddrPort {
 // inspector is deliberately not one: it is idle unless a route carries
 // proximo.inspect, and an older stack that predates it is a version skew, not a
 // degraded stack.
-var coreRoles = []string{"traefik", "dns", "watcher"}
+var coreRoles = []string{traefikRole, "dns", "watcher"}
 
 // MissingRoles returns the core stack services that are not running, in the
 // order they are named above. Empty means the stack is whole.
@@ -474,7 +477,7 @@ func StackRecordsAccessLog(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, c := range res.Items {
-		if c.Labels[RoleLabel] != "traefik" {
+		if c.Labels[RoleLabel] != traefikRole {
 			continue
 		}
 		got, err := cli.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})

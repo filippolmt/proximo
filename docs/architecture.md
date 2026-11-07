@@ -54,9 +54,10 @@ substituted in.
 
 ## The stack: four services
 
-The three Go services share **one published image**,
-`ghcr.io/filippolmt/proximo:<cli-version>` — all three binaries in it, one
-picked per service with an `entrypoint`. Nothing is compiled on your host, and
+The Go services share **one published image**,
+`ghcr.io/filippolmt/proximo:<cli-version>` — all four binaries in it, one
+picked per service with an `entrypoint`; the two peer services, on a machine
+that shares, run it too. Nothing is compiled on your host, and
 the tag is the CLI's own version, never `latest`, so a binary can never pull
 services speaking a label contract it has never seen
 ([ADR 0002](adr/0002-stack-services-ship-as-one-published-image.md)).

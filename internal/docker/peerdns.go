@@ -79,50 +79,64 @@ func composePeerRoles(stackDir string) []string {
 }
 
 // peerServices is the pair of peer services appended to the materialized
-// Compose file: the dnsserver binary with the peer handler, and the peer
-// relay. Both are published only on the mesh address — every interface would
-// expose them on the LAN, and Docker refuses a second publish of the loopback
-// port. It is the last top-level
-// mapping's last entry, so appending keeps the file well-formed.
+// Compose file. Both are published only on the mesh address — every interface
+// would expose them on the LAN, and Docker refuses a second publish of the
+// loopback port. The stack's services mapping is the file's last entry, so
+// appending keeps the file well-formed.
 func peerServices(cfg config.Config) string {
-	return fmt.Sprintf(`
-  %[1]s:
-    # The peer DNS service: answers %[2]s on the mesh address. Present only
-    # because machine, peer-suffix and address are configured.
-    image: *proximo-image
-    entrypoint: ["/usr/local/bin/dnsserver"]
-    profiles: [%[3]s]
-    restart: unless-stopped
-    logging: *proximo-logging
-    environment:
-      PROXIMO_DNS_ADDR: ":%[4]d"
-      PROXIMO_PEER_SUBTREE: "%[2]s"
-      PROXIMO_PEER_ADDRESS: "%[5]s"
-    ports:
-      - "%[5]s:%[4]d:%[4]d/udp"
-      - "%[5]s:%[4]d:%[4]d/tcp"
-    labels:
-      - "proximo.role=%[1]s"
-      - "proximo.image=${PROXIMO_IMAGE:-%[6]s}"
-      - "proximo.version=${PROXIMO_VERSION:-dev}"
+	return peerDNSService(cfg) + peerRelayService(cfg)
+}
 
-  %[7]s:
+// peerDNSService runs the dnsserver binary with the peer handler.
+func peerDNSService(cfg config.Config) string {
+	subtree := tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix)
+	return fmt.Sprintf(`
+  %s:
+    # The peer DNS service: answers %s on the mesh address. Present only
+    # because machine, peer-suffix and address are configured.
+%s    entrypoint: ["/usr/local/bin/dnsserver"]
+    environment:
+      PROXIMO_DNS_ADDR: ":%d"
+      PROXIMO_PEER_SUBTREE: "%s"
+      PROXIMO_PEER_ADDRESS: "%s"
+    ports:
+      - "%s:%d:%d/udp"
+      - "%s:%d:%d/tcp"
+%s`, peerDNSRole, subtree, peerServiceBase, peerDNSPort, subtree, cfg.Address,
+		cfg.Address, peerDNSPort, peerDNSPort, cfg.Address, peerDNSPort, peerDNSPort, stackLabels(peerDNSRole))
+}
+
+// peerRelayService runs the peer relay, which copies TCP from the mesh
+// address to Traefik. Its target is the binary's own default, traefik:443.
+func peerRelayService(cfg config.Config) string {
+	return fmt.Sprintf(`
+  %s:
     # The peer relay: copies TCP from the mesh address to Traefik, which
     # listens on the loopback only. TLS terminates at Traefik, SNI intact.
-    image: *proximo-image
-    entrypoint: ["/usr/local/bin/peerrelay"]
-    profiles: [%[3]s]
+%s    entrypoint: ["/usr/local/bin/peerrelay"]
+    environment:
+      PROXIMO_RELAY_LISTEN: ":%d"
+    ports:
+      - "%s:%d:%d/tcp"
+%s`, peerRelayRole, peerServiceBase, peerRelayPort, cfg.Address, peerRelayPort, peerRelayPort, stackLabels(peerRelayRole))
+}
+
+// peerServiceBase is what every peer service shares: the stack image, the
+// peer profile, the restart policy and the log caps.
+const peerServiceBase = `    image: *proximo-image
+    profiles: [` + peerProfile + `]
     restart: unless-stopped
     logging: *proximo-logging
-    environment:
-      PROXIMO_RELAY_LISTEN: ":%[8]d"
-    ports:
-      - "%[5]s:%[8]d:%[8]d/tcp"
-    labels:
-      - "proximo.role=%[7]s"
-      - "proximo.image=${PROXIMO_IMAGE:-%[6]s}"
+`
+
+// stackLabels are the labels every image-backed stack service carries: its
+// role, and the image and version it was started from.
+func stackLabels(role string) string {
+	return fmt.Sprintf(`    labels:
+      - "proximo.role=%s"
+      - "proximo.image=${PROXIMO_IMAGE:-%s}"
       - "proximo.version=${PROXIMO_VERSION:-dev}"
-`, peerDNSRole, tls.MachineSubtree(cfg.Machine, cfg.PeerSuffix), peerProfile, peerDNSPort, cfg.Address, CanonicalImage(), peerRelayRole, peerRelayPort)
+`, role, CanonicalImage())
 }
 
 // appendPeerServices adds the peer services to the materialized Compose file.
@@ -148,7 +162,7 @@ func startPeerServices(c Composer, dir, tld string, cfg config.Config) {
 	}
 	cause := "see the error above"
 	if addrs, err := net.InterfaceAddrs(); err == nil && !config.AddressHeld(cfg.Address, addrs) {
-		cause = fmt.Sprintf("%s is held by no interface of this machine; the watcher starts the services once it is", cfg.Address)
+		cause = fmt.Sprintf("%s %s; the watcher starts the services once it is", cfg.Address, config.AddressNotHeld)
 	}
 	fmt.Fprintf(os.Stderr, "⚠ %s: the peer services did not start (%s). .%s is unaffected.\n", strings.Join(peerRoles, ", "), cause, tld)
 }
@@ -169,9 +183,6 @@ func (w *Watcher) restartPeerServices(ctx context.Context) {
 	})
 	if err != nil {
 		return
-	}
-	if w.peerFailing == nil {
-		w.peerFailing = map[string]bool{}
 	}
 	for _, c := range res.Items {
 		role := c.Labels[RoleLabel]

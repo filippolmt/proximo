@@ -446,11 +446,15 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	return dir, nil
 }
 
+// stackQueryTimeout bounds the one Docker question converge asks before it
+// runs: a daemon that does not answer costs the notice, never the converge.
+const stackQueryTimeout = 5 * time.Second
+
 // onEveryInterface reports whether the running stack publishes routed
 // traffic on an unspecified address. A var so converge is testable without
 // Docker; no stack, or no Docker, is false.
 var onEveryInterface = func() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stackQueryTimeout)
 	defer cancel()
 	info, err := StackStatus(ctx)
 	return err == nil && info.OnEveryInterface()

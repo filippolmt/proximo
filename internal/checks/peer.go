@@ -49,7 +49,7 @@ func peerSkip(env Env, needAddress bool) (Result, bool) {
 // any interface of this machine holds the mesh address at all.
 func heldDetail(env Env, addr string) string {
 	if addrs, err := env.InterfaceAddrs(); err == nil && !config.AddressHeld(addr, addrs) {
-		return "is held by no interface of this machine"
+		return config.AddressNotHeld
 	}
 	return "is held by an interface of this machine"
 }

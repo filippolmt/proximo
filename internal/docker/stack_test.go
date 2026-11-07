@@ -348,7 +348,8 @@ func TestComposeRunsThePublishedImage(t *testing.T) {
 			t.Errorf("compose missing %q", want)
 		}
 	}
-	// One image, three services — plus the label that records it, so a running
+	// One image, three core services (the peer services are appended only on a
+	// machine that shares) — plus the label that records it, so a running
 	// stack can never declare a ref it is not running.
 	if n := strings.Count(compose, "image: *proximo-image"); n != 3 {
 		t.Errorf("compose points %d services at the shared image anchor, want 3", n)

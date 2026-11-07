@@ -318,6 +318,7 @@ func NewWatcher() (*Watcher, error) {
 		tld:          getenv("PROXIMO_TLD", config.DefaultTLD),
 		lastHosts:    map[string]string{},
 		authHashes:   map[string]string{},
+		peerFailing:  map[string]bool{},
 		incidents:    NewIncidentStore(0, 0),
 	}
 
@@ -439,7 +440,7 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// the inventory published cannot disagree over a transient inspect failure.
 	inspect := memoInspect(w.cli.ContainerInspect)
 
-	traefikID, traefikNets := findStackContainer(containers, "traefik")
+	traefikID, traefikNets := findStackContainer(containers, traefikRole)
 	if traefikID == "" {
 		// Traefik not running yet: the inventory says every route is down.
 		w.writeInventory(routesOf(ctx, inspect, containers, w.tld, PeerNames{}))
