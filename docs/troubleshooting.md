@@ -323,8 +323,9 @@ work through these in order:
    having passed — a container that never reached *healthy* declares nothing when
    it fails.
 3. **Is it still in the window?** `--since` defaults to 15 minutes, and the
-   watcher keeps a bounded number of Incidents per service. `proximo up` discards
-   them all: they are held in memory.
+   watcher keeps a bounded number of Incidents per service. Recreating the stack
+   (`proximo down` then `up`, `proximo update`, a new stack image) discards them
+   all: they are held in memory.
 4. **Is the container alive and simply stuck?** Then it declares no Incident by
    itself: a worker blocked on a slow query is healthy and silent — **no Incident
    does not mean no problem**. Two things follow, in this order:
@@ -404,9 +405,11 @@ route.
    relaxed the policy, and if it does not, the policy came from somewhere proximo
    cannot rewrite (a `<meta http-equiv>` tag in your own markup).
 5. **The Exchange is still held.** The buffer is bounded and in memory, so
-   `proximo up` — including the one you ran to pick up a change — throws away
-   everything recorded before it. This catches people out: reproduce the problem
-   *after* the restart, not before. `proximo errors` says so when the hop came up
+   recreating the stack — `proximo down` then `up`, `proximo update`, or an `up`
+   that brings a new stack image — throws away everything recorded before it. A
+   label change needs no stack restart, and an `up` over an unchanged running
+   stack keeps the buffer. This catches people out: reproduce the problem *after*
+   a recreate, not before. `proximo errors` says so when the hop came up
    in the last ten minutes.
 6. **You are looking in the right window.** `--since` defaults to 15 minutes and
    follows the report, not the page load, so a page opened an hour ago that threw

@@ -53,10 +53,13 @@ Hand over the ones that install, trust, or ask for a password: proximo's contrac
 is that every mutation of a machine stays a command its owner typed. Run the
 read-only commands yourself, and say which one you are running.
 
-**`proximo up` empties the Exchange buffer.** Exchanges are held in memory and
-bounded, so restarting the stack discards every Client report recorded before it
-— including the restart a developer runs to pick up a label change. Collect what
-you need before restarting, and reproduce the problem after.
+**Recreating the stack empties the Exchange buffer.** Exchanges are held in
+memory and bounded, so whatever recreates the `inspector` — `proximo down` then
+`up`, `proximo update`, or an `up` that brings a new stack image — discards every
+Client report recorded before it. A label change needs no stack restart, and an
+`up` over an unchanged running stack keeps the buffer. Collect what you need
+before recreating, and reproduce the problem after; `proximo errors` says when the
+hop came up in the last ten minutes.
 
 **No Incident does not mean no problem.** `proximo errors` reports what the
 *runtime* declared about a container — an exit, a restart, an OOM kill — and
