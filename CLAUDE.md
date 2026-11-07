@@ -77,7 +77,8 @@ compiler will not enforce:
 - Releases (tag → GoReleaser) and the CI workflows:
   [Releases](docs/development.md#releases)
 - Documentation-only changes (Markdown, `docs/`, agent files — no code, no
-  generated files): open the PR and merge it straight away, **without running CI**.
+  generated files): run `make check-links` locally — `[skip ci]` also skips the docs
+  link-check — then open the PR and merge it straight away, **without running CI**.
   Put `[skip ci]` in the commit message, the PR title and the squash-merge subject,
   so neither the `pull_request` nor the `push` to `main` triggers a workflow. A change
   under `docs/` that `make skill-refs` would regenerate is not documentation-only.
