@@ -32,6 +32,4 @@ Thumbs.db
 
 .toolbox*
 
-# graphify — local-only knowledge graph tooling, never versioned
-graphify-out/
 proof-out/
