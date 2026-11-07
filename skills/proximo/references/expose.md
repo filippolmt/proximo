@@ -8,16 +8,26 @@ the container, or shows one flagged with a warning.
 1. **Find where the container is declared.** A Compose service is the normal
    case, and the Namespace that gives the container its qualified host comes from
    the Compose project name — so labels go on the service, not on a
-   `docker run` line, whenever there is a Compose file to put them in.
-2. **Pick the host.** One label opts the container in:
-   `proximo.hosts=<name>.test`. Use the TLD the machine is actually configured
-   for — `proximo status` prints it, and `proximo config tld` changes it.
-3. **Settle the port.** Omit `proximo.port` when the image `EXPOSE`s exactly one
+   `docker run` line or a Dockerfile `LABEL`, whenever there is a Compose file to
+   put them in.
+2. **Ask which services to route.** When the project's services carry no
+   `proximo.hosts`, list them and ask the developer which to route: all, some,
+   one, or none. Say for each what it is: a web app or an admin UI usually wants
+   a host; a database, a cache or a queue usually does not, and a worker is better
+   served by `proximo.transcript=true`. Label nothing until the developer answers.
+3. **Propose a host for each one chosen.** The TLD is already configured: it is
+   the suffix of the `traefik.<tld>` row in `proximo status`. Derive the name from
+   the project and what the service does: the application under its product name
+   (`<app>.<tld>`), a companion tool under a name that says what it is, scoped to
+   the app (`mail.<app>.<tld>`, `admin.<app>.<tld>`), so two projects' tools do
+   not contest the same bare host. Present the names; the developer confirms or
+   changes them before they go into `proximo.hosts`.
+4. **Settle the port.** Omit `proximo.port` when the image `EXPOSE`s exactly one
    port. When it exposes none or several, proximo skips the container and
    `proximo status` flags it `⚠ set proximo.port`; add the label explicitly.
-4. **Apply and confirm.** `docker compose up -d`, then `proximo status` — the
+5. **Apply and confirm.** `docker compose up -d`, then `proximo status` — the
    route appears with both its hosts.
-5. **Verify against the qualified host.** It always belongs to this container,
+6. **Verify against the qualified host.** It always belongs to this container,
    while the bare host is the one a Collision can contest.
 
    ```sh
