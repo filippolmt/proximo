@@ -55,7 +55,7 @@ substituted in.
 ## The stack: four services
 
 The Go services share **one published image**,
-`ghcr.io/filippolmt/proximo:<cli-version>` — all four binaries in it, one
+`ghcr.io/filippolmt/proximo:<cli-version>` — every in-stack binary in it, one
 picked per service with an `entrypoint`; the two peer services, on a machine
 that shares, run it too. Nothing is compiled on your host, and
 the tag is the CLI's own version, never `latest`, so a binary can never pull
