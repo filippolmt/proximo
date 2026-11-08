@@ -25,12 +25,19 @@ Full guides live in [`docs/`](docs/README.md):
 - [Routing](docs/routing.md) — the `proximo.*` labels, the
   [two hosts every route gets](docs/routing.md#the-two-hosts-every-route-gets),
   and Traefik compatibility.
-- [Dev-time observability](docs/observability.md) — opt-in `up --observability`
-  logs (Dozzle) + metrics (Beszel) dashboards: credential-less and over trusted
-  HTTPS (`http://` auto-redirects). Also **Inspection**: label a container
-  `proximo.inspect=true` and `proximo errors` shows what the browser reported
-  alongside the response that caused it. **Chrome is the supported browser** —
-  other engines are likely to work and are not tested.
+- [Dev-time observability](docs/observability.md) — `proximo errors` shows,
+  for every route and with no label, the failing requests and what the
+  container itself wrote around them (the **Transcript**), and the
+  **Incidents** the runtime declared: a container that exited, restarted or
+  was OOM-killed. Label a container `proximo.inspect=true` and it also shows
+  what the browser reported (**Inspection** — Chrome is the supported browser;
+  other engines are likely to work and are not tested). Opt-in
+  `up --observability` adds logs (Dozzle) + metrics (Beszel) dashboards,
+  credential-less and over trusted HTTPS.
+- [Sharing a route with colleagues](docs/sharing.md) — label a route
+  `proximo.share` and a small group of colleagues reach it from their own
+  machines, in a browser with a real login, over a mesh the team already
+  operates. Team setup, in order: [sharing setup](docs/sharing-setup.md).
 - [The agent skill](docs/skill.md) — `proximo skill install` puts a Skill in
   your repository (or your home) that teaches Claude Code and Codex the label
   contract and how to diagnose a broken route. It ships inside the binary, so
@@ -98,6 +105,7 @@ No local Go toolchain is required — every Make target runs Go inside the
 ```sh
 make build      # build bin/proximo-<os>-<arch> for the host (Go runs in Docker)
 make test       # run the test suite
+make check      # everything CI checks, plus the links: run it before a commit
 ```
 
 Everything else — all Make targets, the lifecycle targets, running the stack
