@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -431,6 +432,11 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	if opts.Subnet != "" {
 		cfg.Subnet = opts.Subnet
 	}
+	// Refused before anything is taken down: a hand-edited value Docker
+	// would reject must not cost the stack a restart.
+	if _, err := config.NormalizeSubnet(cfg.Subnet); err != nil {
+		return "", fmt.Errorf("config.json: %w\nRemedy: proximo config subnet <cidr>", err)
+	}
 	// A value unset since the last converge leaves peer services that only the
 	// previous Compose file still describes: remove them before that file is
 	// rewritten. A machine that never configured them runs nothing here.
@@ -444,37 +450,22 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	// Asked before the converge recreates Traefik on the loopback, so the one
 	// converge that narrows a stack published on every interface says so.
 	wasEverywhere := onEveryInterface()
-	// Docker never moves an existing network, and Compose will not recreate
-	// one a running profile service is attached to: a network on another
-	// subnet — typically one inherited from Docker's pool — is taken down with
-	// every profile first (docs/adr/0009). An unreadable network is left to the
-	// converge, which fails on its own terms.
-	old, err := actualSubnet()
-	recreate := err == nil && old != "" && old != cfg.Subnet
-	obs := false
-	if recreate {
-		obs = observabilityRunning()
-		fmt.Fprintf(os.Stderr, "stack network: moving from %s to %s; the stack's services restart\n", old, cfg.Subnet)
-		if err := downWith(c); err != nil {
+	run := coreRun{c: c, tld: tld, certDir: certDir, image: image, force: opts.Force}
+	old, obs, err := leaveSubnet(c, cfg.Subnet)
+	var dir string
+	if err == nil {
+		dir, err = run.onto(cfg)
+	}
+	if err != nil {
+		if old == "" {
 			return "", err
 		}
-	}
-	dir, err := convergeOnto(c, tld, certDir, image, opts.Force, cfg)
-	var moveErr error
-	if err != nil && recreate {
-		// Compose removed the old network before Docker refused the new one:
-		// converge back onto the subnet read before the down.
-		want := cfg.Subnet
-		cfg.Subnet = old
-		var rbErr error
-		if dir, rbErr = convergeOnto(c, tld, certDir, image, opts.Force, cfg); rbErr != nil {
-			return "", fmt.Errorf("%w\n\nthe stack network could not move to %s, and moving it back to %s failed too: %v\nthe stack is down.\nRemedy: proximo config subnet <cidr>", err, want, old, rbErr)
+		// The move failed: back onto the subnet read before the down. A
+		// successful rollback still fails the converge, after what follows
+		// has restored what the down removed.
+		if dir, err = run.rollBack(cfg, old, err); dir == "" {
+			return "", err
 		}
-		// Back up, but still a failure: what follows restores what the down
-		// removed, then the caller learns the move did not happen.
-		moveErr = fmt.Errorf("%w\n\nthe stack network could not move to %s; the stack is back on %s.\nRemedy: proximo config subnet <cidr>", err, want, old)
-	} else if err != nil {
-		return "", err
 	}
 	if wasEverywhere {
 		note := "traefik: now listening on 127.0.0.1 only; routes are no longer reachable from other hosts"
@@ -494,24 +485,73 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 			fmt.Fprintf(os.Stderr, "⚠ observability did not come back after the stack restarted: %v\n    Remedy: proximo up --observability\n", err)
 		}
 	}
-	if moveErr != nil {
-		return "", moveErr
+	if err != nil {
+		return "", err
 	}
 	return dir, nil
 }
 
-// convergeOnto materializes the stack for cfg and runs the core converge.
-func convergeOnto(c Composer, tld, certDir, image string, force bool, cfg config.Config) (string, error) {
-	dir, err := materialize(tld, certDir, image, cfg)
-	if err != nil {
-		return "", err
+// leaveSubnet takes the stack down, with every profile, when the Stack network
+// exists on a subnet other than want. Docker never moves an existing network,
+// and Compose will not recreate one a running profile service is attached to
+// (docs/adr/0009). It returns the subnet left ("" when the network stays) and
+// whether the observability services were running. An unreadable network is
+// left to the converge, which fails on its own terms.
+func leaveSubnet(c Composer, want string) (old string, obs bool, err error) {
+	old, err = actualSubnet()
+	if err != nil || old == "" || old == want {
+		return "", false, nil
 	}
-	for _, args := range composeConvergeCmds(image, force) {
-		if err := c.Compose(dir, args...); err != nil {
-			return "", remedyFor(image, err)
+	obs = observabilityRunning()
+	fmt.Fprintf(os.Stderr, "stack network: moving from %s to %s; the stack's services restart\n", old, want)
+	return old, obs, downWith(c)
+}
+
+// coreRun is what every core converge of one command shares, whichever subnet
+// it converges onto.
+type coreRun struct {
+	c                   Composer
+	tld, certDir, image string
+	force               bool
+}
+
+// materializeError is a converge that failed before Docker was asked
+// anything: no subnet is to blame, so nothing is rolled back.
+type materializeError struct{ error }
+
+func (e materializeError) Unwrap() error { return e.error }
+
+// onto materializes the stack for cfg and runs the core converge.
+func (r coreRun) onto(cfg config.Config) (string, error) {
+	dir, err := materialize(r.tld, r.certDir, r.image, cfg)
+	if err != nil {
+		return "", materializeError{err}
+	}
+	for _, args := range composeConvergeCmds(r.image, r.force) {
+		if err := r.c.Compose(dir, args...); err != nil {
+			return "", remedyFor(r.image, err)
 		}
 	}
 	return dir, nil
+}
+
+// rollBack converges back onto old after moving to cfg.Subnet failed with
+// moveErr — typically Docker refusing the new network after Compose removed
+// the old one, or the down itself failing. It returns the stack directory when
+// the stack is back up, and always an error. A missing stack image or a stack
+// that could not be written is no network problem and would fail the rollback
+// too, so either keeps its own error and Remedy.
+func (r coreRun) rollBack(cfg config.Config, old string, moveErr error) (string, error) {
+	if errors.As(moveErr, new(materializeError)) || imageMissing(r.image) {
+		return "", moveErr
+	}
+	want := cfg.Subnet
+	cfg.Subnet = old
+	dir, err := r.onto(cfg)
+	if err != nil {
+		return "", fmt.Errorf("%w\n\nthe stack network could not move to %s, and moving it back to %s failed too: %v\nthe stack is down.\nRemedy: proximo config subnet <cidr>", moveErr, want, old, err)
+	}
+	return dir, fmt.Errorf("%w\n\nthe stack network could not move to %s; the stack is back on %s.\nRemedy: proximo config subnet <cidr>", moveErr, want, old)
 }
 
 // stackQueryTimeout bounds each Docker question converge asks before it runs:
@@ -530,7 +570,7 @@ var onEveryInterface = func() bool {
 }
 
 // stackNetwork is the Compose name of the Stack network.
-const stackNetwork = "proximo_default"
+const stackNetwork = stackProject + "_default"
 
 // actualSubnet reads the Stack network's IPv4 subnet, "" when the network does
 // not exist. Only the IPv4 IPAM config is read: an IPv6 one the daemon adds is
@@ -582,13 +622,13 @@ var observabilityRunning = func() bool {
 	}
 	defer cli.Close()
 	res, err := cli.ContainerList(ctx, client.ContainerListOptions{
-		Filters: make(client.Filters).Add("label", composeProjectLabel+"=proximo"),
+		Filters: make(client.Filters).Add("label", composeProjectLabel+"="+stackProject),
 	})
 	if err != nil {
 		return false
 	}
 	return slices.ContainsFunc(res.Items, func(c container.Summary) bool {
-		return slices.Contains(observabilityServices, c.Labels["com.docker.compose.service"])
+		return slices.Contains(observabilityServices, c.Labels[ComposeServiceLabel])
 	})
 }
 
@@ -596,6 +636,13 @@ var observabilityRunning = func() bool {
 // remedy path is testable without Docker.
 var imagePresent = func(ref string) bool {
 	return exec.Command("docker", "image", "inspect", ref).Run() == nil
+}
+
+// imageMissing reports whether a published stack image is absent from the
+// host: the state a failed pull leaves behind. A local build is never missing
+// in that sense.
+func imageMissing(image string) bool {
+	return image != devImage && !imagePresent(image)
 }
 
 // remedyFor adds an actionable next step to a failed converge when the stack
@@ -611,7 +658,7 @@ var imagePresent = func(ref string) bool {
 // ten times slower — and in the rare case it succeeds it leaves the developer
 // running an image nobody else has, without knowing.
 func remedyFor(image string, err error) error {
-	if image == devImage || imagePresent(image) {
+	if !imageMissing(image) {
 		return err
 	}
 	return fmt.Errorf("%w\n\nthe stack image %s is not on this host.\nRemedy: docker pull %s",

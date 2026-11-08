@@ -80,8 +80,10 @@ type Env struct {
 	// OOM-killed, and `proximo errors` is silent about a restart-looping worker
 	// for a reason that has nothing to do with a developer's code.
 	Incidents func(ctx context.Context) (bool, error)
-	// Subnet is the declared Stack network subnet; StackSubnet reads the one
-	// the network actually has, "" when it does not exist.
+	// Subnet is the declared Stack network subnet, read from the same
+	// configuration as Peer (so PeerErr says it could not be read);
+	// StackSubnet reads the one the network actually has, "" when it does
+	// not exist.
 	Subnet      string
 	StackSubnet func(ctx context.Context) (string, error)
 	// AgentSkill reports every copy of the agent Skill proximo can see, so the
@@ -127,13 +129,8 @@ func DefaultEnv(tld string) (Env, error) {
 	// peer Checks are then Skipped, and every other Check is unaffected.
 	peer, peerErr := config.Peek()
 
-	subnet := peer.Subnet
-	if subnet == "" {
-		subnet = config.DefaultSubnet
-	}
-
 	return Env{
-		Subnet:              subnet,
+		Subnet:              peer.Subnet,
 		StackSubnet:         docker.StackSubnet,
 		Peer:                peer,
 		PeerErr:             peerErr,

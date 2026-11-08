@@ -267,11 +267,16 @@ func TestNormalizeSubnet(t *testing.T) {
 
 func TestLoadDefaultsTheSubnet(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(p, []byte(`{"tld":"test"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := load(p)
-	if err != nil || cfg.Subnet != DefaultSubnet || DefaultSubnet != "10.101.0.0/24" {
-		t.Errorf("load of a config without a subnet = %q, %v; want 10.101.0.0/24", cfg.Subnet, err)
+	for give, want := range map[string]string{
+		`{"tld":"test"}`:                        DefaultSubnet,
+		`{"tld":"test","subnet":"10.9.0.5/24"}`: "10.9.0.0/24", // host bits cleared
+		`{"tld":"test","subnet":"8.8.8.0/24"}`:  "8.8.8.0/24",  // invalid: kept for the converge to refuse
+	} {
+		if err := os.WriteFile(p, []byte(give), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if cfg, err := load(p); err != nil || cfg.Subnet != want {
+			t.Errorf("load(%s).Subnet = %q, %v; want %q", give, cfg.Subnet, err, want)
+		}
 	}
 }

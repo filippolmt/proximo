@@ -20,10 +20,23 @@ func stubStack(t *testing.T, subnet string, obs bool) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	origSubnet, origObs := actualSubnet, observabilityRunning
+	origSubnet, origObs, origImage := actualSubnet, observabilityRunning, imagePresent
 	actualSubnet = func() (string, error) { return subnet, nil }
 	observabilityRunning = func() bool { return obs }
-	t.Cleanup(func() { actualSubnet, observabilityRunning = origSubnet, origObs })
+	imagePresent = func(string) bool { return true }
+	t.Cleanup(func() { actualSubnet, observabilityRunning, imagePresent = origSubnet, origObs, origImage })
+}
+
+// failingDown is a recordComposer whose `down` fails, leaving the stack
+// half-removed.
+type failingDown struct{ recordComposer }
+
+func (f *failingDown) Compose(dir string, args ...string) error {
+	_ = f.recordComposer.Compose(dir, args...)
+	if slices.Contains(args, "down") {
+		return errors.New("compose down failed")
+	}
+	return nil
 }
 
 // failingUps is a recordComposer whose first n `up` commands fail, the way a
@@ -219,5 +232,62 @@ func TestARolledBackStackGetsObservabilityBack(t *testing.T) {
 	}
 	if last := c.cmds[len(c.cmds)-1]; !slices.Equal(last, []string{"--profile", observabilityProfile, "up", "-d"}) {
 		t.Errorf("last command = %v, want the observability profile back up", last)
+	}
+}
+
+// A down that fails leaves the stack half-removed: it is converged back onto
+// the subnet it had, not left that way.
+func TestAFailedDownIsRolledBack(t *testing.T) {
+	stubStack(t, "172.18.0.0/16", false)
+	if _, err := Materialize("test", "", testImage); err != nil {
+		t.Fatal(err)
+	}
+	err := convergeWith(&failingDown{}, "test", "", ConvergeOpts{Image: testImage})
+	if err == nil || !strings.Contains(err.Error(), "the stack is back on 172.18.0.0/16") {
+		t.Fatalf("converge after a failed down = %v, want it back on the old subnet", err)
+	}
+	if got := envSubnet(t); got != "172.18.0.0/16" {
+		t.Errorf("PROXIMO_SUBNET = %q, want 172.18.0.0/16", got)
+	}
+}
+
+// A missing stack image is no network problem: the rollback would fail the
+// same way, and the pull Remedy is the one that cures it.
+func TestAMissingImageIsNotRolledBack(t *testing.T) {
+	stubStack(t, "172.18.0.0/16", false)
+	imagePresent = func(string) bool { return false }
+	if _, err := Materialize("test", "", testImage); err != nil {
+		t.Fatal(err)
+	}
+	c := &failingUps{n: 1}
+	err := convergeWith(c, "test", "", ConvergeOpts{Image: testImage})
+	if err == nil || !strings.Contains(err.Error(), "Remedy: docker pull "+testImage) || strings.Contains(err.Error(), "config subnet") {
+		t.Fatalf("converge with a missing image = %v, want only the pull Remedy", err)
+	}
+	ups := 0
+	for _, a := range c.cmds {
+		if slices.Contains(a, "up") {
+			ups++
+		}
+	}
+	if ups != 1 {
+		t.Errorf("ran %d ups, want only the failed one: %v", ups, c.cmds)
+	}
+}
+
+// A configured subnet Docker would refuse — written into config.json by hand
+// — is refused before the stack is taken down.
+func TestAnInvalidConfiguredSubnetIsRefusedBeforeTheDown(t *testing.T) {
+	stubStack(t, "172.18.0.0/16", false)
+	if err := (config.Config{TLD: "test", Subnet: "8.8.8.0/24"}).Save(); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordComposer{}
+	err := convergeWith(c, "test", "", ConvergeOpts{Image: testImage})
+	if err == nil || !strings.Contains(err.Error(), "Remedy: proximo config subnet <cidr>") {
+		t.Fatalf("converge with an invalid subnet = %v, want the config subnet Remedy", err)
+	}
+	if hasDown(c.cmds) {
+		t.Errorf("took the stack down for an invalid subnet: %v", c.cmds)
 	}
 }

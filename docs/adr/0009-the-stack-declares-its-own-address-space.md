@@ -53,8 +53,11 @@ Four things follow, and they are the substance of the decision:
   runs again on the subnet it read before the down, and reports Docker's line
   with the Remedy `proximo config subnet <cidr>`. This holds for `config subnet`
   and for the first `up` after an upgrade alike — a host that already has
-  another network on `10.101.0.0/24`, for one. If the rollback fails too, the
-  stack stays down and both errors are reported.
+  another network on `10.101.0.0/24`, for one. A down that fails half-way is
+  rolled back the same way. If the rollback fails too, the stack stays down and
+  both errors are reported. A missing stack image is not rolled back: no subnet
+  is to blame, the rollback would fail the same way, and its own Remedy is
+  `docker pull`.
 - **The rejected pool is a static range.** `config subnet` refuses
   `172.17.0.0/16`–`172.31.0.0/16` as a literal, without asking the daemon what
   its `default-address-pools` currently are. A rejection derived from host

@@ -125,6 +125,8 @@ func All(env Env) []Check {
 				// which (docs/adr/0009).
 				actual, err := env.StackSubnet(ctx)
 				switch {
+				case env.PeerErr != nil:
+					return Skipped("the configuration could not be read, so the declared subnet is unknown: %v", env.PeerErr)
 				case err != nil:
 					return Failed("proximo up", "could not read the stack network: %v", err)
 				case actual == "":

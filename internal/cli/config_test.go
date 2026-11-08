@@ -389,11 +389,15 @@ func TestPeerSubcommandsAreVisible(t *testing.T) {
 // stubSubnetStack fixes whether the stack runs and what a converge does, and
 // records the subnet each converge was asked for.
 func stubSubnetStack(t *testing.T, running bool, convergeErr error) *[]string {
+	return stubSubnetStackErr(t, running, nil, convergeErr)
+}
+
+func stubSubnetStackErr(t *testing.T, running bool, statusErr, convergeErr error) *[]string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	var asked []string
 	origRunning, origConverge := stackRunning, convergeStack
-	stackRunning = func(context.Context) bool { return running }
+	stackRunning = func(context.Context) (bool, error) { return running, statusErr }
 	convergeStack = func(_, _ string, opts docker.ConvergeOpts) error {
 		asked = append(asked, opts.Subnet)
 		return convergeErr
@@ -444,6 +448,17 @@ func TestConfigSubnetWithTheStackDownOnlySaves(t *testing.T) {
 	}
 	if cfg, _ := config.Load(); cfg.Subnet != "10.42.0.0/24" {
 		t.Errorf("persisted %q", cfg.Subnet)
+	}
+}
+
+func TestConfigSubnetSaysWhenDockerCannotBeAsked(t *testing.T) {
+	asked := stubSubnetStackErr(t, false, errors.New("cannot connect to the Docker daemon"), nil)
+	out, err := runConfig(t, "subnet", "10.42.0.0/24")
+	if err != nil {
+		t.Fatalf("config subnet: %v", err)
+	}
+	if len(*asked) != 0 || !strings.Contains(out, "cannot connect to the Docker daemon") || !strings.Contains(out, "Saved subnet: 10.42.0.0/24") {
+		t.Errorf("converged %v, output %q; want a saved value and Docker's error", *asked, out)
 	}
 }
 

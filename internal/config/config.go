@@ -375,6 +375,13 @@ func load(p string) (Config, error) {
 	if cfg.Subnet == "" {
 		cfg.Subnet = DefaultSubnet
 	}
+	// A hand-edited value with host bits set would never equal the subnet
+	// Docker reports, and every converge would recreate the network. An
+	// invalid one is kept as written: the converge refuses it with a Remedy,
+	// and `config subnet` must still load the file to replace it.
+	if s, err := NormalizeSubnet(cfg.Subnet); err == nil {
+		cfg.Subnet = s
+	}
 	return cfg, nil
 }
 
