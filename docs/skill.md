@@ -85,6 +85,8 @@ all rather than the docs being enough:
 - **A Remedy that changes the host is the developer's to run.** proximo's
   contract is that every mutation of a machine stays a command its owner typed,
   so an agent hands over anything that installs, trusts, or asks for a password.
+  `proximo up` and `proximo update` change nothing on the host, so an agent runs
+  them itself.
 - **`proximo errors dom` prints a path, never the page.** A DOM Snapshot is
   hundreds of kilobytes; it is there to be grepped, not read into a context
   window.

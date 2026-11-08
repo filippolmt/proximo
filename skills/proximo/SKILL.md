@@ -1,6 +1,6 @@
 ---
 name: proximo
-description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when bringing up a project's containers, exposing a container through proximo.* labels or giving a service a local hostname, when calling or testing a containerized service (curl, wget, a test suite), when a .test host does not resolve, does not answer or returns 502/503, when a browser distrusts a local certificate, when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
+description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when bringing up a project's containers, exposing a container through proximo.* labels or giving a service a local hostname, when calling or testing a containerized service (curl, wget, a test suite), when a .test host does not resolve, does not answer (ERR_CONNECTION_REFUSED) or returns 502/503, when a browser rejects a local certificate (ERR_CERT_AUTHORITY_INVALID, ERR_CERT_COMMON_NAME_INVALID), when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
 metadata:
   short-description: Expose a container at https://<name>.test, and diagnose one that is broken
 ---
@@ -53,9 +53,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://<host>
 reports Checks, and every failed Check carries a Remedy — the exact command. Hand
 over the ones that install, trust, or ask for a password: proximo's contract is
 that every mutation of a machine stays a command its owner typed. Run the
-read-only commands yourself, and `proximo up` when the stack is down or degraded:
-it starts the stack's containers and changes nothing on the host. Say which
-command you are running.
+read-only commands yourself, `proximo up` when the stack is down or degraded, and
+`proximo update` when a Remedy names it: both recreate only the stack's
+containers and change nothing on the host. Say which command you are running.
 
 **Recreating the stack empties the Exchange buffer.** Exchanges are held in
 memory and bounded, so whatever recreates the `inspector` — `proximo down` then
