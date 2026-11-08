@@ -302,7 +302,7 @@ func TestStackSubnet(t *testing.T) {
 	}
 	// Without the configuration there is nothing declared to compare with.
 	env := healthyEnv()
-	env.PeerErr = errors.New("unexpected end of JSON input")
+	env.ConfigErr = errors.New("unexpected end of JSON input")
 	if res := checkByID(t, All(env), IDStackSubnet).Run(context.Background()); res.Status != Skip {
 		t.Errorf("unreadable config: %s (%s), want skipped", res.Status, res.Detail)
 	}

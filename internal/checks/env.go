@@ -81,8 +81,7 @@ type Env struct {
 	// for a reason that has nothing to do with a developer's code.
 	Incidents func(ctx context.Context) (bool, error)
 	// Subnet is the declared Stack network subnet, read from the same
-	// configuration as Peer (so PeerErr says it could not be read);
-	// StackSubnet reads the one the network actually has, "" when it does
+	// configuration as Peer; StackSubnet reads the one the network actually has, "" when it does
 	// not exist.
 	Subnet      string
 	StackSubnet func(ctx context.Context) (string, error)
@@ -94,9 +93,10 @@ type Env struct {
 	// Peer holds the peer-sharing values; on a machine that has not opted in
 	// they are empty and every peer Check is Skipped.
 	Peer config.Config
-	// PeerErr is why the configuration holding them could not be read, if it
-	// could not: the peer Checks then say so rather than claim a value is unset.
-	PeerErr error
+	// ConfigErr is why the configuration could not be read, if it could not:
+	// the peer Checks and the subnet Check then say so rather than claim a
+	// value is unset.
+	ConfigErr error
 	// Intermediate returns the installed intermediate, nil when there is none.
 	Intermediate func() (*x509.Certificate, error)
 	// QueryAt asks a DNS server (host:port) directly for a name's A record.
@@ -133,7 +133,7 @@ func DefaultEnv(tld string) (Env, error) {
 		Subnet:              peer.Subnet,
 		StackSubnet:         docker.StackSubnet,
 		Peer:                peer,
-		PeerErr:             peerErr,
+		ConfigErr:           peerErr,
 		Intermediate:        tls.Intermediate,
 		QueryAt:             dns.QueryAt,
 		InterfaceAddrs:      net.InterfaceAddrs,

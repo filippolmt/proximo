@@ -375,7 +375,13 @@ func newConfigInventoryDirCmd() *cobra.Command {
 
 // stackRunning and convergeStack are swapped in tests.
 var (
+	// No daemon runs no stack: the value only has to wait for the next up.
+	// A daemon that answers but cannot list the stack is an error, never
+	// "stopped", or the value would be saved without the move it declares.
 	stackRunning = func(ctx context.Context) (bool, error) {
+		if checks.DockerReachable(ctx) != nil {
+			return false, nil
+		}
 		info, err := docker.StackStatus(ctx)
 		return info.Running, err
 	}
@@ -404,9 +410,7 @@ func newConfigSubnetCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			running, err := stackRunning(cmd.Context())
 			if err != nil {
-				// Not a refusal: the value takes effect at the next up, which
-				// meets Docker's verdict then.
-				fmt.Fprintf(out, "%scould not ask Docker whether the stack runs (%v), so the stack is not moved now.\n", warnPrefix, err)
+				return fmt.Errorf("could not read whether the stack runs, so the subnet is not saved: %w", err)
 			}
 			if running {
 				certDir, err := tls.Dir()

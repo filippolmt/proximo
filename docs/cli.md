@@ -745,8 +745,9 @@ proximo config subnet 10.102.0.0/24
   dashboards included, if they were running — restart once. If Docker refuses
   the subnet, its own line is printed, the stack goes back to the subnet it had,
   and the config is unchanged.
-- **A stopped stack** is not started: the value is saved and the next
-  `proximo up` uses it.
+- **A stopped stack** is not started, and neither is a Docker that is not
+  running: the value is saved and the next `proximo up` uses it. A stack whose
+  state Docker cannot report is refused rather than saved.
 - Like any converge without `--image`, moving a running stack clears a sticky
   [`--image`](#--image) override.
 

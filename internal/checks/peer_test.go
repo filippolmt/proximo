@@ -152,7 +152,7 @@ func TestMeshRemedy(t *testing.T) {
 // is unset.
 func TestPeerChecksNameAnUnreadableConfig(t *testing.T) {
 	env := healthyEnv()
-	env.PeerErr = errors.New("invalid character 'x'")
+	env.ConfigErr = errors.New("invalid character 'x'")
 	got := outcomes(env)
 	for _, id := range []string{IDPeerIntermediate, IDPeerRoutes, IDPeerDNS, IDPeerRelay} {
 		if got[id].Status != Skip || !strings.Contains(got[id].Detail, "could not be read") {

@@ -123,19 +123,20 @@ func All(env Env) []Check {
 				// Always stated, not only when it diverges: a passing subnet
 				// can still shadow a route, and only the developer can see
 				// which (docs/adr/0009).
+				if env.ConfigErr != nil {
+					return Skipped("the configuration could not be read, so the declared subnet is unknown: %v", env.ConfigErr)
+				}
 				actual, err := env.StackSubnet(ctx)
 				switch {
-				case env.PeerErr != nil:
-					return Skipped("the configuration could not be read, so the declared subnet is unknown: %v", env.PeerErr)
 				case err != nil:
 					return Failed("proximo up", "could not read the stack network: %v", err)
 				case actual == "":
 					return Failed("proximo up", "the stack network does not exist")
 				case actual != env.Subnet:
 					// The ordinary case is a network inherited from Docker's
-					// pool, which `up` recreates; the second step is for a
-					// declared subnet Docker itself refuses.
-					return Failed("proximo up", "the stack network is on %s, the declared subnet is %s (if proximo up cannot create it there, move it: proximo config subnet <cidr>)", actual, env.Subnet)
+					// pool, which `up` recreates. A declared subnet Docker
+					// refuses is the converge's to report, with its own Remedy.
+					return Failed("proximo up", "the stack network is on %s, the declared subnet is %s", actual, env.Subnet)
 				}
 				return Passed("%s", actual)
 			},

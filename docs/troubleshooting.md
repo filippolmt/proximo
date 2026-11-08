@@ -471,7 +471,7 @@ lives inside the Linux VM, so only containers lose the route.
 
 The usual cause is the [stack network](../CONTEXT.md#the-environment)
 occupying a subnet the host already routes: packets for that subnet match the
-stack's own bridge and never leave the host
+stack network's route and never leave the host
 ([ADR 0009](adr/0009-the-stack-declares-its-own-address-space.md)).
 `proximo doctor` states the stack network's subnet on every run:
 

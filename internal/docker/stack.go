@@ -451,7 +451,7 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	// converge that narrows a stack published on every interface says so.
 	wasEverywhere := onEveryInterface()
 	run := coreRun{c: c, tld: tld, certDir: certDir, image: image, force: opts.Force}
-	old, obs, err := leaveSubnet(c, cfg.Subnet)
+	old, obs, err := leaveSubnet(c, defaultStackReader, cfg.Subnet)
 	var dir string
 	if err == nil {
 		dir, err = run.onto(cfg)
@@ -497,12 +497,16 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 // (docs/adr/0009). It returns the subnet left ("" when the network stays) and
 // whether the observability services were running. An unreadable network is
 // left to the converge, which fails on its own terms.
-func leaveSubnet(c Composer, want string) (old string, obs bool, err error) {
-	old, err = actualSubnet()
+func leaveSubnet(c Composer, r stackReader, want string) (old string, obs bool, err error) {
+	old, err = r.Subnet()
 	if err != nil || old == "" || old == want {
 		return "", false, nil
 	}
-	obs = observabilityRunning()
+	obs, err = r.ObservabilityRunning()
+	if err != nil {
+		// Never a reason to keep the old network: the move is the fix.
+		fmt.Fprintf(os.Stderr, "⚠ could not tell whether the observability services run (%v); if they did, bring them back after this converge.\n    Remedy: proximo up --observability\n", err)
+	}
 	fmt.Fprintf(os.Stderr, "stack network: moving from %s to %s; the stack's services restart\n", old, want)
 	return old, obs, downWith(c)
 }
@@ -537,7 +541,10 @@ func (r coreRun) onto(cfg config.Config) (string, error) {
 
 // rollBack converges back onto old after moving to cfg.Subnet failed with
 // moveErr — typically Docker refusing the new network after Compose removed
-// the old one, or the down itself failing. It returns the stack directory when
+// the old one, or the down itself failing. Compose returns only an exit
+// status, with Docker's line already on the terminal, so the cause cannot be
+// told apart here: the message names the subnet as a possible cause, never as
+// the diagnosis. It returns the stack directory when
 // the stack is back up, and always an error. A missing stack image or a stack
 // that could not be written is no network problem and would fail the rollback
 // too, so either keeps its own error and Remedy.
@@ -549,9 +556,9 @@ func (r coreRun) rollBack(cfg config.Config, old string, moveErr error) (string,
 	cfg.Subnet = old
 	dir, err := r.onto(cfg)
 	if err != nil {
-		return "", fmt.Errorf("%w\n\nthe stack network could not move to %s, and moving it back to %s failed too: %v\nthe stack is down.\nRemedy: proximo config subnet <cidr>", moveErr, want, old, err)
+		return "", fmt.Errorf("%w\n\nthe stack could not converge onto %s, and converging it back onto %s failed too: %v\nthe stack is down. If Docker's line above refuses the subnet, move it elsewhere.\nRemedy: proximo config subnet <cidr>", moveErr, want, old, err)
 	}
-	return dir, fmt.Errorf("%w\n\nthe stack network could not move to %s; the stack is back on %s.\nRemedy: proximo config subnet <cidr>", moveErr, want, old)
+	return dir, fmt.Errorf("%w\n\nthe stack could not converge onto %s; it is back on %s. If Docker's line above refuses the subnet (Pool overlaps …), move it elsewhere.\nRemedy: proximo config subnet <cidr>", moveErr, want, old)
 }
 
 // stackQueryTimeout bounds each Docker question converge asks before it runs:
@@ -571,16 +578,6 @@ var onEveryInterface = func() bool {
 
 // stackNetwork is the Compose name of the Stack network.
 const stackNetwork = stackProject + "_default"
-
-// actualSubnet reads the Stack network's IPv4 subnet, "" when the network does
-// not exist. Only the IPv4 IPAM config is read: an IPv6 one the daemon adds is
-// not part of the decision (docs/adr/0009). A var so converge is testable
-// without Docker.
-var actualSubnet = func() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), stackQueryTimeout)
-	defer cancel()
-	return StackSubnet(ctx)
-}
 
 // StackSubnet reads the Stack network's actual IPv4 subnet, "" when the
 // network does not exist.
@@ -610,27 +607,47 @@ func StackSubnet(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// observabilityRunning reports whether any observability service of the stack
-// is running, so a converge that takes the stack down can bring it back. A
-// var so converge is testable without Docker; no Docker is false.
-var observabilityRunning = func() bool {
+// stackReader reads what a converge must know about the running stack before
+// it takes it down: the Stack network's actual IPv4 subnet ("" when the
+// network does not exist) and whether the observability services run. Only
+// the IPv4 IPAM config is read: an IPv6 one the daemon adds is not part of the
+// decision (docs/adr/0009). Like Composer it is bound only for execution, so
+// the move-and-rollback logic is testable with a fake.
+type stackReader interface {
+	Subnet() (string, error)
+	ObservabilityRunning() (bool, error)
+}
+
+// dockerStackReader is the production stackReader: it asks the Docker API.
+type dockerStackReader struct{}
+
+func (dockerStackReader) Subnet() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), stackQueryTimeout)
+	defer cancel()
+	return StackSubnet(ctx)
+}
+
+func (dockerStackReader) ObservabilityRunning() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), stackQueryTimeout)
 	defer cancel()
 	cli, err := newClient()
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer cli.Close()
 	res, err := cli.ContainerList(ctx, client.ContainerListOptions{
 		Filters: make(client.Filters).Add("label", composeProjectLabel+"="+stackProject),
 	})
 	if err != nil {
-		return false
+		return false, err
 	}
 	return slices.ContainsFunc(res.Items, func(c container.Summary) bool {
 		return slices.Contains(observabilityServices, c.Labels[ComposeServiceLabel])
-	})
+	}), nil
 }
+
+// defaultStackReader is the stackReader converges use; tests swap it.
+var defaultStackReader stackReader = dockerStackReader{}
 
 // imagePresent reports whether the image is already on the host. A var so the
 // remedy path is testable without Docker.

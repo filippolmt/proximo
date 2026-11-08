@@ -388,11 +388,7 @@ func TestPeerSubcommandsAreVisible(t *testing.T) {
 
 // stubSubnetStack fixes whether the stack runs and what a converge does, and
 // records the subnet each converge was asked for.
-func stubSubnetStack(t *testing.T, running bool, convergeErr error) *[]string {
-	return stubSubnetStackErr(t, running, nil, convergeErr)
-}
-
-func stubSubnetStackErr(t *testing.T, running bool, statusErr, convergeErr error) *[]string {
+func stubSubnetStack(t *testing.T, running bool, statusErr, convergeErr error) *[]string {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	var asked []string
@@ -407,7 +403,7 @@ func stubSubnetStackErr(t *testing.T, running bool, statusErr, convergeErr error
 }
 
 func TestConfigSubnetConvergesThenPersists(t *testing.T) {
-	asked := stubSubnetStack(t, true, nil)
+	asked := stubSubnetStack(t, true, nil, nil)
 	out, err := runConfig(t, "subnet", "10.42.0.7/24")
 	if err != nil {
 		t.Fatalf("config subnet: %v", err)
@@ -425,7 +421,7 @@ func TestConfigSubnetConvergesThenPersists(t *testing.T) {
 }
 
 func TestConfigSubnetKeepsTheConfigWhenTheConvergeFails(t *testing.T) {
-	stubSubnetStack(t, true, errors.New("Pool overlaps with other one on this address space"))
+	stubSubnetStack(t, true, nil, errors.New("Pool overlaps with other one on this address space"))
 	if _, err := runConfig(t, "subnet", "10.42.0.0/24"); err == nil || !strings.Contains(err.Error(), "Pool overlaps") {
 		t.Fatalf("config subnet = %v, want Docker's error", err)
 	}
@@ -435,7 +431,7 @@ func TestConfigSubnetKeepsTheConfigWhenTheConvergeFails(t *testing.T) {
 }
 
 func TestConfigSubnetWithTheStackDownOnlySaves(t *testing.T) {
-	asked := stubSubnetStack(t, false, nil)
+	asked := stubSubnetStack(t, false, nil, nil)
 	out, err := runConfig(t, "subnet", "10.42.0.0/24")
 	if err != nil {
 		t.Fatalf("config subnet: %v", err)
@@ -451,19 +447,23 @@ func TestConfigSubnetWithTheStackDownOnlySaves(t *testing.T) {
 	}
 }
 
-func TestConfigSubnetSaysWhenDockerCannotBeAsked(t *testing.T) {
-	asked := stubSubnetStackErr(t, false, errors.New("cannot connect to the Docker daemon"), nil)
-	out, err := runConfig(t, "subnet", "10.42.0.0/24")
-	if err != nil {
-		t.Fatalf("config subnet: %v", err)
+// A stack whose state cannot be read may be running: saving would declare a
+// subnet the stack is not on.
+func TestConfigSubnetRefusesWhenTheStackCannotBeRead(t *testing.T) {
+	asked := stubSubnetStack(t, false, errors.New("permission denied"), nil)
+	if _, err := runConfig(t, "subnet", "10.42.0.0/24"); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("config subnet = %v, want the status error", err)
 	}
-	if len(*asked) != 0 || !strings.Contains(out, "cannot connect to the Docker daemon") || !strings.Contains(out, "Saved subnet: 10.42.0.0/24") {
-		t.Errorf("converged %v, output %q; want a saved value and Docker's error", *asked, out)
+	if len(*asked) != 0 {
+		t.Errorf("converged %v", *asked)
+	}
+	if cfg, _ := config.Load(); cfg.Subnet != config.DefaultSubnet {
+		t.Errorf("persisted %q", cfg.Subnet)
 	}
 }
 
 func TestConfigSubnetRefusesAnInvalidValue(t *testing.T) {
-	asked := stubSubnetStack(t, true, nil)
+	asked := stubSubnetStack(t, true, nil, nil)
 	if _, err := runConfig(t, "subnet", "172.18.0.0/16"); err == nil {
 		t.Fatal("config subnet accepted Docker's default pool")
 	}

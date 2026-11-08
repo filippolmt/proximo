@@ -9,7 +9,7 @@ allocated.
 That is a routing decision taken by whichever component allocates last. When the
 host already routes a subnet inside that pool — a VPN tunnel is the ordinary case
 — the stack network can shadow it. From inside a container, packets addressed to
-that subnet match the connected route of proximo's own bridge and never leave the
+that subnet match the connected route of the stack network and never leave the
 host: the name resolves, then the connection hangs until it times out. On Docker
 Desktop the symptom is asymmetric, and that is what makes it expensive: the
 host's own terminal is unaffected, because the bridges live inside the Linux VM
@@ -112,10 +112,12 @@ developer's behalf with no symptom asking for it.
 
 The stack's address space is now a configured value with a default, so it is
 something `status` can state and `doctor` can dispute: a Check reports the
-network's actual subnet — always, not only when it diverges — and its Remedy is
-`proximo up` first (the ordinary case is an inherited network the converge will
-recreate) and `proximo config subnet <cidr>` second (the declared space itself
-collides).
+network's actual subnet — always, not only when it diverges. Its Remedy is
+`proximo up` (the ordinary case is an inherited network the converge will
+recreate); `proximo config subnet <cidr>` comes second, as the Remedy of a
+converge Docker refuses and in the troubleshooting section the Check names
+(the declared space itself collides). A Remedy is one command (ADR 0004), so
+the Check does not carry both.
 
 Upgrading proximo can restart the stack once, on hosts whose network came from
 the pool. It is announced, not silent, and no Project is touched.

@@ -20,11 +20,30 @@ func stubStack(t *testing.T, subnet string, obs bool) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	origSubnet, origObs, origImage := actualSubnet, observabilityRunning, imagePresent
-	actualSubnet = func() (string, error) { return subnet, nil }
-	observabilityRunning = func() bool { return obs }
+	origReader, origImage := defaultStackReader, imagePresent
+	defaultStackReader = fakeStackReader{subnet: subnet, obs: obs}
 	imagePresent = func(string) bool { return true }
-	t.Cleanup(func() { actualSubnet, observabilityRunning, imagePresent = origSubnet, origObs, origImage })
+	t.Cleanup(func() { defaultStackReader, imagePresent = origReader, origImage })
+}
+
+type fakeStackReader struct {
+	subnet string
+	obs    bool
+	obsErr error
+}
+
+func (f fakeStackReader) Subnet() (string, error)             { return f.subnet, nil }
+func (f fakeStackReader) ObservabilityRunning() (bool, error) { return f.obs, f.obsErr }
+
+// countUps counts the `up` commands a converge ran.
+func countUps(cmds [][]string) int {
+	n := 0
+	for _, a := range cmds {
+		if slices.Contains(a, "up") {
+			n++
+		}
+	}
+	return n
 }
 
 // failingDown is a recordComposer whose `down` fails, leaving the stack
@@ -188,13 +207,7 @@ func TestConvergeRollsBackANetworkDockerRefuses(t *testing.T) {
 	if got := envSubnet(t); got != "172.18.0.0/16" {
 		t.Errorf("PROXIMO_SUBNET after rollback = %q, want 172.18.0.0/16", got)
 	}
-	ups := 0
-	for _, a := range c.cmds {
-		if slices.Contains(a, "up") {
-			ups++
-		}
-	}
-	if ups != 2 {
+	if ups := countUps(c.cmds); ups != 2 {
 		t.Errorf("ran %d ups, want the failed one and the rollback: %v", ups, c.cmds)
 	}
 }
@@ -243,7 +256,7 @@ func TestAFailedDownIsRolledBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := convergeWith(&failingDown{}, "test", "", ConvergeOpts{Image: testImage})
-	if err == nil || !strings.Contains(err.Error(), "the stack is back on 172.18.0.0/16") {
+	if err == nil || !strings.Contains(err.Error(), "it is back on 172.18.0.0/16") {
 		t.Fatalf("converge after a failed down = %v, want it back on the old subnet", err)
 	}
 	if got := envSubnet(t); got != "172.18.0.0/16" {
@@ -264,13 +277,7 @@ func TestAMissingImageIsNotRolledBack(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Remedy: docker pull "+testImage) || strings.Contains(err.Error(), "config subnet") {
 		t.Fatalf("converge with a missing image = %v, want only the pull Remedy", err)
 	}
-	ups := 0
-	for _, a := range c.cmds {
-		if slices.Contains(a, "up") {
-			ups++
-		}
-	}
-	if ups != 1 {
+	if ups := countUps(c.cmds); ups != 1 {
 		t.Errorf("ran %d ups, want only the failed one: %v", ups, c.cmds)
 	}
 }
@@ -289,5 +296,22 @@ func TestAnInvalidConfiguredSubnetIsRefusedBeforeTheDown(t *testing.T) {
 	}
 	if hasDown(c.cmds) {
 		t.Errorf("took the stack down for an invalid subnet: %v", c.cmds)
+	}
+}
+
+// An observability state Docker would not report is no reason to keep the
+// old network: the move goes ahead.
+func TestAnUnreadableObservabilityStateStillMoves(t *testing.T) {
+	stubStack(t, "172.18.0.0/16", false)
+	defaultStackReader = fakeStackReader{subnet: "172.18.0.0/16", obsErr: errors.New("context deadline exceeded")}
+	if _, err := Materialize("test", "", testImage); err != nil {
+		t.Fatal(err)
+	}
+	c := &recordComposer{}
+	if err := convergeWith(c, "test", "", ConvergeOpts{Image: testImage}); err != nil {
+		t.Fatal(err)
+	}
+	if !hasDown(c.cmds) {
+		t.Errorf("did not move the network: %v", c.cmds)
 	}
 }
