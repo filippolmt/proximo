@@ -46,6 +46,11 @@ Download a release archive from the [releases page] and put `proximo` on your
 go install github.com/filippolmt/proximo@latest
 ```
 
+`@latest` resolves to the newest release tag, and the binary reports that
+release (`proximo version`) and pins its stack image, exactly like a release
+archive. A binary built from a checkout instead reports `dev` and runs the
+stack image of `main`.
+
 The Homebrew cask carries a Linux archive and Linuxbrew will install it, but
 the quarantine step it exists for is macOS-only — on Linux prefer the release
 binaries or `go install`.

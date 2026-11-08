@@ -95,6 +95,14 @@ tag keeps it — so `internal/docker/stack.go:imageRef()` re-adds it
 display string and normalize at the image-ref consumer, not at the goreleaser
 source.
 
+A CLI built by `go install github.com/filippolmt/proximo@vX.Y.Z` carries no
+linker flag. When `Version` is still `dev`, `internal/version` takes the module
+version from `debug.ReadBuildInfo()` — only if it is a release tag (`vX.Y.Z` or
+`vX.Y.Z-rc.N`) — and strips its `v`, so that binary and a release archive of the
+same release report the same string. A build from a checkout is stamped with a
+pseudo-version (`v0.17.1-0.2026…-<sha>+dirty`, Go 1.24+), which no published
+image carries, so it stays `dev`. A linker flag always wins.
+
 The in-stack binaries are `go build`-ed from the checkout, not `go install`-ed
 from the module, so `debug.ReadBuildInfo().Main.Version` is empty in them:
 their build-identity log line reads `internal/version` instead.

@@ -61,7 +61,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     skip_upload: auto
-    homepage: "https://github.com/filippolmt/proximo"
+    homepage: "https://filippolmt.github.io/proximo/"
     description: "Local development reverse proxy with automatic DNS and trusted HTTPS"
     # Converging the stack is the caveat's job, not the cask's: a steps block
     # runs under a sandbox with a throwaway $HOME, so `proximo update` would
