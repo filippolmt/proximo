@@ -219,8 +219,8 @@ func TestPeerValuesAbsentByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An unconfigured machine's config.json is exactly what it was before.
-	if strings.TrimSpace(string(data)) != "{\n  \"tld\": \"test\"\n}" {
+	// An unconfigured machine's config.json holds no peer value.
+	if strings.TrimSpace(string(data)) != "{\n  \"tld\": \"test\",\n  \"subnet\": \"10.101.0.0/24\"\n}" {
 		t.Errorf("config.json = %s", data)
 	}
 }
@@ -234,5 +234,44 @@ func TestParseAddress(t *testing.T) {
 		if _, err := ParseAddress(raw); err == nil {
 			t.Errorf("ParseAddress(%q) accepted", raw)
 		}
+	}
+}
+
+func TestNormalizeSubnet(t *testing.T) {
+	for _, tc := range []struct{ give, want string }{
+		{"10.101.0.0/24", "10.101.0.0/24"},
+		{" 10.101.0.5/24 ", "10.101.0.0/24"}, // host bits are normalised
+		{"192.168.0.0/16", "192.168.0.0/16"},
+		{"172.16.4.0/30", "172.16.4.0/30"}, // RFC 1918, below Docker's pool
+		{"172.32.0.0/24", ""},              // public: outside 172.16.0.0/12
+		{"172.17.0.0/24", ""},              // Docker's default pool
+		{"172.31.255.0/24", ""},            // Docker's default pool
+		{"10.0.0.0/15", ""},                // wider than /16
+		{"10.0.0.0/31", ""},                // narrower than /30
+		{"8.8.8.0/24", ""},                 // not RFC 1918
+		{"fd00::/64", ""},                  // IPv6
+		{"10.101.0.0", ""},                 // not a CIDR
+	} {
+		got, err := NormalizeSubnet(tc.give)
+		if tc.want == "" {
+			if err == nil {
+				t.Errorf("NormalizeSubnet(%q) = %q, want an error", tc.give, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("NormalizeSubnet(%q) = %q, %v; want %q", tc.give, got, err, tc.want)
+		}
+	}
+}
+
+func TestLoadDefaultsTheSubnet(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"tld":"test"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := load(p)
+	if err != nil || cfg.Subnet != DefaultSubnet || DefaultSubnet != "10.101.0.0/24" {
+		t.Errorf("load of a config without a subnet = %q, %v; want 10.101.0.0/24", cfg.Subnet, err)
 	}
 }

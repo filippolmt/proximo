@@ -20,6 +20,7 @@ proximo <command> [args]
 | [`status`](#proximo-status) | List routed containers and URLs | no | yes |
 | [`doctor`](#proximo-doctor) | Report every check, with a remedy per failure | no | no |
 | [`config tld <tld>`](#proximo-config-tld) | Change the routed TLD | yes | yes |
+| [`config subnet <cidr>`](#proximo-config-subnet) | Move the stack network to another IPv4 subnet | no | yes |
 | [`config ca-path`](#proximo-config-ca-path) | Print the local CA certificate path | no | no |
 | [`config inventory-dir`](#proximo-config-inventory-dir) | Print the directory holding the effective-route inventory | no | no |
 | [`config machine <label>`](#proximo-config-machine) | Set this machine's label in its peer names | no | no |
@@ -426,6 +427,7 @@ proximo doctor
 ✔ The local CA is in the system trust store
 ✔ The local CA is in the browser (NSS) trust stores — 2 NSS database(s) hold the CA
 ✔ The proximo stack is running — traefik, dns, watcher, inspector
+✔ The stack network is on the declared subnet — 10.101.0.0/24
 ✔ The stack matches the installed CLI version — 0.4.0
 ✔ The stack runs the image this CLI pins — ghcr.io/filippolmt/proximo:v0.4.0
 ✔ The proximo DNS server answers — proximo-doctor.test answers 127.0.0.1 on 127.0.0.1:5354
@@ -720,6 +722,38 @@ is accepted but unguaranteed, and some are actively harmful: `.dev`, `.app` and
 `.zip` are real gTLDs in the browsers' HSTS preload list, so claiming one shadows
 names that exist on the public internet. A label that is merely undelegated today
 (`.loc`, `.lan`) works, but nothing stops it from being delegated tomorrow.
+
+## proximo config subnet
+
+Move the [stack network](../CONTEXT.md#the-environment) to another IPv4
+subnet. The default is `10.101.0.0/24`, outside Docker's default address pool;
+move it when that space collides with a route the host already has — see
+[a container cannot reach an address your host can](troubleshooting.md#a-container-cannot-reach-an-address-your-host-can).
+
+```sh
+proximo config subnet 10.102.0.0/24
+# Saved subnet: 10.102.0.0/24
+```
+
+- The value must be an IPv4 CIDR inside RFC 1918, with a prefix between `/16`
+  and `/30`, and outside `172.17.0.0/16`–`172.31.0.0/16` (Docker's default pool,
+  as a fixed range: the daemon's own configuration is never read). Host bits are
+  cleared (`10.101.0.5/24` is saved as `10.101.0.0/24`), and the saved value is
+  always printed.
+- **A running stack moves first; the value is saved only if Docker accepts it.**
+  The network is recreated, so the stack's services — the observability
+  dashboards included, if they were running — restart once. If Docker refuses
+  the subnet, its own line is printed, the stack goes back to the subnet it had,
+  and the config is unchanged.
+- **A stopped stack** is not started: the value is saved and the next
+  `proximo up` uses it.
+- Like any converge without `--image`, moving a running stack clears a sticky
+  [`--image`](#--image) override.
+
+There is no `config unset subnet`: `proximo config subnet 10.101.0.0/24`
+restores the default. Every converge that finds the network on a subnet other
+than the configured one — including the first `up` after upgrading from a
+version that let Docker pick — recreates it the same way and says so.
 
 ## proximo config ca-path
 

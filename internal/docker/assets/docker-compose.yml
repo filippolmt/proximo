@@ -17,6 +17,18 @@ x-logging: &proximo-logging
     max-size: "5m"
     max-file: "3"
 
+# The Stack network declares its own address space instead of taking a /16
+# from Docker's default pool, where it can shadow a route the host already has
+# (a VPN, a remote Docker network over a tunnel): docs/adr/0009. PROXIMO_SUBNET
+# comes from the .env the CLI writes (`proximo config subnet`); the default keeps
+# a hand-run `docker compose up` working. Declared before services: the peer
+# services are appended at the end of this file.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${PROXIMO_SUBNET:-10.101.0.0/24}
+
 services:
   traefik:
     # v3.6+ negotiates a Docker API version supported by Engine 28/29.

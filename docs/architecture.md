@@ -77,6 +77,15 @@ the watcher writes routes + certs to it, Traefik's file provider reads from it.
 Because it is a bind mount, the data is visible on the host and survives a
 `docker volume prune`. See [the state home](installation.md#state-home-proximo).
 
+Every stack service shares one Compose network, `proximo_default` — the
+**Stack network**. Its IPv4 subnet is declared, never taken from Docker's
+default pool: `10.101.0.0/24` unless moved with
+[`proximo config subnet`](cli.md#proximo-config-subnet), passed to Compose as
+`PROXIMO_SUBNET` in the stack's `.env`. A converge that finds the network on
+another subnet takes the stack down and recreates it, and goes back to the old
+subnet if Docker refuses the new one
+([ADR 0009](adr/0009-the-stack-declares-its-own-address-space.md)).
+
 An opt-in **observability profile** (`up --observability`) adds two more services
 — Dozzle (logs) and a Beszel hub + agent (metrics) — routed through the same
 label contract at `logs.<tld>` / `metrics.<tld>` (both opt into the HTTP→HTTPS

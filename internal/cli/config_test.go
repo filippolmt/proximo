@@ -2,15 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -380,5 +383,76 @@ func TestPeerSubcommandsAreVisible(t *testing.T) {
 		if c.Hidden {
 			t.Errorf("config %s is hidden", c.Name())
 		}
+	}
+}
+
+// stubSubnetStack fixes whether the stack runs and what a converge does, and
+// records the subnet each converge was asked for.
+func stubSubnetStack(t *testing.T, running bool, convergeErr error) *[]string {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	var asked []string
+	origRunning, origConverge := stackRunning, convergeStack
+	stackRunning = func(context.Context) bool { return running }
+	convergeStack = func(_, _ string, opts docker.ConvergeOpts) error {
+		asked = append(asked, opts.Subnet)
+		return convergeErr
+	}
+	t.Cleanup(func() { stackRunning, convergeStack = origRunning, origConverge })
+	return &asked
+}
+
+func TestConfigSubnetConvergesThenPersists(t *testing.T) {
+	asked := stubSubnetStack(t, true, nil)
+	out, err := runConfig(t, "subnet", "10.42.0.7/24")
+	if err != nil {
+		t.Fatalf("config subnet: %v", err)
+	}
+	if !slices.Equal(*asked, []string{"10.42.0.0/24"}) {
+		t.Errorf("converged onto %v, want the normalised 10.42.0.0/24", *asked)
+	}
+	// Normalisation is never silent: the saved value is printed.
+	if !strings.Contains(out, "Saved subnet: 10.42.0.0/24") {
+		t.Errorf("output = %q", out)
+	}
+	if cfg, _ := config.Load(); cfg.Subnet != "10.42.0.0/24" {
+		t.Errorf("persisted %q", cfg.Subnet)
+	}
+}
+
+func TestConfigSubnetKeepsTheConfigWhenTheConvergeFails(t *testing.T) {
+	stubSubnetStack(t, true, errors.New("Pool overlaps with other one on this address space"))
+	if _, err := runConfig(t, "subnet", "10.42.0.0/24"); err == nil || !strings.Contains(err.Error(), "Pool overlaps") {
+		t.Fatalf("config subnet = %v, want Docker's error", err)
+	}
+	if cfg, _ := config.Load(); cfg.Subnet != config.DefaultSubnet {
+		t.Errorf("a failed converge persisted %q", cfg.Subnet)
+	}
+}
+
+func TestConfigSubnetWithTheStackDownOnlySaves(t *testing.T) {
+	asked := stubSubnetStack(t, false, nil)
+	out, err := runConfig(t, "subnet", "10.42.0.0/24")
+	if err != nil {
+		t.Fatalf("config subnet: %v", err)
+	}
+	if len(*asked) != 0 {
+		t.Errorf("converged a stopped stack: %v", *asked)
+	}
+	if !strings.Contains(out, "next proximo up") {
+		t.Errorf("output = %q, want when it takes effect", out)
+	}
+	if cfg, _ := config.Load(); cfg.Subnet != "10.42.0.0/24" {
+		t.Errorf("persisted %q", cfg.Subnet)
+	}
+}
+
+func TestConfigSubnetRefusesAnInvalidValue(t *testing.T) {
+	asked := stubSubnetStack(t, true, nil)
+	if _, err := runConfig(t, "subnet", "172.18.0.0/16"); err == nil {
+		t.Fatal("config subnet accepted Docker's default pool")
+	}
+	if len(*asked) != 0 {
+		t.Errorf("converged an invalid subnet: %v", *asked)
 	}
 }

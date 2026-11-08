@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,6 +49,10 @@ func healthyEnv() Env {
 		},
 		AccessLog: func(context.Context) (bool, error) { return true, nil },
 		Incidents: func(context.Context) (bool, error) { return true, nil },
+		Subnet:    "10.101.0.0/24",
+		StackSubnet: func(context.Context) (string, error) {
+			return "10.101.0.0/24", nil
+		},
 		AgentSkill: func() ([]skill.Copy, error) {
 			return []skill.Copy{{Dest: skill.Dest{Dir: "/home/dev/.claude/skills/proximo"}, State: skill.Current}}, nil
 		},
@@ -68,6 +73,7 @@ func brokenEnv() Env {
 	env.Docker = func(context.Context) error { return errors.New("daemon down") }
 	env.AccessLog = func(context.Context) (bool, error) { return false, nil }
 	env.Incidents = func(context.Context) (bool, error) { return false, nil }
+	env.StackSubnet = func(context.Context) (string, error) { return "172.18.0.0/16", nil }
 	env.Stack = func(context.Context) (docker.StackInfo, error) { return docker.StackInfo{}, nil }
 	env.Routes = func(context.Context) ([]docker.Route, error) {
 		return []docker.Route{{Container: "web", Note: "api.test is served by shop-api-1"}}, nil
@@ -264,6 +270,35 @@ func TestDegradedStackFails(t *testing.T) {
 	res := checkByID(t, All(env), IDStack).Run(context.Background())
 	if res.Status != Fail || !strings.Contains(res.Detail, "watcher") {
 		t.Errorf("stack = %s (%s), want a failure naming the watcher", res.Status, res.Detail)
+	}
+}
+
+// The Stack network's subnet is stated always, and disputed when it is not
+// the declared one — the ordinary case is a network inherited from Docker's
+// pool, which `proximo up` recreates.
+func TestStackSubnet(t *testing.T) {
+	list := All(healthyEnv())
+	for i, c := range list {
+		if c.ID == IDStackSubnet && (i == 0 || list[i-1].ID != IDStack || !slices.Equal(c.Needs, []string{IDStack})) {
+			t.Errorf("stack-subnet must follow and need the stack check: at %d, needs %v", i, c.Needs)
+		}
+	}
+	if res := checkByID(t, list, IDStackSubnet).Run(context.Background()); res.Status != Pass || res.Detail != "10.101.0.0/24" {
+		t.Errorf("matching subnet = %s (%s), want a pass stating it", res.Status, res.Detail)
+	}
+	for name, read := range map[string]func(context.Context) (string, error){
+		"inherited": func(context.Context) (string, error) { return "172.18.0.0/16", nil },
+		"absent":    func(context.Context) (string, error) { return "", nil },
+		"unreadable": func(context.Context) (string, error) {
+			return "", errors.New("daemon gone")
+		},
+	} {
+		env := healthyEnv()
+		env.StackSubnet = read
+		res := checkByID(t, All(env), IDStackSubnet).Run(context.Background())
+		if res.Status != Fail || res.Remedy != "proximo up" {
+			t.Errorf("%s: %s (%s), remedy %q; want a failure with Remedy proximo up", name, res.Status, res.Detail, res.Remedy)
+		}
 	}
 }
 

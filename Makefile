@@ -121,6 +121,9 @@ demo-down:
 e2e: install
 	docker compose -f $(DEMO_COMPOSE) up -d
 	$(BIN) status
+	@# The half a fake cannot cover: Docker accepted the declared subnet.
+	@$(BIN) doctor 2>&1 | grep '✔ The stack network is on the declared subnet' \
+		|| { echo "FAIL: the stack network is not on the declared subnet (proximo doctor)"; exit 1; }
 	-$(OPEN) $(DEMO_URL)
 
 ## e2e-inspect: prove Inspection end to end (stack must be installed/up)

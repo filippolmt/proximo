@@ -13,9 +13,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/filippolmt/proximo/internal/config"
 	"github.com/filippolmt/proximo/internal/observability"
@@ -45,6 +49,9 @@ const (
 	svcBeszel            = "beszel"
 	svcBeszelAgent       = "beszel-agent"
 )
+
+// observabilityServices are every service of the observability profile.
+var observabilityServices = []string{svcDozzle, svcBeszel, svcBeszelAgent}
 
 // StackDir returns the directory the embedded stack is materialized into.
 func StackDir() (string, error) {
@@ -121,7 +128,7 @@ func materialize(tld, certDir, image string, cfg config.Config) (string, error) 
 	if err := copyPeer(filepath.Join(dir, "ca"), certDir, cfg); err != nil {
 		return "", err
 	}
-	if err := writeEnv(dir, tld, image); err != nil {
+	if err := writeEnv(dir, tld, image, cfg.Subnet); err != nil {
 		return "", err
 	}
 	if err := writeDevOverride(dir, image); err != nil {
@@ -253,14 +260,18 @@ func copyCA(stackDir, certDir string) error {
 // sticky across container restarts at boot.
 const imageEnvKey = "PROXIMO_IMAGE"
 
-func writeEnv(stackDir, tld, image string) error {
+// subnetEnvKey is the compose variable the Stack network's subnet is passed
+// through.
+const subnetEnvKey = "PROXIMO_SUBNET"
+
+func writeEnv(stackDir, tld, image, subnet string) error {
 	// PROXIMO_VERSION stamps the materialized services with the CLI version (a
 	// proximo.version label) so the running stack's version can be read back for
 	// skew detection; PROXIMO_IMAGE is the image every proximo service runs, and
 	// is stamped back as proximo.image so a stack can never run one thing and
 	// declare another.
-	content := fmt.Sprintf("PROXIMO_TLD=%s\n%s=%s\nPROXIMO_VERSION=%s\n",
-		tld, imageEnvKey, image, version.Version)
+	content := fmt.Sprintf("PROXIMO_TLD=%s\n%s=%s\nPROXIMO_VERSION=%s\n%s=%s\n",
+		tld, imageEnvKey, image, version.Version, subnetEnvKey, subnet)
 	return os.WriteFile(filepath.Join(stackDir, ".env"), []byte(content), 0o644)
 }
 
@@ -364,6 +375,10 @@ type ConvergeOpts struct {
 	// stack, never one component, and is written into the materialized .env so
 	// containers restarting at boot keep it.
 	Image string
+	// Subnet overrides the configured Stack network subnet for this converge
+	// only; empty means the configured one. `config subnet` converges onto a
+	// value before it persists it.
+	Subnet string
 }
 
 // EffectiveImage resolves the ref a converge with these options runs. An
@@ -404,12 +419,17 @@ func convergeWith(c Composer, tld, certDir string, opts ConvergeOpts) error {
 // project. It is the one place the effective image is resolved and the one
 // place a failure becomes a Remedy — which is why the observability bring-up
 // runs outside it: those services run their own upstream images, and the stack
-// image has nothing to do with them failing.
+// image has nothing to do with them failing. The one exception is a converge
+// that recreates the Stack network: its down removed the observability
+// services, so it brings back the ones that were running, best-effort.
 func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, error) {
 	image := opts.EffectiveImage()
 	cfg, err := config.Load()
 	if err != nil {
 		return "", err
+	}
+	if opts.Subnet != "" {
+		cfg.Subnet = opts.Subnet
 	}
 	// A value unset since the last converge leaves peer services that only the
 	// previous Compose file still describes: remove them before that file is
@@ -424,14 +444,37 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	// Asked before the converge recreates Traefik on the loopback, so the one
 	// converge that narrows a stack published on every interface says so.
 	wasEverywhere := onEveryInterface()
-	dir, err := materialize(tld, certDir, image, cfg)
-	if err != nil {
-		return "", err
-	}
-	for _, args := range composeConvergeCmds(image, opts.Force) {
-		if err := c.Compose(dir, args...); err != nil {
-			return "", remedyFor(image, err)
+	// Docker never moves an existing network, and Compose will not recreate
+	// one a running profile service is attached to: a network on another
+	// subnet — typically one inherited from Docker's pool — is taken down with
+	// every profile first (docs/adr/0009). An unreadable network is left to the
+	// converge, which fails on its own terms.
+	old, err := actualSubnet()
+	recreate := err == nil && old != "" && old != cfg.Subnet
+	obs := false
+	if recreate {
+		obs = observabilityRunning()
+		fmt.Fprintf(os.Stderr, "stack network: moving from %s to %s; the stack's services restart\n", old, cfg.Subnet)
+		if err := downWith(c); err != nil {
+			return "", err
 		}
+	}
+	dir, err := convergeOnto(c, tld, certDir, image, opts.Force, cfg)
+	var moveErr error
+	if err != nil && recreate {
+		// Compose removed the old network before Docker refused the new one:
+		// converge back onto the subnet read before the down.
+		want := cfg.Subnet
+		cfg.Subnet = old
+		var rbErr error
+		if dir, rbErr = convergeOnto(c, tld, certDir, image, opts.Force, cfg); rbErr != nil {
+			return "", fmt.Errorf("%w\n\nthe stack network could not move to %s, and moving it back to %s failed too: %v\nthe stack is down.\nRemedy: proximo config subnet <cidr>", err, want, old, rbErr)
+		}
+		// Back up, but still a failure: what follows restores what the down
+		// removed, then the caller learns the move did not happen.
+		moveErr = fmt.Errorf("%w\n\nthe stack network could not move to %s; the stack is back on %s.\nRemedy: proximo config subnet <cidr>", err, want, old)
+	} else if err != nil {
+		return "", err
 	}
 	if wasEverywhere {
 		note := "traefik: now listening on 127.0.0.1 only; routes are no longer reachable from other hosts"
@@ -443,11 +486,37 @@ func convergeCore(c Composer, tld, certDir string, opts ConvergeOpts) (string, e
 	if peerConfigured(cfg) {
 		startPeerServices(c, dir, tld, cfg)
 	}
+	// The down took the observability profile with it; its env files and hub
+	// data survive the re-materialize, so no new bootstrap is needed. Like the
+	// peer services, a failure here never fails the command that serves the TLD.
+	if obs {
+		if err := c.Compose(dir, "--profile", observabilityProfile, "up", "-d"); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ observability did not come back after the stack restarted: %v\n    Remedy: proximo up --observability\n", err)
+		}
+	}
+	if moveErr != nil {
+		return "", moveErr
+	}
 	return dir, nil
 }
 
-// stackQueryTimeout bounds the one Docker question converge asks before it
-// runs: a daemon that does not answer costs the notice, never the converge.
+// convergeOnto materializes the stack for cfg and runs the core converge.
+func convergeOnto(c Composer, tld, certDir, image string, force bool, cfg config.Config) (string, error) {
+	dir, err := materialize(tld, certDir, image, cfg)
+	if err != nil {
+		return "", err
+	}
+	for _, args := range composeConvergeCmds(image, force) {
+		if err := c.Compose(dir, args...); err != nil {
+			return "", remedyFor(image, err)
+		}
+	}
+	return dir, nil
+}
+
+// stackQueryTimeout bounds each Docker question converge asks before it runs:
+// a daemon that does not answer costs the notice or the network move, never
+// the converge.
 const stackQueryTimeout = 5 * time.Second
 
 // onEveryInterface reports whether the running stack publishes routed
@@ -458,6 +527,69 @@ var onEveryInterface = func() bool {
 	defer cancel()
 	info, err := StackStatus(ctx)
 	return err == nil && info.OnEveryInterface()
+}
+
+// stackNetwork is the Compose name of the Stack network.
+const stackNetwork = "proximo_default"
+
+// actualSubnet reads the Stack network's IPv4 subnet, "" when the network does
+// not exist. Only the IPv4 IPAM config is read: an IPv6 one the daemon adds is
+// not part of the decision (docs/adr/0009). A var so converge is testable
+// without Docker.
+var actualSubnet = func() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), stackQueryTimeout)
+	defer cancel()
+	return StackSubnet(ctx)
+}
+
+// StackSubnet reads the Stack network's actual IPv4 subnet, "" when the
+// network does not exist.
+func StackSubnet(ctx context.Context) (string, error) {
+	cli, err := newClient()
+	if err != nil {
+		return "", err
+	}
+	defer cli.Close()
+	// The name filter matches substrings, so the exact name is picked here.
+	res, err := cli.NetworkList(ctx, client.NetworkListOptions{
+		Filters: make(client.Filters).Add("name", stackNetwork),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, n := range res.Items {
+		if n.Name != stackNetwork {
+			continue
+		}
+		for _, c := range n.IPAM.Config {
+			if c.Subnet.Addr().Is4() {
+				return c.Subnet.String(), nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// observabilityRunning reports whether any observability service of the stack
+// is running, so a converge that takes the stack down can bring it back. A
+// var so converge is testable without Docker; no Docker is false.
+var observabilityRunning = func() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), stackQueryTimeout)
+	defer cancel()
+	cli, err := newClient()
+	if err != nil {
+		return false
+	}
+	defer cli.Close()
+	res, err := cli.ContainerList(ctx, client.ContainerListOptions{
+		Filters: make(client.Filters).Add("label", composeProjectLabel+"=proximo"),
+	})
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(res.Items, func(c container.Summary) bool {
+		return slices.Contains(observabilityServices, c.Labels["com.docker.compose.service"])
+	})
 }
 
 // imagePresent reports whether the image is already on the host. A var so the
@@ -687,6 +819,5 @@ func downObservabilityWith(c Composer) error {
 		// Nothing materialized; nothing to tear down.
 		return nil
 	}
-	return c.Compose(dir, "--profile", observabilityProfile, "rm", "-s", "-f",
-		svcDozzle, svcBeszel, svcBeszelAgent)
+	return c.Compose(dir, append([]string{"--profile", observabilityProfile, "rm", "-s", "-f"}, observabilityServices...)...)
 }

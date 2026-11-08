@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,11 @@ const (
 	// DefaultTLD is the default top-level domain used for local routing.
 	// ".test" is reserved by RFC 6761 and never collides with mDNS (".local").
 	DefaultTLD = "test"
+
+	// DefaultSubnet is the Stack network's IPv4 subnet unless the developer
+	// moves it: outside Docker's default address pool and outside the ranges
+	// home LANs habitually use (docs/adr/0009).
+	DefaultSubnet = "10.101.0.0/24"
 
 	// DNSPort is the loopback UDP host port the DNS server is published on. A
 	// high port avoids any privileged bind to :53; 5353 is intentionally
@@ -61,6 +67,9 @@ type Config struct {
 	// TLD is the top-level domain routed to the local proximo (without a dot).
 	TLD string `json:"tld"`
 
+	// Subnet is the IPv4 subnet the Stack network declares (docs/adr/0009).
+	Subnet string `json:"subnet"`
+
 	// The peer-sharing values (docs/sharing.md). Each has no
 	// default and is set on its own; any subset is a legitimate state, and a
 	// machine with none of them set executes no peer behaviour at all.
@@ -84,7 +93,43 @@ type Config struct {
 
 // Default returns a Config populated with default values.
 func Default() Config {
-	return Config{TLD: DefaultTLD}
+	return Config{TLD: DefaultTLD, Subnet: DefaultSubnet}
+}
+
+// rfc1918 are the private IPv4 ranges a Stack network may be declared in.
+var rfc1918 = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+}
+
+// NormalizeSubnet validates a Stack network subnet and clears its host bits:
+// an IPv4 CIDR inside RFC 1918, a prefix between /16 and /30, and outside
+// Docker's default pool 172.17.0.0/16–172.31.0.0/16. The pool is a static
+// range, never read from the daemon: a value accepted yesterday must not be
+// refused today because the host's configuration changed (docs/adr/0009).
+func NormalizeSubnet(raw string) (string, error) {
+	p, err := netip.ParsePrefix(strings.TrimSpace(raw))
+	if err != nil || !p.Addr().Is4() {
+		return "", fmt.Errorf("invalid subnet %q: use an IPv4 CIDR such as %s", raw, DefaultSubnet)
+	}
+	if p.Bits() < 16 || p.Bits() > 30 {
+		return "", fmt.Errorf("invalid subnet %q: the prefix must be between /16 and /30", raw)
+	}
+	p = p.Masked()
+	private := false
+	for _, r := range rfc1918 {
+		private = private || r.Contains(p.Addr())
+	}
+	if !private {
+		return "", fmt.Errorf("invalid subnet %q: use a private (RFC 1918) range: 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16", raw)
+	}
+	// At /16 or narrower the prefix sits inside a single /16, so its first two
+	// octets decide whether it is in Docker's pool.
+	if a := p.Addr().As4(); a[0] == 172 && a[1] >= 17 && a[1] <= 31 {
+		return "", fmt.Errorf("invalid subnet %q: 172.17.0.0/16–172.31.0.0/16 is Docker's default address pool, where other networks are allocated", raw)
+	}
+	return p.String(), nil
 }
 
 // labelPattern is one DNS label: a TLD, a machine label, a label of the Peer suffix.
@@ -326,6 +371,9 @@ func load(p string) (Config, error) {
 	}
 	if cfg.TLD == "" {
 		cfg.TLD = DefaultTLD
+	}
+	if cfg.Subnet == "" {
+		cfg.Subnet = DefaultSubnet
 	}
 	return cfg, nil
 }

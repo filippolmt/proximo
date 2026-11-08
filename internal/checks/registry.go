@@ -24,6 +24,7 @@ const (
 	IDTrustSystem  = "trust-system"
 	IDTrustNSS     = "trust-nss"
 	IDStack        = "stack"
+	IDStackSubnet  = "stack-subnet"
 	IDStackVersion = "stack-version"
 	IDStackImage   = "stack-image"
 	IDDNSServer    = "dns-server"
@@ -111,6 +112,30 @@ func All(env Env) []Check {
 					return Failed("proximo up", "%s is not running", strings.Join(missing, " and "))
 				}
 				return Passed("%s", strings.Join(info.Roles, ", "))
+			},
+		},
+		Check{
+			ID:    IDStackSubnet,
+			Name:  "The stack network is on the declared subnet",
+			Doc:   "a-container-cannot-reach-an-address-your-host-can",
+			Needs: []string{IDStack},
+			Run: func(ctx context.Context) Result {
+				// Always stated, not only when it diverges: a passing subnet
+				// can still shadow a route, and only the developer can see
+				// which (docs/adr/0009).
+				actual, err := env.StackSubnet(ctx)
+				switch {
+				case err != nil:
+					return Failed("proximo up", "could not read the stack network: %v", err)
+				case actual == "":
+					return Failed("proximo up", "the stack network does not exist")
+				case actual != env.Subnet:
+					// The ordinary case is a network inherited from Docker's
+					// pool, which `up` recreates; the second step is for a
+					// declared subnet Docker itself refuses.
+					return Failed("proximo up", "the stack network is on %s, the declared subnet is %s (if proximo up cannot create it there, move it: proximo config subnet <cidr>)", actual, env.Subnet)
+				}
+				return Passed("%s", actual)
 			},
 		},
 		Check{

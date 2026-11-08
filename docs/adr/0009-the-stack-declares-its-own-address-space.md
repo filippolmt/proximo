@@ -32,8 +32,14 @@ Four things follow, and they are the substance of the decision:
   tunnel. `10.101.0.0/24` is outside Docker's default pool and outside the ranges
   home LANs habitually use (`192.168.0.0/24`, `192.168.1.0/24`, `10.0.0.0/24`).
 - **The default applies to installations that already exist.** A converge that
-  finds `proximo_default` on a subnet other than the declared one recreates the
-  network (`down` then `up`) and says so in one line. Docker never changes the
+  finds `proximo_default` on an IPv4 subnet other than the declared one takes the
+  stack down with every profile and brings it back up, and says so in one line.
+  Compose alone is not enough: it does recreate a network whose declared subnet
+  changed, but not while a service outside the current selection — any running
+  profile service — is attached to it; it warns, exits 0 and keeps the old
+  subnet. The observability services, if they were running, are brought back
+  after the core: their env files and the hub's data survive the
+  re-materialize, so no new bootstrap is needed. Docker never changes the
   subnet of an existing network, so inheriting it silently would leave every
   affected host exactly as broken after the upgrade as before it — and the
   developer who has the bug is precisely the one who does not know there is a
@@ -41,6 +47,14 @@ Four things follow, and they are the substance of the decision:
   on the stack network (the watcher joins the Project's networks to reach it), so
   what restarts is the stack, and what is lost is in-memory Exchanges and
   Incidents, which are not durable by design (ADR 0006, ADR 0007).
+- **A refused subnet is rolled back.** When Docker cannot create the new
+  network (`Pool overlaps with other one on this address space`), Compose has
+  already removed the old one and left the containers exited. The converge then
+  runs again on the subnet it read before the down, and reports Docker's line
+  with the Remedy `proximo config subnet <cidr>`. This holds for `config subnet`
+  and for the first `up` after an upgrade alike — a host that already has
+  another network on `10.101.0.0/24`, for one. If the rollback fails too, the
+  stack stays down and both errors are reported.
 - **The rejected pool is a static range.** `config subnet` refuses
   `172.17.0.0/16`–`172.31.0.0/16` as a literal, without asking the daemon what
   its `default-address-pools` currently are. A rejection derived from host
@@ -82,6 +96,11 @@ is also per-platform, and it belongs to a decision about what proximo may
 conclude from the host's configuration, which this one does not settle. Recorded
 here as a non-goal, not as a rejected shape.
 
+**Probe the new subnet with a throwaway network before the down.** It would
+avoid the rollback, and wrongly refuse a new subnet that overlaps only the
+stack's current one (a `/24` narrowed to a `/25`), which the down is about to
+free.
+
 **Dual-stack the network (IPv6 alongside IPv4).** The reported failure is an
 IPv4 route collision. Adding IPv6 would mean choosing a ULA prefix on the
 developer's behalf with no symptom asking for it.
@@ -106,6 +125,6 @@ this one: those rules were written against an address proximo never promised.
 `/16`, outside the static Docker pool — normalises host bits (`10.101.0.5/24`
 becomes `10.101.0.0/24`) and prints what it saved. It converges first and
 persists only on success, so a valid-but-impossible subnet leaves the config
-untouched and the stack on the network it already had. With the stack down there
+untouched and, through the rollback, the stack back on the subnet it had. With the stack down there
 is nothing to converge: the value is saved and takes effect at the next
 `proximo up`.
