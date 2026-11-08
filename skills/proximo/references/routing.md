@@ -26,6 +26,7 @@ consequence.
 | --- | --- |
 | `dig +short <host> @127.0.0.1` | the resolver or the DNS service — `proximo doctor` names which |
 | `curl -sSI https://<host>` reports a TLS error | the CA is not trusted by this client, see below |
+| the certificate names no host — `proximo default certificate` (browser: `ERR_CERT_COMMON_NAME_INVALID`) | Traefik answered with no route for this host: `proximo status` says why. A row flagged `starting` is a healthcheck not yet passed — wait for it |
 | status is **404** | no route matched: the host is not the one proximo has, or a `proximo.path` prefix excludes this path |
 | status is **502/503** | the route matched and the backend did not answer — see the next section |
 | status is the container's own **5xx** | routing is fine and the server failed — read its output, [`transcript.md`](transcript.md) |

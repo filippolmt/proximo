@@ -118,8 +118,8 @@ answer, and they send you to different places:
 | *has written nothing at all since it started, so it probably logs elsewhere* | The application logs to a file inside the container, or to a collector. Only stdout and stderr can be quoted. Point its logger at stdout. |
 | *log driver cannot be read back* | The container runs a driver Docker cannot replay (`syslog`, `fluentd`, `gelf`). |
 | *the container that served this request is gone* | It was removed, or the address now answers for a container started after the request. A container that merely stopped is still quoted — Docker answers `docker logs` for it. proximo refuses to quote whichever container holds the address now. |
-| *this stack records no access log* | Version skew, not an absence of errors: no route produces an Exchange at all. The line carries its Remedy, `proximo update`, and it is the developer's to run. |
-| *this stack records no Incident* | Version skew again: the running watcher publishes no Incident API, so nothing reports that a container exited or restarted. Remedy `proximo update`, the developer's to run. |
+| *this stack records no access log* | Version skew, not an absence of errors: no route produces an Exchange at all. The line carries its Remedy, `proximo update`, yours to run. |
+| *this stack records no Incident* | Version skew again: the running watcher publishes no Incident API, so nothing reports that a container exited or restarted. Remedy `proximo update`, yours to run. |
 | *proximo remembers this Incident, not what … wrote* | proximo kept the Incident — runtime metadata — and the container's output is gone with the container, or the one answering to that name now started after it. There is nothing left to read back, and proximo will not substitute another container's output. |
 
 When a Transcript names a replica count — *1 of 3 replicas* — read "it only
