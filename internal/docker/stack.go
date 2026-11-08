@@ -738,7 +738,9 @@ func composeObservabilityAgentCmds() [][]string {
 }
 
 // semverTag matches a canonical release tag (vX.Y.Z, optionally pre-released):
-// the only tag family the release pipeline publishes and never moves.
+// the only tag family the release pipeline publishes and never moves. A prefix
+// match on purpose; internal/version's releaseVersion is the anchored test of
+// whether a module version is a release.
 var semverTag = regexp.MustCompile(`^v\d+\.\d+\.\d+`)
 
 // isMobileRef reports whether an image ref can change under a fixed name, and

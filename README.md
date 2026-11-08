@@ -28,9 +28,10 @@ Full guides live in [`docs/`](docs/README.md):
 - [Dev-time observability](docs/observability.md) — `proximo errors` shows,
   for every route and with no label, the failing requests and what the
   container itself wrote around them (the **Transcript**), and the
-  **Incidents** the runtime declared: a container that exited, restarted or
-  was OOM-killed. Label a container `proximo.inspect=true` and it also shows
-  what the browser reported (**Inspection** — Chrome is the supported browser;
+  **Incidents** the runtime declared: a container that exited, restarted, was
+  OOM-killed or stopped being healthy. A container with no route, such as a
+  worker, opts in with `proximo.transcript=true`. Label a container
+  `proximo.inspect=true` and it also shows what the browser reported (**Inspection** — Chrome is the supported browser;
   other engines are likely to work and are not tested). Opt-in
   `up --observability` adds logs (Dozzle) + metrics (Beszel) dashboards,
   credential-less and over trusted HTTPS.
