@@ -10,8 +10,8 @@ import (
 // templates (the peer services), and the other tests read it as text. This one
 // hands it to Compose itself, every profile enabled, so an indentation or key
 // mistake fails here rather than at the first `proximo up` that reaches it.
-// Skipped where the docker CLI is absent (`make test` runs in golang:alpine);
-// CI's go test runs on a host that has it.
+// Skipped where the docker CLI is absent; `make test` runs in an image that
+// has it (hack/test-image), and CI's go test runs on a host that has it.
 func TestComposeAcceptsTheMaterializedFile(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not found")

@@ -14,6 +14,8 @@ SRC     := $(CURDIR)
 
 # All Go work runs through Docker — no local Go toolchain required.
 GO_IMAGE     ?= golang:1.27-alpine
+# GO_IMAGE plus the docker CLI and Compose (hack/test-image), for the tests.
+TEST_IMAGE   := proximo-go-test
 LYCHEE_IMAGE ?= lycheeverse/lychee:latest
 DOCKER_FLAGS := --rm -v "$(CURDIR)":/src -w /src \
 	-v proximo-go-mod:/go/pkg/mod -v proximo-go-build:/root/.cache/go-build \
@@ -30,7 +32,7 @@ INSPECT_URL  := https://inspected.test
 FAILING_URL  := https://failing.test
 OPEN         := $(if $(filter darwin,$(GOOS)),open,xdg-open)
 
-.PHONY: build build-all test vet tidy check-links skill-refs \
+.PHONY: build build-all test test-image doc fmt-check check vet tidy check-links skill-refs \
 	install up down status doctor errors uninstall \
 	demo demo-down e2e e2e-inspect e2e-transcript e2e-incident e2e-down clean
 
@@ -50,9 +52,33 @@ build-all:
 
 # ---- Tests / checks (always Linux, in the golang image) -----------------------
 
+# test-image: built on demand and cached by Docker; rebuilt only when
+# hack/test-image or GO_IMAGE changes.
+test-image:
+	@docker build -q --build-arg GO_IMAGE=$(GO_IMAGE) -t $(TEST_IMAGE) hack/test-image >/dev/null
+
 ## test: run the test suite in Docker (no local Go needed)
-test:
-	docker run $(DOCKER_FLAGS) $(GO_IMAGE) go test ./...
+##       one package / test: make test PKG=./internal/docker RUN=TestImageRef
+PKG ?= ./...
+test: test-image
+	docker run $(DOCKER_FLAGS) $(TEST_IMAGE) go test $(PKG) $(if $(RUN),-run '$(RUN)' -v)
+
+## doc: go doc for a symbol, dependencies included, e.g.
+##      make doc SYM=github.com/moby/moby/client.Client.NetworkList
+doc:
+	docker run $(DOCKER_FLAGS) $(GO_IMAGE) go doc $(SYM)
+
+## fmt-check: fail on files gofmt would change (the CI format check)
+fmt-check:
+	@unformatted=$$(docker run $(DOCKER_FLAGS) $(GO_IMAGE) gofmt -l .); \
+	if [ -n "$$unformatted" ]; then echo "not gofmt-formatted:"; echo "$$unformatted"; exit 1; fi
+
+## check: every check CI runs (build, vet, gofmt, tidy, tests) plus the links
+check: test-image
+	docker run $(DOCKER_FLAGS) $(TEST_IMAGE) sh -c 'go build ./... && go vet ./... && go mod tidy -diff'
+	$(MAKE) fmt-check
+	docker run $(DOCKER_FLAGS) $(TEST_IMAGE) go test ./... -count=1
+	$(MAKE) check-links
 
 ## vet: go vet in Docker
 vet:

@@ -10,7 +10,8 @@ natively in Go.
 ## Build / test / run
 
 All Go work runs **inside Docker** via the Makefile — no local Go toolchain is assumed.
-Targets, the single-test invocation, and the lifecycle targets
+Before a commit run `make check`: the checks CI runs, plus the links. Targets, the
+single-test invocation, and the lifecycle targets
 (`install`/`up`/`down`/`status`/`uninstall`/`e2e`):
 [docs/development.md — Build and test](docs/development.md#build-and-test),
 [Lifecycle targets](docs/development.md#lifecycle-targets).

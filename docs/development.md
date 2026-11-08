@@ -14,9 +14,13 @@ runs), so **Docker is the only prerequisite**:
 ```sh
 make build      # build bin/proximo-<os>-<arch> for the host (Go runs in Docker)
 make build-all  # cross-compile all targets (darwin,linux × amd64,arm64)
-make test       # run the test suite (always Linux, in the golang image)
+make check      # everything CI checks, plus the links: run it before a commit
+make test       # run the test suite (always Linux, in the golang image + docker CLI)
+make test PKG=./internal/docker RUN=TestImageRef   # one package, one test (-v)
 make vet        # go vet
+make fmt-check  # fail on files gofmt would change
 make tidy       # go mod tidy
+make doc SYM=github.com/moby/moby/client.Client.NetworkList  # go doc, dependencies included
 make check-links # validate Markdown links + anchors (lychee, offline — same check as CI)
 ```
 
@@ -24,19 +28,18 @@ Run `make tidy` whenever a change touches imports, and commit the resulting
 `go.mod`/`go.sum`. CI (`.github/workflows/ci.yml`) runs the same checks on every
 PR and on `main` — build, `go vet`, `gofmt -l`, `go mod tidy -diff` and the test
 suite — and fails on an untidy module graph the same way it fails on unformatted
-code.
+code. `make check` runs those same steps locally.
+
+The tests run in `proximo-go-test`, the `golang` image plus the docker CLI and
+Compose ([`hack/test-image`](../hack/test-image/Dockerfile)), built on first use
+and cached by Docker. It exists so `TestComposeAcceptsTheMaterializedFile` —
+`docker compose config` on the materialized stack, every profile enabled — runs
+locally as it does in CI, rather than skipping. It needs no daemon.
 
 The binary is named per OS/arch (`bin/proximo-darwin-arm64`,
 `bin/proximo-linux-amd64`, …) so a macOS and a Linux build never overwrite each
 other in a shared working tree. Override the host target with
 `make build GOOS=linux GOARCH=amd64`.
-
-Run a **single test** (no Make target — invoke `go test` directly in the build
-image):
-
-```sh
-docker run --rm -v "$PWD":/src -w /src golang:1.27-alpine go test ./internal/docker/ -run TestImageRef -v
-```
 
 If a local Go toolchain satisfying the `go` directive in `go.mod` is present you
 can run `go build/test/vet ./...` directly; the Docker path is just the
