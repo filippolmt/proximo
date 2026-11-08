@@ -219,8 +219,8 @@ func TestPeerValuesAbsentByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An unconfigured machine's config.json is exactly what it was before.
-	if strings.TrimSpace(string(data)) != "{\n  \"tld\": \"test\"\n}" {
+	// An unconfigured machine's config.json holds no peer value.
+	if strings.TrimSpace(string(data)) != "{\n  \"tld\": \"test\",\n  \"subnet\": \"10.101.0.0/24\"\n}" {
 		t.Errorf("config.json = %s", data)
 	}
 }
@@ -233,6 +233,50 @@ func TestParseAddress(t *testing.T) {
 	for _, raw := range []string{"", "100.89.88", "studio-01.mesh.internal", "100.89.88.2/8", "fd7a:115c:a1e0::1"} {
 		if _, err := ParseAddress(raw); err == nil {
 			t.Errorf("ParseAddress(%q) accepted", raw)
+		}
+	}
+}
+
+func TestNormalizeSubnet(t *testing.T) {
+	for _, tc := range []struct{ give, want string }{
+		{"10.101.0.0/24", "10.101.0.0/24"},
+		{" 10.101.0.5/24 ", "10.101.0.0/24"}, // host bits are normalised
+		{"192.168.0.0/16", "192.168.0.0/16"},
+		{"172.16.4.0/30", "172.16.4.0/30"}, // RFC 1918, below Docker's pool
+		{"172.32.0.0/24", ""},              // public: outside 172.16.0.0/12
+		{"172.17.0.0/24", ""},              // Docker's default pool
+		{"172.31.255.0/24", ""},            // Docker's default pool
+		{"10.0.0.0/15", ""},                // wider than /16
+		{"10.0.0.0/31", ""},                // narrower than /30
+		{"8.8.8.0/24", ""},                 // not RFC 1918
+		{"fd00::/64", ""},                  // IPv6
+		{"10.101.0.0", ""},                 // not a CIDR
+	} {
+		got, err := NormalizeSubnet(tc.give)
+		if tc.want == "" {
+			if err == nil {
+				t.Errorf("NormalizeSubnet(%q) = %q, want an error", tc.give, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("NormalizeSubnet(%q) = %q, %v; want %q", tc.give, got, err, tc.want)
+		}
+	}
+}
+
+func TestLoadDefaultsTheSubnet(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	for give, want := range map[string]string{
+		`{"tld":"test"}`:                        DefaultSubnet,
+		`{"tld":"test","subnet":"10.9.0.5/24"}`: "10.9.0.0/24", // host bits cleared
+		`{"tld":"test","subnet":"8.8.8.0/24"}`:  "8.8.8.0/24",  // invalid: kept for the converge to refuse
+	} {
+		if err := os.WriteFile(p, []byte(give), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if cfg, err := load(p); err != nil || cfg.Subnet != want {
+			t.Errorf("load(%s).Subnet = %q, %v; want %q", give, cfg.Subnet, err, want)
 		}
 	}
 }

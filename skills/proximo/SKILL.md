@@ -1,6 +1,6 @@
 ---
 name: proximo
-description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when bringing up a project's containers, exposing a container through proximo.* labels or giving a service a local hostname, when calling or testing a containerized service (curl, wget, a test suite), when a .test host does not resolve, does not answer (ERR_CONNECTION_REFUSED) or returns 502/503, when a browser rejects a local certificate (ERR_CERT_AUTHORITY_INVALID, ERR_CERT_COMMON_NAME_INVALID), when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
+description: proximo makes local Docker containers reachable at https://<name>.test with trusted HTTPS and local DNS. Use when bringing up a project's containers, exposing a container through proximo.* labels or giving a service a local hostname, when calling or testing a containerized service (curl, wget, a test suite), when a .test host does not resolve, does not answer (ERR_CONNECTION_REFUSED) or returns 502/503, when a browser rejects a local certificate (ERR_CERT_AUTHORITY_INVALID, ERR_CERT_COMMON_NAME_INVALID), when a page loads and then breaks in the browser, when a request through a .test host fails and you need what the container itself wrote, when the developer says something is not progressing — a queue not draining, a worker or job that keeps dying — and no page is broken, when a container cannot reach a VPN or tunnelled address the host reaches, or when sharing a route with a colleague over the team's mesh (proximo.share) or a colleague reports a shared link that times out, lands on .test, loses its login, or fails at the certificate.
 metadata:
   short-description: Expose a container at https://<name>.test, and diagnose one that is broken
 ---
@@ -38,6 +38,7 @@ first: what it shows picks the branch.
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
 | A route, the host answers, and a request fails on the server — a 500, or an API call that comes back wrong | [`references/transcript.md`](references/transcript.md) |
 | Nothing is visibly broken, and the developer says something is **not progressing** — a queue not draining, a job that never finishes, a worker that keeps dying | [`references/transcript.md`](references/transcript.md) — ask for **Incidents** |
+| Nothing about a route is wrong, and a call **from inside a container** to an address the host reaches — a host behind a VPN, a network over a tunnel — hangs until it times out | Run `proximo doctor` and read *The stack network is on the declared subnet*: the stack network can shadow that route. A Remedy of `proximo up` is yours to run. If the subnet it states overlaps the address, `proximo config subnet <cidr>` moves the stack: ask the developer for a free private range, since only they know which ones their VPN uses. Then [troubleshooting](https://filippolmt.github.io/proximo/troubleshooting.html#a-container-cannot-reach-an-address-your-host-can) |
 | A route carries `proximo.share`, or a **colleague** reports a shared link that times out, lands on a `.test` address, loses its login, or fails at the certificate | The `PEER` column says whether the route is served on its peer names; then [sharing](https://filippolmt.github.io/proximo/sharing.html) and the matching section of [troubleshooting](https://filippolmt.github.io/proximo/troubleshooting.html#a-shared-link-does-not-resolve-or-times-out). `proximo doctor` checks this machine's side (`peer-intermediate`, `peer-routes`, `peer-dns`, `peer-relay`, `mesh`); nothing here can see the colleague's |
 
 When the developer's account does not settle which row it is, ask the host
@@ -59,7 +60,8 @@ containers and change nothing on the host. Say which command you are running.
 
 **Recreating the stack empties the Exchange buffer.** Exchanges are held in
 memory and bounded, so whatever recreates the `inspector` — `proximo down` then
-`up`, `proximo update`, or an `up` that brings a new stack image — discards every
+`up`, `proximo update`, `proximo config subnet`, or an `up` that brings a new
+stack image or moves the stack network — discards every
 Client report recorded before it. A label change needs no stack restart, and an
 `up` over an unchanged running stack keeps the buffer. Collect what you need
 before recreating, and reproduce the problem after; `proximo errors` says when the

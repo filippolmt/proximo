@@ -35,8 +35,8 @@ const intermediateMargin = 30 * 24 * time.Hour
 func peerSkip(env Env, needAddress bool) (Result, bool) {
 	p := env.Peer
 	switch {
-	case env.PeerErr != nil:
-		return Skipped("the configuration could not be read: %v", env.PeerErr), false
+	case env.ConfigErr != nil:
+		return Skipped("the configuration could not be read: %v", env.ConfigErr), false
 	case needAddress && (p.Machine == "" || p.PeerSuffix == "" || p.Address == ""):
 		return Skipped("machine, peer-suffix or address is not configured"), false
 	case p.Machine == "" || p.PeerSuffix == "":

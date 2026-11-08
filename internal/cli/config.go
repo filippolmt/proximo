@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -22,6 +23,7 @@ func newConfigCmd() *cobra.Command {
 		Short: "Inspect and change proximo configuration",
 	}
 	cmd.AddCommand(newConfigTLDCmd())
+	cmd.AddCommand(newConfigSubnetCmd())
 	cmd.AddCommand(newConfigCAPathCmd())
 	cmd.AddCommand(newConfigInventoryDirCmd())
 	cmd.AddCommand(newConfigMachineCmd())
@@ -366,6 +368,72 @@ func newConfigInventoryDirCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), path)
+			return nil
+		},
+	}
+}
+
+// stackRunning and convergeStack are swapped in tests.
+var (
+	// No daemon runs no stack: the value only has to wait for the next up.
+	// A daemon that answers but cannot list the stack is an error, never
+	// "stopped", or the value would be saved without the move it declares.
+	stackRunning = func(ctx context.Context) (bool, error) {
+		if checks.DockerReachable(ctx) != nil {
+			return false, nil
+		}
+		info, err := docker.StackStatus(ctx)
+		return info.Running, err
+	}
+	convergeStack = docker.Converge
+)
+
+func newConfigSubnetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "subnet <cidr>",
+		Short: "Move the stack network to another IPv4 subnet",
+		Long: "Declare the IPv4 subnet the stack network occupies (default " + config.DefaultSubnet + ").\n" +
+			"Move it when a container cannot reach an address the host can: the stack\n" +
+			"network shadows a route the host already has. A running stack is moved\n" +
+			"first, and the value is saved only if Docker accepts it; a stopped stack\n" +
+			"takes it at the next `proximo up`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			subnet, err := config.NormalizeSubnet(args[0])
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			running, err := stackRunning(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("could not read whether the stack runs, so the subnet is not saved: %w", err)
+			}
+			if running {
+				certDir, err := tls.Dir()
+				if err != nil {
+					return err
+				}
+				// Like every converge without --image, this one clears a
+				// sticky override, so it says so.
+				opts := docker.ConvergeOpts{Subnet: subnet}
+				reportImage(out, opts)
+				if err := convergeStack(cfg.TLD, certDir, opts); err != nil {
+					return err
+				}
+			}
+			cfg.Subnet = subnet
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+			if running {
+				fmt.Fprintf(out, "Saved subnet: %s\n", subnet)
+			} else {
+				fmt.Fprintf(out, "Saved subnet: %s (it takes effect at the next proximo up)\n", subnet)
+			}
 			return nil
 		},
 	}

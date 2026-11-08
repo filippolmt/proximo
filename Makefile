@@ -147,6 +147,12 @@ demo-down:
 e2e: install
 	docker compose -f $(DEMO_COMPOSE) up -d
 	$(BIN) status
+	@# The half a fake cannot cover: Docker accepted the declared subnet.
+	@want=$$(sed -n 's/^PROXIMO_SUBNET=//p' $$HOME/.proximo/stack/.env); \
+	got=$$(docker network inspect proximo_default --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'); \
+	echo " $$got" | grep -q " $$want " \
+		|| { echo "FAIL: proximo_default is on '$$got', the stack declares '$$want'"; exit 1; }; \
+	echo "OK: proximo_default is on the declared $$want"
 	-$(OPEN) $(DEMO_URL)
 
 ## e2e-inspect: prove Inspection end to end (stack must be installed/up)

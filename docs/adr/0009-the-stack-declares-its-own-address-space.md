@@ -9,7 +9,7 @@ allocated.
 That is a routing decision taken by whichever component allocates last. When the
 host already routes a subnet inside that pool — a VPN tunnel is the ordinary case
 — the stack network can shadow it. From inside a container, packets addressed to
-that subnet match the connected route of proximo's own bridge and never leave the
+that subnet match the connected route of the stack network and never leave the
 host: the name resolves, then the connection hangs until it times out. On Docker
 Desktop the symptom is asymmetric, and that is what makes it expensive: the
 host's own terminal is unaffected, because the bridges live inside the Linux VM
@@ -32,8 +32,14 @@ Four things follow, and they are the substance of the decision:
   tunnel. `10.101.0.0/24` is outside Docker's default pool and outside the ranges
   home LANs habitually use (`192.168.0.0/24`, `192.168.1.0/24`, `10.0.0.0/24`).
 - **The default applies to installations that already exist.** A converge that
-  finds `proximo_default` on a subnet other than the declared one recreates the
-  network (`down` then `up`) and says so in one line. Docker never changes the
+  finds `proximo_default` on an IPv4 subnet other than the declared one takes the
+  stack down with every profile and brings it back up, and says so in one line.
+  Compose alone is not enough: it does recreate a network whose declared subnet
+  changed, but not while a service outside the current selection — any running
+  profile service — is attached to it; it warns, exits 0 and keeps the old
+  subnet. The observability services, if they were running, are brought back
+  after the core: their env files and the hub's data survive the
+  re-materialize, so no new bootstrap is needed. Docker never changes the
   subnet of an existing network, so inheriting it silently would leave every
   affected host exactly as broken after the upgrade as before it — and the
   developer who has the bug is precisely the one who does not know there is a
@@ -41,6 +47,17 @@ Four things follow, and they are the substance of the decision:
   on the stack network (the watcher joins the Project's networks to reach it), so
   what restarts is the stack, and what is lost is in-memory Exchanges and
   Incidents, which are not durable by design (ADR 0006, ADR 0007).
+- **A refused subnet is rolled back.** When Docker cannot create the new
+  network (`Pool overlaps with other one on this address space`), Compose has
+  already removed the old one and left the containers exited. The converge then
+  runs again on the subnet it read before the down, and reports Docker's line
+  with the Remedy `proximo config subnet <cidr>`. This holds for `config subnet`
+  and for the first `up` after an upgrade alike — a host that already has
+  another network on `10.101.0.0/24`, for one. A down that fails half-way is
+  rolled back the same way. If the rollback fails too, the stack stays down and
+  both errors are reported. A missing stack image is not rolled back: no subnet
+  is to blame, the rollback would fail the same way, and its own Remedy is
+  `docker pull`.
 - **The rejected pool is a static range.** `config subnet` refuses
   `172.17.0.0/16`–`172.31.0.0/16` as a literal, without asking the daemon what
   its `default-address-pools` currently are. A rejection derived from host
@@ -82,6 +99,11 @@ is also per-platform, and it belongs to a decision about what proximo may
 conclude from the host's configuration, which this one does not settle. Recorded
 here as a non-goal, not as a rejected shape.
 
+**Probe the new subnet with a throwaway network before the down.** It would
+avoid the rollback, and wrongly refuse a new subnet that overlaps only the
+stack's current one (a `/24` narrowed to a `/25`), which the down is about to
+free.
+
 **Dual-stack the network (IPv6 alongside IPv4).** The reported failure is an
 IPv4 route collision. Adding IPv6 would mean choosing a ULA prefix on the
 developer's behalf with no symptom asking for it.
@@ -90,10 +112,12 @@ developer's behalf with no symptom asking for it.
 
 The stack's address space is now a configured value with a default, so it is
 something `status` can state and `doctor` can dispute: a Check reports the
-network's actual subnet — always, not only when it diverges — and its Remedy is
-`proximo up` first (the ordinary case is an inherited network the converge will
-recreate) and `proximo config subnet <cidr>` second (the declared space itself
-collides).
+network's actual subnet — always, not only when it diverges. Its Remedy is
+`proximo up` (the ordinary case is an inherited network the converge will
+recreate); `proximo config subnet <cidr>` comes second, as the Remedy of a
+converge Docker refuses and in the troubleshooting section the Check names
+(the declared space itself collides). A Remedy is one command (ADR 0004), so
+the Check does not carry both.
 
 Upgrading proximo can restart the stack once, on hosts whose network came from
 the pool. It is announced, not silent, and no Project is touched.
@@ -106,6 +130,6 @@ this one: those rules were written against an address proximo never promised.
 `/16`, outside the static Docker pool — normalises host bits (`10.101.0.5/24`
 becomes `10.101.0.0/24`) and prints what it saved. It converges first and
 persists only on success, so a valid-but-impossible subnet leaves the config
-untouched and the stack on the network it already had. With the stack down there
+untouched and, through the rollback, the stack back on the subnet it had. With the stack down there
 is nothing to converge: the value is saved and takes effect at the next
 `proximo up`.

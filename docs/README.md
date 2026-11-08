@@ -89,6 +89,7 @@ Why a design is the way it is, and what was rejected on the way.
 [`proximo errors`](cli.md#proximo-errors) ·
 [`proximo errors transcript`](cli.md#proximo-errors-transcript) ·
 [`proximo config tld`](cli.md#proximo-config-tld) ·
+[`proximo config subnet`](cli.md#proximo-config-subnet) ·
 [`proximo config ca-path`](cli.md#proximo-config-ca-path) ·
 [`proximo config inventory-dir`](cli.md#proximo-config-inventory-dir) ·
 [`proximo config machine`](cli.md#proximo-config-machine) ·
@@ -210,6 +211,7 @@ Why a design is the way it is, and what was rejected on the way.
 [proximo errors shows nothing for an inspected route](troubleshooting.md#proximo-errors-shows-nothing-for-an-inspected-route) ·
 [An inspected route 404s on part of my app](troubleshooting.md#an-inspected-route-404s-on-part-of-my-app) ·
 [VPN or corporate DNS overrides the resolver](troubleshooting.md#vpn-or-corporate-dns-overrides-the-resolver) ·
+[A container cannot reach an address your host can](troubleshooting.md#a-container-cannot-reach-an-address-your-host-can) ·
 [Degraded stack](troubleshooting.md#degraded-stack) ·
 [The stack runs an overridden image](troubleshooting.md#the-stack-runs-an-overridden-image) ·
 [The stack image cannot be pulled](troubleshooting.md#the-stack-image-cannot-be-pulled) ·

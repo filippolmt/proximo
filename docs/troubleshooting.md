@@ -461,6 +461,44 @@ such cause. It captures every query no rule matches, `.test` included, and it
 breaks every local route on the machine. The mesh's nameserver configuration must
 never be primary ([constraint 6](sharing.md#constraints)).
 
+## A container cannot reach an address your host can
+
+A connection from inside a container to an address the host reaches fine — a
+service behind a VPN, a remote Docker network over a tunnel — resolves, then
+hangs until it times out. On Docker Desktop the host's own terminal is
+unaffected, which is what makes it hard to attribute: the stack network's bridge
+lives inside the Linux VM, so only containers lose the route.
+
+The usual cause is the [stack network](../CONTEXT.md#the-environment)
+occupying a subnet the host already routes: packets for that subnet match the
+stack network's route and never leave the host
+([ADR 0009](adr/0009-the-stack-declares-its-own-address-space.md)).
+`proximo doctor` states the stack network's subnet on every run:
+
+```
+✔ The stack network is on the declared subnet — 10.101.0.0/24
+```
+
+- **It reports a different subnet** — typically a `/16` in `172.17.0.0/16`–
+  `172.31.0.0/16`, inherited from Docker's default pool by a stack created
+  before proximo declared its own. `proximo up` recreates the network on the
+  declared subnet; the stack's services restart once.
+- **The declared subnet itself overlaps the route** — compare it with the
+  address you cannot reach, or with your VPN's routes (`netstat -rn` on macOS,
+  `ip route` on Linux). Move the stack elsewhere:
+
+  ```sh
+  proximo config subnet 10.102.0.0/24
+  ```
+
+  The value must be a private IPv4 CIDR between `/16` and `/30`, outside
+  Docker's default pool. If Docker refuses it (`Pool overlaps with other one on
+  this address space`), the stack goes back to the subnet it had and the config
+  is unchanged — pick another.
+
+proximo never reads the host routing table: it cannot tell you *which* route
+collides, only which subnet the stack holds.
+
 ## Degraded stack
 
 Routes stop updating (new containers are not picked up, removed containers
