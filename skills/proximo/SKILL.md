@@ -114,9 +114,10 @@ address that device reaches.
 container wrote (`proximo errors`) — the `proximo` CLI is the interface, and
 `proximo --help` lists what this binary runs. The files under `~/.proximo` and
 the stack's containers are its implementation. Inside a toolbox container it is a
-bridge shim, and `config` stays on the host: read the TLD from the
-`traefik.<tld>` route in `proximo status`, and ask the developer for the CA path,
-the inventory directory, or a `config` change.
+bridge shim, and `config` stays on the host. There the TLD is the one of the
+`traefik.<tld>` route in `proximo status`, the CA is already trusted
+(`$TOOLBOX_PROXIMO_CA` names it), the inventory directory is
+`/etc/toolbox/proximo`, and a `config` change is the developer's to run.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another
