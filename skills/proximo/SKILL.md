@@ -104,17 +104,26 @@ networking.
 `proximo.tcp.port` for a TCP service: proximo issues the DNS record, the
 certificate and the route together, and it owns the local zone. The host
 resolver, `/etc/hosts` and DNS containers stay as they are. How:
-[`references/expose.md`](references/expose.md).
+[`references/expose.md`](references/expose.md). proximo routes HTTP(S) and
+TLS-with-SNI TCP. UDP, plain TCP, and a listener that a LAN device must reach
+(syslog from a firewall) stay outside it: publish the port with `ports:` on the
+address that device reaches.
 
 **Ask the binary.** For anything about proximo — routes and their names, the CA
 (`proximo config ca-path`), the inventory (`proximo config inventory-dir`), what a
 container wrote (`proximo errors`) — the `proximo` CLI is the interface, and
-`proximo --help` lists it. The files under `~/.proximo` and the stack's
-containers are its implementation.
+`proximo --help` lists what this binary runs. The files under `~/.proximo` and
+the stack's containers are its implementation. Inside a toolbox container it is a
+bridge shim, and `config` stays on the host. There the TLD is the one of the
+`traefik.<tld>` route in `proximo status`, the CA is already trusted
+(`$TOOLBOX_PROXIMO_CA` names it), the inventory directory is
+`/etc/toolbox/proximo`, and a `config` change is the developer's to run.
 
 **Ask on the qualified host.** Every route answers on two names, and only the
 qualified one stays put: a Collision can move the bare host to another
 container. Put the qualified host in `--host` and in `curl`, and read it from
-`proximo status --json` (`qualified`) rather than out of the table. A tool that
+`proximo status --json` (`qualified`) rather than out of the table. A route
+without `qualified` (the stack's own `traefik.<tld>`, a container outside a
+Compose project) has only its bare host: use `bare`. A tool that
 must follow routes without running the CLI — a dev container's hosts sync — reads
 the same document from `routes.json` in `proximo config inventory-dir`.
