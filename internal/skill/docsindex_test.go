@@ -64,7 +64,7 @@ func TestTheIndexLinksNoSectionThatIsGone(t *testing.T) {
 	for _, m := range linkPattern.FindAllStringSubmatch(string(indexed), -1) {
 		target := m[2]
 		file, anchor, ok := strings.Cut(target, "#")
-		// Only same-directory guide anchors: the index also links ../CONTEXT.md,
+		// Only same-directory guide anchors: the index also links ../GLOSSARY.md,
 		// the ADRs and whole files, and those are lychee's business.
 		if !ok || anchor == "" || strings.Contains(file, "/") || !strings.HasSuffix(file, ".md") {
 			continue

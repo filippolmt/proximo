@@ -1,7 +1,7 @@
 # proximo remembers what the runtime declares, never what the project wrote
 
 > Amended by [ADR 0008](0008-proximo-measures-the-project-concludes.md), which
-> settles what this one left as a `_Debt_` in CONTEXT.md — that notation is gone,
+> settles what this one left as a `_Debt_` in GLOSSARY.md — that notation is gone,
 > and the two references to it below are the record of when it was still there.
 
 [ADR 0006](0006-the-transcript-is-quoted-never-stored.md) gave every route a
@@ -104,7 +104,7 @@ order, an Incident as a differently-shaped row among the Exchanges.
   proximo is a thing you switch on, not a dependency of your code — and nothing
   here weakens that. **Reading** is therefore a term of its own: present-tense
   and measured, where an Incident is dated and declared. The remaining gap stays a
-  normative `_Debt_` under **Incident** in [CONTEXT.md](../../CONTEXT.md), because
+  normative `_Debt_` under **Incident** in [GLOSSARY.md](../../GLOSSARY.md), because
   leaving it unwritten is the worst option: it lets a developer read proximo's
   silence as *all fine* when it means *I have nothing to say*. Every place an
   Incident is documented says so.

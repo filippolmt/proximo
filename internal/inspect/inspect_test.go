@@ -597,7 +597,7 @@ func TestExchangeExistsBeforeTheResponse(t *testing.T) {
 
 // TestReportsAreCountedNotDiscarded: a page in a render loop must not be able to
 // push every other Exchange out of the buffer, but nothing may vanish silently
-// either — CONTEXT.md promises a report is never dropped for looking redundant.
+// either — GLOSSARY.md promises a report is never dropped for looking redundant.
 func TestReportsAreCountedNotDiscarded(t *testing.T) {
 	s := NewStore(0)
 	e := &Exchange{ID: "loop", At: time.Now(), Host: "web.test"}

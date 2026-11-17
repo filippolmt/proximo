@@ -18,8 +18,8 @@ people's pages.
 | --- | --- | --- |
 | **Mesh operator** | Runs the team's mesh: a group of machines, an access policy, and one DNS forwarding entry per sharing machine. | Once, then one entry per sharing machine |
 | **Custodian** | Two people. Each keeps one copy of the team root key offline, and either of them signs a sharing machine's intermediate. | Once, then once per sharing machine every five years |
-| **Sharing machine** | Exposes its own routes. In the glossary, a [Publishing peer](../CONTEXT.md). | Once per machine |
-| **Colleague** | Opens other people's pages. In the glossary, a [Resolving peer](../CONTEXT.md). | Once per machine |
+| **Sharing machine** | Exposes its own routes. In the glossary, a [Publishing peer](../GLOSSARY.md). | Once per machine |
+| **Colleague** | Opens other people's pages. In the glossary, a [Resolving peer](../GLOSSARY.md). | Once per machine |
 
 ## Once per team: the team root
 

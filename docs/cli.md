@@ -408,8 +408,8 @@ so such a tool reads the names here rather than from labels.
 
 ## proximo doctor
 
-Report every [Check](../CONTEXT.md#diagnosis-and-observation) on this host in one
-pass, and hand back a [Remedy](../CONTEXT.md#diagnosis-and-observation) for each
+Report every [Check](../GLOSSARY.md#diagnosis-and-observation) on this host in one
+pass, and hand back a [Remedy](../GLOSSARY.md#diagnosis-and-observation) for each
 failure — the cure where one exists, and otherwise the command whose own output
 names the cause.
 
@@ -725,7 +725,7 @@ names that exist on the public internet. A label that is merely undelegated toda
 
 ## proximo config subnet
 
-Move the [stack network](../CONTEXT.md#the-environment) to another IPv4
+Move the [stack network](../GLOSSARY.md#the-environment) to another IPv4
 subnet. The default is `10.101.0.0/24`, outside Docker's default address pool;
 move it when that space collides with a route the host already has — see
 [a container cannot reach an address your host can](troubleshooting.md#a-container-cannot-reach-an-address-your-host-can).
