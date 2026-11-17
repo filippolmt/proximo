@@ -8,14 +8,14 @@ needs to know whether work was waiting, which only the project knows. proximo
 therefore states what it measured and stops, and the judgement is something the
 project declares in the project's own terms.
 
-This was previously written into [CONTEXT.md](../../CONTEXT.md) as a `_Debt_`:
+This was previously written into [GLOSSARY.md](../../GLOSSARY.md) as a `_Debt_`:
 normative language with the implementation declared missing. That was a category
 error. A debt promises a payment, and nobody is going to pay this one — the
 reason it is not paid is
 [ADR 0006](0006-the-transcript-is-quoted-never-stored.md)'s strongest one, that
 proximo is a thing you switch on rather than a dependency of the code it
 observes. The `_Debt_` marker and the paragraph explaining the notation both
-leave CONTEXT.md with this ADR: what is written down here is a boundary, and a
+leave GLOSSARY.md with this ADR: what is written down here is a boundary, and a
 boundary with a number does not need to be marked as owed.
 
 **Decision.** proximo never deduces that a container is stuck. It reports the
@@ -29,7 +29,7 @@ Making that the sanctioned answer settles three things about it that were
 previously left to the shape of the code:
 
 - **A transition to unhealthy is an Incident when the container had been healthy,
-  and not otherwise.** This is what CONTEXT.md and
+  and not otherwise.** This is what GLOSSARY.md and
   [the Incidents table](../observability.md#incidents--what-the-runtime-declared)
   have always claimed the Incident was, and it is the whole of the noise
   filtering: a container waiting on postgres at boot goes `starting → unhealthy`

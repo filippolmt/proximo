@@ -469,7 +469,7 @@ hangs until it times out. On Docker Desktop the host's own terminal is
 unaffected, which is what makes it hard to attribute: the stack network's bridge
 lives inside the Linux VM, so only containers lose the route.
 
-The usual cause is the [stack network](../CONTEXT.md#the-environment)
+The usual cause is the [stack network](../GLOSSARY.md#the-environment)
 occupying a subnet the host already routes: packets for that subnet match the
 stack network's route and never leave the host
 ([ADR 0009](adr/0009-the-stack-declares-its-own-address-space.md)).

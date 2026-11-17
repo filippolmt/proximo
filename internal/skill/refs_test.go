@@ -112,7 +112,7 @@ func TestAbsolutizeKeepsTheDocsPath(t *testing.T) {
 // A link out of docs/ has no page on the site, and must fail loudly rather than
 // be published as a broken URL.
 func TestAbsolutizeRejectsLinksOutsideDocs(t *testing.T) {
-	if _, err := absolutize("[glossary](../CONTEXT.md)\n", "docs/routing.md"); err == nil {
+	if _, err := absolutize("[glossary](../GLOSSARY.md)\n", "docs/routing.md"); err == nil {
 		t.Error("a link outside docs/ was accepted")
 	}
 }

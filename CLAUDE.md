@@ -26,7 +26,7 @@ are the questions a heading does not answer:
 | Question | Read |
 | --- | --- |
 | Which component owns what | [docs/architecture.md — Source map](docs/architecture.md#source-map) |
-| What a domain term means, and which words to avoid | [CONTEXT.md](CONTEXT.md) |
+| What a domain term means, and which words to avoid | [GLOSSARY.md](GLOSSARY.md) |
 | Why a design is the way it is, and what was rejected | [docs/adr/](docs/adr/) |
 | Routing label contract & port resolution; which hosts are reserved for the stack | [docs/routing.md — The proximo labels](docs/routing.md#the-proximo-labels), [proximo.hosts](docs/routing.md#proximohosts--opt-in-and-pick-the-hosts) |
 | Sharing a route with colleagues, and the team setup steps in order | [docs/sharing.md](docs/sharing.md), [docs/sharing-setup.md](docs/sharing-setup.md) |
@@ -77,3 +77,17 @@ compiler will not enforce:
   [The injected agent](docs/development.md#the-injected-agent)
 - Releases (tag → GoReleaser) and the CI workflows:
   [Releases](docs/development.md#releases)
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`filippolmt/proximo`), via `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical labels, unchanged: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

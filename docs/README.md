@@ -28,7 +28,7 @@ map** of it — every `##` section of every guide is linked below.
 | [Troubleshooting](troubleshooting.md) | how-to | Common issues, one anchored section per failure mode. |
 | [Development](development.md) | how-to | Contributing: build/test from source, local stack builds (`PROXIMO_SRC`), versioning, embedded assets, releases and the stack image pipeline. |
 
-### [The domain model](../CONTEXT.md)
+### [The domain model](../GLOSSARY.md)
 
 The project's glossary: the terms proximo uses and the ones it deliberately
 avoids. Normative — a term with no implementation is marked as a declared debt,

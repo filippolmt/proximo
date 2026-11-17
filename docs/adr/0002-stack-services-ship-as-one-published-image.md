@@ -129,7 +129,7 @@ header.
   flag, and that reversal is printed. While it is in effect the stack records the
   effective ref (`proximo.image`), `proximo status` prints it, and `update` never
   reports "up to date" — a stack that runs one thing and declares another is the
-  same class of defect as the **Collision** debt already recorded in `CONTEXT.md`.
+  same class of defect as the **Collision** debt already recorded in `GLOSSARY.md`.
 - **`debug.ReadBuildInfo().Main.Version` goes empty** in the stack binaries, since
   they are no longer produced by `go install <module>@<ref>`. The build-identity
   log line in `cmd/watcher/main.go` moves to `internal/version.Version`, and the
@@ -139,7 +139,7 @@ header.
   user builds locally, and its closing section justifies the absence of push
   auto-update with a cost that no longer exists.
 - **No new glossary term.** Where the watcher's binary comes from is an
-  implementation vehicle, and `CONTEXT.md` opens by saying Docker is exactly that
+  implementation vehicle, and `GLOSSARY.md` opens by saying Docker is exactly that
   — not the purpose. No developer describes proximo in these words, so the
   glossary does not move.
 - **Two techniques from the sibling `toolbox` image pipeline are deliberately not
