@@ -96,8 +96,9 @@ certificate that is refused is itself the finding: run `proximo doctor`, read
 `localhost:<port>`, the container's IP, `-k`, `--resolve` and a hand-written
 `/etc/hosts` entry each answer a different question and hide the one you were
 asked. Any other host — `google.com`, a staging API — is outside proximo: call it
-as it is. A call made from any other container follows that container's own
-networking.
+as it is. A Project's container calls a route the same way once it pins the
+qualified host and trusts the CA: [`references/routing.md`](references/routing.md),
+*Calling a route from another container*.
 
 **A hostname is a proximo label.** When a service needs a name, declare it with
 `proximo.hosts` under the configured TLD (`proximo config tld`), or

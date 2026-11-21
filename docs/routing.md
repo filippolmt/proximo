@@ -589,6 +589,31 @@ labels:
   - "traefik.docker.network=<network>"
 ```
 
+## Calling a route from another container
+
+A Project's container resolves names and trusts certificates on its own: to call
+a route from it with the certificate verified, pin the route's
+[qualified host](#the-two-hosts-every-route-gets) and add proximo's CA, in a
+development-only override:
+
+```yaml
+services:
+  api:
+    extra_hosts:
+      - "storage.shop.test:host-gateway"
+    volumes:
+      - ${PROXIMO_CA:?set to the output of proximo config ca-path}:/usr/local/share/ca-certificates/proximo.crt:ro
+```
+
+- Append the CA to the container's system bundle (`update-ca-certificates`, or a
+  file concatenating the system bundle and the CA). `SSL_CERT_FILE` replaces the
+  bundle it points at, so aimed at the CA alone it turns every other HTTPS call
+  into a certificate error.
+- `host-gateway` reaches Traefik on Docker Desktop. On a native Linux Engine it
+  is the bridge address, and Traefik answers only on the loopback
+  ([ADR 0014](adr/0014-the-stack-listens-on-the-loopback.md)): the connection
+  is refused, and proximo offers no route from a container there.
+
 ## Quick reference
 
 ```yaml
