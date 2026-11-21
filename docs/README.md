@@ -143,6 +143,7 @@ Why a design is the way it is, and what was rejected on the way.
 [What happens behind the scenes](routing.md#what-happens-behind-the-scenes) ·
 [Native Traefik labels (backward compatible)](routing.md#native-traefik-labels-backward-compatible) ·
 [Multiple networks](routing.md#multiple-networks) ·
+[Calling a route from another container](routing.md#calling-a-route-from-another-container) ·
 [Quick reference](routing.md#quick-reference)
 
 ### [Dev-time observability](observability.md)
