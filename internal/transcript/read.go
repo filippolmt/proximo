@@ -101,7 +101,8 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 	return r, nil
 }
 
-// Services are the Project services running now, sorted. They are the candidates
+// Services are the Project services running now, sorted. A service whose only
+// running container is a one-off counts: its Incidents are filed under it. They are the candidates
 // a bare --service is resolved against: what is printed must be what works when
 // pasted back, and a bare name is only accepted when nothing contests it.
 func (r *Reader) Services() []docker.Service {
@@ -240,7 +241,7 @@ func (r *Reader) quote(ctx context.Context, e inspect.Exchange, limit int) Trans
 	}
 
 	from, to := window(e)
-	return r.readInto(ctx, Transcript{Container: name, Replicas: r.replicas[docker.ServiceKey(c)]},
+	return r.readInto(ctx, Transcript{Container: name, Replicas: r.replicasOf(c)},
 		c, from, to, limit, "while this request was live")
 }
 
@@ -314,7 +315,7 @@ func (r *Reader) QuoteIncident(ctx context.Context, inc docker.Incident, all []d
 	if prev, ok := docker.PreviousIncident(inc, all); ok {
 		from = prev.At
 	}
-	return r.readInto(ctx, Transcript{Container: inc.Container, Replicas: r.replicas[docker.ServiceKey(c)]},
+	return r.readInto(ctx, Transcript{Container: inc.Container, Replicas: r.replicasOf(c)},
 		// No grace on the right, where an Exchange's window takes one: everything
 		// a dying container wrote precedes the die event by construction, and both
 		// the log timestamp and the event come from the same daemon rather than
@@ -334,12 +335,24 @@ func (r *Reader) QuoteService(ctx context.Context, service docker.Service, from,
 		return Transcript{Silence: fmt.Sprintf(
 			"no container of %s is running, so there is no output to quote — `proximo status` lists what proximo can see", service)}
 	}
-	return r.readInto(ctx, Transcript{Container: name, Replicas: r.replicas[service]},
+	return r.readInto(ctx, Transcript{Container: name, Replicas: r.replicasOf(c)},
 		c, from, to, limit, "in this window")
 }
 
+// replicasOf is the replica count a Transcript of c carries: its service's, or
+// none for a one-off, which is no replica of it — "1 of 2 replicas" on a
+// `docker compose run` container would name it one of the containers serving.
+func (r *Reader) replicasOf(c container.Summary) int {
+	if docker.IsOneOff(c.Labels) {
+		return 0
+	}
+	return r.replicas[docker.ServiceKey(c)]
+}
+
 // namesOfService is the containers of one Service, running and stopped apart,
-// each by its first name and in name order. One entry per *container*: byName is
+// each by its first name and in name order, one-offs after the service's own
+// containers: a service is quoted from what serves it before a command run
+// beside it. One entry per *container*: byName is
 // keyed per name and Docker reports a container once per name it answers to, so
 // the same container would otherwise be walked — and read, and reported — twice.
 func (r *Reader) namesOfService(service docker.Service) (running, stopped []string) {
@@ -361,8 +374,18 @@ func (r *Reader) namesOfService(service docker.Service) (running, stopped []stri
 			stopped = append(stopped, name)
 		}
 	}
-	slices.Sort(running)
-	slices.Sort(stopped)
+	oneOffsLast := func(a, b string) int {
+		ao, bo := docker.IsOneOff(r.byName[a].Labels), docker.IsOneOff(r.byName[b].Labels)
+		if ao != bo {
+			if ao {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a, b)
+	}
+	slices.SortFunc(running, oneOffsLast)
+	slices.SortFunc(stopped, oneOffsLast)
 	return running, stopped
 }
 
@@ -421,6 +444,10 @@ func (r *Reader) ReadingsOf(ctx context.Context, service docker.Service) []docke
 	running, _ := r.namesOfService(service)
 	out := make([]docker.Reading, 0, len(running))
 	for _, name := range running {
+		// A one-off is no replica: a reading of it would be presented as one.
+		if docker.IsOneOff(r.byName[name].Labels) {
+			continue
+		}
 		out = append(out, r.readingOf(ctx, r.byName[name], name))
 	}
 	return out

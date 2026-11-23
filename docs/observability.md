@@ -277,7 +277,9 @@ runtime says about a container at the moment you ask. `proximo errors --service
 *what happened* and *how it is now* are two questions and the second does not
 stop having an answer because the first has one.
 
-They print after the listing, one per running container of the service:
+They print after the listing, one per running container of the service — a
+One-off (a `docker compose run` beside it) excepted: it is no replica, and the
+`(1 of N replicas)` of a Transcript leaves it out too:
 
 ```console
 $ proximo errors --service worker

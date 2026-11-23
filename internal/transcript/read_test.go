@@ -184,6 +184,41 @@ func TestQuoteDoesNotCountAOneOffAsAReplica(t *testing.T) {
 	}
 }
 
+// A one-off is no replica anywhere a Reader speaks of replicas: it takes no
+// reading, its own Transcript claims no place among the service's containers,
+// and the service is quoted from its own container even when the one-off's name
+// sorts first (`docker compose run` ignores container_name).
+func TestAOneOffIsNoReplicaOfItsService(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "web"}
+	oneOff := map[string]string{project: "shop", service: "web", "com.docker.compose.oneoff": "True"}
+	f := &fakeDocker{
+		items: []container.Summary{
+			summary("id-web", "web", requestAt.Add(-time.Hour), labels),
+			summary("id-web-2", "web-2", requestAt.Add(-time.Hour), labels),
+			summary("id-run", "aaa-web-run-1a2b", requestAt.Add(-time.Hour), oneOff),
+		},
+		logs:      map[string]string{"id-web": "served\n", "id-run": "migrating\n"},
+		anyOutput: map[string]string{},
+	}
+	r, err := NewReader(context.Background(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rd := range r.ReadingsOf(context.Background(), "shop/web") {
+		if rd.Container == "aaa-web-run-1a2b" {
+			t.Errorf("ReadingsOf took a reading of the one-off: %+v", rd)
+		}
+	}
+	inc := docker.Incident{ID: "i", Service: "shop/web", Container: "aaa-web-run-1a2b", At: requestAt, Kind: docker.IncidentExited, ExitCode: 1}
+	if tr := r.QuoteIncident(context.Background(), inc, []docker.Incident{inc}, DefaultLimit); tr.Replicas != 0 {
+		t.Errorf("the one-off's own Transcript carries Replicas = %d, want 0", tr.Replicas)
+	}
+	if tr := r.QuoteService(context.Background(), "shop/web", requestAt.Add(-time.Minute), requestAt, DefaultLimit); tr.Container != "web" {
+		t.Errorf("service quoted from %q, want its own container web", tr.Container)
+	}
+}
+
 // A container with a TTY writes an unmultiplexed stream. Quoting the frame
 // headers as if they were output would corrupt every line.
 func TestQuoteReadsATTYContainer(t *testing.T) {

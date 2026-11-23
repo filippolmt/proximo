@@ -247,7 +247,7 @@ func observedRoutes(cs []container.Summary) []Route {
 		// reads as a Remedy — which this command never prints.
 		observedBecause := TranscriptLabel
 		if IsOneOff(c.Labels) {
-			observedBecause = "one-off container"
+			observedBecause = OneOffNote
 		}
 		out = append(out, Route{
 			Container: primaryName(c),

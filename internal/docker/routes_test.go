@@ -103,7 +103,7 @@ func TestObservedRoutesNameAOneOff(t *testing.T) {
 		},
 	}
 	got := observedRoutes([]container.Summary{run})
-	if len(got) != 1 || !strings.Contains(got[0].Note, "one-off container") || strings.Contains(got[0].Note, TranscriptLabel) {
+	if len(got) != 1 || !strings.Contains(got[0].Note, OneOffNote) || strings.Contains(got[0].Note, TranscriptLabel) {
 		t.Fatalf("observed rows = %+v, want one row naming the one-off", got)
 	}
 }

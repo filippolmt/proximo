@@ -69,6 +69,9 @@ func isRouted(c container.Summary) bool {
 	return isRoutedLabels(c.Labels) && !IsOneOff(c.Labels)
 }
 
+// OneOffNote is what `status` says observes a One-off without routing it.
+const OneOffNote = "one-off container"
+
 // IsOneOff reports a container `docker compose run` started: it inherits the
 // service's labels, but it runs a command — a shell, a migration — rather than
 // serving the route, so it must not join it as a replica. Compose writes "True";
