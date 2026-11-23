@@ -37,8 +37,8 @@ entryPoints:
   # aliasHeadersStrategy: delete drops request headers whose name holds anything
   # but letters, digits and '-' (X_Forwarded_For, X.Auth.User): PHP, nginx and
   # CGI backends read them as X-Forwarded-For / X-Auth-User, so a client could
-  # spoof the headers Traefik sets or an upstream auth layer would. Needs
-  # Traefik >= v3.7.12 (pinned in docker-compose.yml).
+  # spoof the headers Traefik sets or an upstream auth layer would. Needs the
+  # Traefik pinned in docker-compose.yml (TestTraefikEntryPointsHardened).
   web:
     address: ":80"
     http: &hardened

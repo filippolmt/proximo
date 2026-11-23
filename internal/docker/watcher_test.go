@@ -344,29 +344,43 @@ func TestTraefikEntryPointsHardened(t *testing.T) {
 		t.Fatalf("read embedded traefik.yml: %v", err)
 	}
 	// web carries the settings under the &hardened anchor and websecure merges it
-	// (verified on Traefik v3.7.19, whose static loader honours `<<:`).
-	for _, want := range []string{
-		`(?m)^    http: &hardened$`,
-		`(?m)^      aliasHeadersStrategy: delete$`,
-		`(?m)^        allowEncodedNullCharacter: false$`,
-		`(?m)^  websecure:\n    address: ":443"\n    http:\n      <<: \*hardened$`,
-	} {
-		if !regexp.MustCompile(want).Match(data) {
-			t.Errorf("traefik.yml does not match %s", want)
+	// (verified on Traefik v3.7.19, whose static loader honours `<<:`). Checked
+	// per entry-point block, so a setting moved out of the anchor is caught.
+	yml := string(data)
+	webAt, secureAt := strings.Index(yml, "\n  web:\n"), strings.Index(yml, "\n  websecure:\n")
+	if webAt < 0 || secureAt < webAt {
+		t.Fatalf("traefik.yml: want a web entry point followed by websecure")
+	}
+	web := yml[webAt:secureAt]
+	secure := yml[secureAt:]
+	if end := strings.Index(secure, "\n\n"); end >= 0 {
+		secure = secure[:end]
+	}
+	for _, want := range []string{"http: &hardened", "aliasHeadersStrategy: delete", "allowEncodedNullCharacter: false"} {
+		if !strings.Contains(web, want) {
+			t.Errorf("web entry point lacks %q:\n%s", want, web)
 		}
 	}
+	for _, want := range []string{"<<: *hardened", "tls: {}"} {
+		if !strings.Contains(secure, want) {
+			t.Errorf("websecure entry point lacks %q:\n%s", want, secure)
+		}
+	}
+
 	compose, err := assets.ReadFile("assets/docker-compose.yml")
 	if err != nil {
 		t.Fatalf("read embedded docker-compose.yml: %v", err)
 	}
-	m := regexp.MustCompile(`image: traefik:v3\.(\d+)\.(\d+)`).FindStringSubmatch(string(compose))
+	m := regexp.MustCompile(`image: traefik:v(\d+)\.(\d+)\.(\d+)\s`).FindStringSubmatch(string(compose))
 	if m == nil {
-		t.Fatal("docker-compose.yml must pin Traefik to a v3 patch release, not a floating tag")
+		t.Fatal("docker-compose.yml must pin Traefik to a patch release (vX.Y.Z), not a floating tag")
 	}
-	minor, _ := strconv.Atoi(m[1])
-	patch, _ := strconv.Atoi(m[2])
-	if minor < 7 || (minor == 7 && patch < 12) {
-		t.Errorf("Traefik v3.%d.%d predates aliasHeadersStrategy (v3.7.12)", minor, patch)
+	var v [3]int
+	for i := range v {
+		v[i], _ = strconv.Atoi(m[i+1])
+	}
+	if slices.Compare(v[:], []int{3, 7, 12}) < 0 {
+		t.Errorf("Traefik v%d.%d.%d predates aliasHeadersStrategy (v3.7.12)", v[0], v[1], v[2])
 	}
 }
 
