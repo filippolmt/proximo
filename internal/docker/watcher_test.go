@@ -343,10 +343,16 @@ func TestTraefikEntryPointsHardened(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read embedded traefik.yml: %v", err)
 	}
-	for _, want := range []string{"aliasHeadersStrategy: delete", "allowEncodedNullCharacter: false"} {
-		// Settings only: the comment above the entry points names both.
-		if n := len(regexp.MustCompile(`(?m)^\s+`+want+`$`).FindAllIndex(data, -1)); n != 2 {
-			t.Errorf("traefik.yml has %q on %d entry points, want 2 (web, websecure)", want, n)
+	// web carries the settings under the &hardened anchor and websecure merges it
+	// (verified on Traefik v3.7.19, whose static loader honours `<<:`).
+	for _, want := range []string{
+		`(?m)^    http: &hardened$`,
+		`(?m)^      aliasHeadersStrategy: delete$`,
+		`(?m)^        allowEncodedNullCharacter: false$`,
+		`(?m)^  websecure:\n    address: ":443"\n    http:\n      <<: \*hardened$`,
+	} {
+		if !regexp.MustCompile(want).Match(data) {
+			t.Errorf("traefik.yml does not match %s", want)
 		}
 	}
 	compose, err := assets.ReadFile("assets/docker-compose.yml")

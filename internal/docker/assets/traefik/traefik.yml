@@ -41,7 +41,7 @@ entryPoints:
   # Traefik >= v3.7.12 (pinned in docker-compose.yml).
   web:
     address: ":80"
-    http:
+    http: &hardened
       sanitizePath: true
       aliasHeadersStrategy: delete
       encodedCharacters:
@@ -49,11 +49,8 @@ entryPoints:
   websecure:
     address: ":443"
     http:
+      <<: *hardened
       tls: {}
-      sanitizePath: true
-      aliasHeadersStrategy: delete
-      encodedCharacters:
-        allowEncodedNullCharacter: false
 
 providers:
   # Routing: opt-in only. A container is routed when it sets `traefik.enable=true`
