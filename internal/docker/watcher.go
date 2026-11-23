@@ -286,6 +286,9 @@ type Watcher struct {
 	// peerFailing holds each peer service that will not start, so its
 	// failure is logged once rather than every 30 s.
 	peerFailing map[string]bool
+	// lastNotes holds the merge/collision lines the previous reconcile found,
+	// so each is logged when it appears rather than on every pass.
+	lastNotes map[string]bool
 	// defaultIssued records that this process issued the default certificate,
 	// so it is issued once per watcher start, under the CA it holds.
 	defaultIssued bool
@@ -382,6 +385,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// container. An Incident is recorded before the reconcile because it
 			// is a dated fact — the reconcile may well find the container gone.
 			w.noteIncident(msg)
+			// A healthcheck runs as an exec: three events per probe, none of
+			// which changes routing — health_status does, and still reconciles.
+			if strings.HasPrefix(string(msg.Action), "exec_") {
+				continue
+			}
 			w.reconcileLogged(ctx)
 		case err := <-errs:
 			if ctx.Err() != nil {
@@ -492,15 +500,24 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// the stable name it is entitled to.
 	assignSafeNames(routed)
 	w.sharePeers(routed)
+	var notes []string
 	for _, c := range res.collisions {
-		log.Printf("proximo watcher: container %s: %s (path %q)", c.name, c.note, c.path)
+		notes = append(notes, fmt.Sprintf("proximo watcher: container %s: %s (path %q)", c.name, c.note, c.path))
 	}
 	for _, m := range res.merges {
-		log.Printf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host)
+		notes = append(notes, fmt.Sprintf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host))
 	}
 	for _, name := range res.inspectDropped {
-		log.Printf("proximo watcher: container %s: %s ignored — the route balances across several replicas and Inspection forwards to a single backend; scale the service to one replica to inspect it", name, proximoInspectLabel)
+		notes = append(notes, fmt.Sprintf("proximo watcher: container %s: %s ignored — the route balances across several replicas and Inspection forwards to a single backend; scale the service to one replica to inspect it", name, proximoInspectLabel))
 	}
+	seen := map[string]bool{}
+	for _, n := range notes {
+		if !w.lastNotes[n] {
+			log.Print(n)
+		}
+		seen[n] = true
+	}
+	w.lastNotes = seen
 
 	w.syncNetworks(ctx, "traefik", traefikID, traefikNets, desired)
 	if inspectorID != "" {
