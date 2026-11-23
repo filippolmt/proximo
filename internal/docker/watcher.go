@@ -286,10 +286,10 @@ type Watcher struct {
 	// peerFailing holds each peer service that will not start, so its
 	// failure is logged once rather than every 30 s.
 	peerFailing map[string]bool
-	// lastNotes holds the replica-merge, collision and inspect-dropped lines the
+	// loggedWarnings holds the replica-merge, collision and inspect-dropped lines the
 	// previous reconcile found, so each is logged when it appears rather than on
 	// every pass.
-	lastNotes map[string]bool
+	loggedWarnings map[string]bool
 	// defaultIssued records that this process issued the default certificate,
 	// so it is issued once per watcher start, under the CA it holds.
 	defaultIssued bool
@@ -317,14 +317,14 @@ func NewWatcher() (*Watcher, error) {
 		dynamicDir: getenv("PROXIMO_DYNAMIC_DIR", "/etc/traefik/dynamic"),
 		// Unset on a stack materialized before the inventory existed: then
 		// there is no mount to write into, and nothing is written.
-		inventoryDir: os.Getenv("PROXIMO_INVENTORY_DIR"),
-		caDir:        filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
-		tld:          getenv("PROXIMO_TLD", config.DefaultTLD),
-		lastHosts:    map[string]string{},
-		authHashes:   map[string]string{},
-		peerFailing:  map[string]bool{},
-		lastNotes:    map[string]bool{},
-		incidents:    NewIncidentStore(0, 0),
+		inventoryDir:   os.Getenv("PROXIMO_INVENTORY_DIR"),
+		caDir:          filepath.Dir(getenv("PROXIMO_CA_CERT", "/ca/ca.pem")),
+		tld:            getenv("PROXIMO_TLD", config.DefaultTLD),
+		lastHosts:      map[string]string{},
+		authHashes:     map[string]string{},
+		peerFailing:    map[string]bool{},
+		loggedWarnings: map[string]bool{},
+		incidents:      NewIncidentStore(0, 0),
 	}
 
 	caCert, caKey, err := tls.LoadCA(
@@ -454,9 +454,9 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	if traefikID == "" {
 		// Traefik not running yet: the inventory says every route is down.
 		w.writeInventory(routesOf(ctx, inspect, containers, w.tld, PeerNames{}))
-		// No route is served, so the notes no longer hold: say them again
+		// No route is served, so the warnings no longer hold: say them again
 		// when Traefik is back.
-		w.lastNotes = map[string]bool{}
+		w.loggedWarnings = map[string]bool{}
 		return nil
 	}
 	// The hop needs the same reach as Traefik, but only into the projects it
@@ -505,24 +505,24 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	// the stable name it is entitled to.
 	assignSafeNames(routed)
 	w.sharePeers(routed)
-	var notes []string
+	current := map[string]bool{}
+	warnOnce := func(format string, args ...any) {
+		line := fmt.Sprintf("proximo watcher: "+format, args...)
+		if !w.loggedWarnings[line] {
+			log.Print(line)
+		}
+		current[line] = true
+	}
 	for _, c := range res.collisions {
-		notes = append(notes, fmt.Sprintf("proximo watcher: container %s: %s (path %q)", c.name, c.note, c.path))
+		warnOnce("container %s: %s (path %q)", c.name, c.note, c.path)
 	}
 	for _, m := range res.merges {
-		notes = append(notes, fmt.Sprintf("proximo watcher: container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host))
+		warnOnce("container %s joins %s as a round-robin replica on host %q (identical host and backend); traffic is balanced across them", m.member, m.rep, m.host)
 	}
 	for _, name := range res.inspectDropped {
-		notes = append(notes, fmt.Sprintf("proximo watcher: container %s: %s ignored — the route balances across several replicas and Inspection forwards to a single backend; scale the service to one replica to inspect it", name, proximoInspectLabel))
+		warnOnce("container %s: %s ignored — the route balances across several replicas and Inspection forwards to a single backend; scale the service to one replica to inspect it", name, proximoInspectLabel)
 	}
-	seen := map[string]bool{}
-	for _, n := range notes {
-		if !w.lastNotes[n] {
-			log.Print(n)
-		}
-		seen[n] = true
-	}
-	w.lastNotes = seen
+	w.loggedWarnings = current
 
 	w.syncNetworks(ctx, "traefik", traefikID, traefikNets, desired)
 	if inspectorID != "" {
