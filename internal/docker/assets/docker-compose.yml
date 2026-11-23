@@ -35,7 +35,7 @@ services:
     # a patch: traefik.yml sets aliasHeadersStrategy, which a Traefik before
     # v3.7.12 rejects at startup ("field not found") — a floating tag lets an
     # offline host start from an older cached image and lose every route.
-    image: traefik:v3.7.19
+    image: traefik:v3.8.0
     restart: unless-stopped
     logging: *proximo-logging
     command:
