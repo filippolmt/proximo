@@ -244,10 +244,14 @@ func observedRoutes(cs []container.Summary) []Route {
 		}
 		// No command in the note: `status` is an inventory, and a command in it
 		// reads as a Remedy — which this command never prints.
+		why := TranscriptLabel
+		if isOneOff(c.Labels) {
+			why = "one-off container"
+		}
 		out = append(out, Route{
 			Container: primaryName(c),
 			Observed:  true,
-			Note:      fmt.Sprintf("no route — observed for Incidents (%s), service %s", TranscriptLabel, ServiceKey(c)),
+			Note:      fmt.Sprintf("no route — observed for Incidents (%s), service %s", why, ServiceKey(c)),
 		})
 	}
 	return out

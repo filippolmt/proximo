@@ -63,9 +63,17 @@ var pathPrefixRe = regexp.MustCompile(`^/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*$`)
 
 // isRouted reports whether a container opted in to routing — via proximo labels
 // (non-empty proximo.hosts and not proximo.enable=false) or the native Traefik
-// label (traefik.enable=true) — and is not part of the proximo stack.
+// label (traefik.enable=true) — and is neither part of the proximo stack nor a
+// one-off. Incidents use isRoutedLabels, so a one-off that dies is still recorded.
 func isRouted(c container.Summary) bool {
-	return isRoutedLabels(c.Labels)
+	return isRoutedLabels(c.Labels) && !isOneOff(c.Labels)
+}
+
+// isOneOff reports a container `docker compose run` started: it inherits the
+// service's labels, but it runs a command — a shell, a migration — rather than
+// serving the route, so it must not join it as a replica.
+func isOneOff(labels map[string]string) bool {
+	return strings.EqualFold(labels[composeOneOffLabel], "true")
 }
 
 // isRoutedLabels is isRouted on the labels alone, so a Docker event — which

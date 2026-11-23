@@ -532,6 +532,11 @@ redirect are **not** merged — they still resolve deterministically as a collis
 [proximo.path](#proximopath--split-one-host-across-containers)). `proximo status`
 marks a balanced route with `(balanced ×N)`.
 
+A container `docker compose run` starts is never a replica: it inherits the
+service's labels (proximo and `traefik.*` alike) but runs a command, so it is not
+routed at all. It is still observed for Incidents, and `proximo status` lists it
+as a one-off container with no route. Serve the route with `docker compose up`.
+
 ## What happens behind the scenes
 
 For each routed container the watcher:

@@ -78,6 +78,34 @@ func TestIsRoutedOptIn(t *testing.T) {
 	if isRouted(makeSummary(map[string]string{"proximo.role": "traefik", "traefik.enable": "true"})) {
 		t.Error("stack containers must never be routed")
 	}
+	// `docker compose run` copies the service's labels onto a container that
+	// runs a command; joining the route would round-robin requests into it.
+	oneOff := map[string]string{proximoHostsLabel: "app.test", composeOneOffLabel: "True"}
+	if isRouted(makeSummary(oneOff)) {
+		t.Error("a compose run one-off must not be routed")
+	}
+	if !isObserved(oneOff) {
+		t.Error("a compose run one-off must still be observed, so its Incidents are recorded")
+	}
+	if !isRouted(makeSummary(map[string]string{proximoHostsLabel: "app.test", composeOneOffLabel: "False"})) {
+		t.Error("oneoff=False is the service itself and must be routed")
+	}
+}
+
+// TestObservedRoutesNameAOneOff: status lists a one-off as observed without a
+// route, and says why — not the proximo.transcript label it never carried.
+func TestObservedRoutesNameAOneOff(t *testing.T) {
+	run := container.Summary{
+		Names: []string{"/shop-web-run-1a2b"},
+		Labels: map[string]string{
+			proximoHostsLabel: "app.test", composeOneOffLabel: "True",
+			composeProjectLabel: "shop", ComposeServiceLabel: "web",
+		},
+	}
+	got := observedRoutes([]container.Summary{run})
+	if len(got) != 1 || !strings.Contains(got[0].Note, "one-off container") || strings.Contains(got[0].Note, TranscriptLabel) {
+		t.Fatalf("observed rows = %+v, want one row naming the one-off", got)
+	}
 }
 
 // TestRouteDisplay: an HTTP route shows its URL; a TCP route shows a
