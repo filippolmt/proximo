@@ -232,7 +232,8 @@ func routesOf(ctx context.Context, inspect inspector, cs []container.Summary, tl
 }
 
 // observedRoutes lists the containers proximo observes without routing: the ones
-// carrying proximo.transcript and no host. They belong in the inventory because
+// carrying proximo.transcript and no host, and the one-offs `docker compose run`
+// started from a routed service. They belong in the inventory because
 // otherwise the only way to learn the label took effect is to wait for something
 // to go wrong — and showing them only once they have an Incident is the same trap
 // in disguise.
@@ -244,14 +245,14 @@ func observedRoutes(cs []container.Summary) []Route {
 		}
 		// No command in the note: `status` is an inventory, and a command in it
 		// reads as a Remedy — which this command never prints.
-		why := TranscriptLabel
+		observedBecause := TranscriptLabel
 		if isOneOff(c.Labels) {
-			why = "one-off container"
+			observedBecause = "one-off container"
 		}
 		out = append(out, Route{
 			Container: primaryName(c),
 			Observed:  true,
-			Note:      fmt.Sprintf("no route — observed for Incidents (%s), service %s", why, ServiceKey(c)),
+			Note:      fmt.Sprintf("no route — observed for Incidents (%s), service %s", observedBecause, ServiceKey(c)),
 		})
 	}
 	return out

@@ -71,14 +71,16 @@ func isRouted(c container.Summary) bool {
 
 // isOneOff reports a container `docker compose run` started: it inherits the
 // service's labels, but it runs a command — a shell, a migration — rather than
-// serving the route, so it must not join it as a replica.
+// serving the route, so it must not join it as a replica. Compose writes "True";
+// the match ignores case, while traefik.yml's constraint matches "True" exactly.
 func isOneOff(labels map[string]string) bool {
 	return strings.EqualFold(labels[composeOneOffLabel], "true")
 }
 
-// isRoutedLabels is isRouted on the labels alone, so a Docker event — which
-// carries a container's labels and nothing else — is judged by the same rule as
-// a container listing.
+// isRoutedLabels is the opt-in half of isRouted, on the labels alone: whether a
+// container asked to be routed, one-off or not. isObserved judges Docker events
+// — which carry a container's labels and nothing else — by it, so a one-off that
+// asked to be routed is still observed for Incidents.
 func isRoutedLabels(labels map[string]string) bool {
 	if _, isStack := labels[RoleLabel]; isStack {
 		return false
