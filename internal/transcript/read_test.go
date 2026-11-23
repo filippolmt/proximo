@@ -167,6 +167,23 @@ func TestQuoteResolvesTheBackendAndCountsReplicas(t *testing.T) {
 	}
 }
 
+// A `docker compose run` beside the service runs a command and is never routed:
+// counting it would report "1 of 2 replicas" for a service with one.
+func TestQuoteDoesNotCountAOneOffAsAReplica(t *testing.T) {
+	labels := map[string]string{project: "shop", service: "web"}
+	oneOff := map[string]string{project: "shop", service: "web", "com.docker.compose.oneoff": "True"}
+	f := &fakeDocker{
+		items: []container.Summary{
+			summary("id-web-1", "web-1", requestAt.Add(-time.Hour), labels),
+			summary("id-run", "web-run-1a2b", requestAt.Add(-time.Hour), oneOff),
+		},
+		logs: map[string]string{"id-web-1": "ok\n"},
+	}
+	if tr := quote(t, f, exchange("web-1:8080")); tr.Replicas != 1 {
+		t.Errorf("Replicas = %d, want 1 — the one-off serves nothing", tr.Replicas)
+	}
+}
+
 // A container with a TTY writes an unmultiplexed stream. Quoting the frame
 // headers as if they were output would corrupt every line.
 func TestQuoteReadsATTYContainer(t *testing.T) {

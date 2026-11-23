@@ -246,7 +246,7 @@ func observedRoutes(cs []container.Summary) []Route {
 		// No command in the note: `status` is an inventory, and a command in it
 		// reads as a Remedy — which this command never prints.
 		observedBecause := TranscriptLabel
-		if isOneOff(c.Labels) {
+		if IsOneOff(c.Labels) {
 			observedBecause = "one-off container"
 		}
 		out = append(out, Route{

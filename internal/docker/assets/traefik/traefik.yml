@@ -52,7 +52,7 @@ providers:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
     # A `docker compose run` container inherits the service's traefik.* labels
-    # but serves nothing; the watcher skips it too (isOneOff).
+    # but serves nothing; the watcher skips it too (IsOneOff).
     constraints: "!Label(`com.docker.compose.oneoff`, `True`)"
   # Dynamic config: the watcher writes one HTTP router/service file per
   # proximo-labeled container (proximo-route-*.yml) plus per-container CA-signed

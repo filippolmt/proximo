@@ -66,14 +66,14 @@ var pathPrefixRe = regexp.MustCompile(`^/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*$`)
 // label (traefik.enable=true) — and is neither part of the proximo stack nor a
 // one-off. Incidents use isRoutedLabels, so a one-off that dies is still recorded.
 func isRouted(c container.Summary) bool {
-	return isRoutedLabels(c.Labels) && !isOneOff(c.Labels)
+	return isRoutedLabels(c.Labels) && !IsOneOff(c.Labels)
 }
 
-// isOneOff reports a container `docker compose run` started: it inherits the
+// IsOneOff reports a container `docker compose run` started: it inherits the
 // service's labels, but it runs a command — a shell, a migration — rather than
 // serving the route, so it must not join it as a replica. Compose writes "True";
 // the match ignores case, while traefik.yml's constraint matches "True" exactly.
-func isOneOff(labels map[string]string) bool {
+func IsOneOff(labels map[string]string) bool {
 	return strings.EqualFold(labels[composeOneOffLabel], "true")
 }
 

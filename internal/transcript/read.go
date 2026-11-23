@@ -65,7 +65,8 @@ type Reader struct {
 // job that ran once — and Docker still answers `docker logs` for it, so leaving
 // it out would report the output as gone while it is sitting right there. What a
 // stopped container is *not* is a replica: the count below stays running-only,
-// because "1 of 3 replicas" is a statement about what is serving now.
+// because "1 of 3 replicas" is a statement about what is serving now — and
+// leaves out a running one-off for the same reason.
 func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 	res, err := d.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
@@ -84,7 +85,11 @@ func NewReader(ctx context.Context, d Docker) (*Reader, error) {
 			}
 		}
 		if key := docker.ServiceKey(c); key != "" && c.State == container.StateRunning {
-			r.replicas[key]++
+			// A `docker compose run` one-off runs a command, not the service:
+			// it is never routed, so it serves nothing and is no replica.
+			if !docker.IsOneOff(c.Labels) {
+				r.replicas[key]++
+			}
 			if c.Labels[docker.RoleLabel] == "" {
 				r.services[key] = true
 			}

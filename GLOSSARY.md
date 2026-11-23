@@ -99,6 +99,14 @@ balanced round-robin. Replicas live inside one Project — containers of differe
 Projects are never replicas.
 _Avoid_: collision, duplicate, instance
 
+**One-off**:
+A container `docker compose run` started from a Service: it carries the
+Service's labels but runs a command — a shell, a migration — instead of serving.
+It is never routed and never a Replica, and a Reading does not count it among
+the Service's replicas; it is still observed, so the Incident of a migration that
+dies is filed under its Service.
+_Avoid_: replica, run container
+
 ### Sharing with colleagues
 
 **Peer suffix**:
