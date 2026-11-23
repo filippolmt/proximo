@@ -63,14 +63,27 @@ var pathPrefixRe = regexp.MustCompile(`^/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*$`)
 
 // isRouted reports whether a container opted in to routing — via proximo labels
 // (non-empty proximo.hosts and not proximo.enable=false) or the native Traefik
-// label (traefik.enable=true) — and is not part of the proximo stack.
+// label (traefik.enable=true) — and is neither part of the proximo stack nor a
+// one-off. Incidents use isRoutedLabels, so a one-off that dies is still recorded.
 func isRouted(c container.Summary) bool {
-	return isRoutedLabels(c.Labels)
+	return isRoutedLabels(c.Labels) && !IsOneOff(c.Labels)
 }
 
-// isRoutedLabels is isRouted on the labels alone, so a Docker event — which
-// carries a container's labels and nothing else — is judged by the same rule as
-// a container listing.
+// OneOffNote is what `status` says observes a One-off without routing it.
+const OneOffNote = "one-off container"
+
+// IsOneOff reports a container `docker compose run` started: it inherits the
+// service's labels, but it runs a command — a shell, a migration — rather than
+// serving the route, so it must not join it as a replica. Compose writes "True";
+// the match ignores case, while traefik.yml's constraint matches "True" exactly.
+func IsOneOff(labels map[string]string) bool {
+	return strings.EqualFold(labels[composeOneOffLabel], "true")
+}
+
+// isRoutedLabels is the opt-in half of isRouted, on the labels alone: whether a
+// container asked to be routed, one-off or not. isObserved judges Docker events
+// — which carry a container's labels and nothing else — by it, so a one-off that
+// asked to be routed is still observed for Incidents.
 func isRoutedLabels(labels map[string]string) bool {
 	if _, isStack := labels[RoleLabel]; isStack {
 		return false

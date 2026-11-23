@@ -285,10 +285,16 @@ something to go wrong. The row names the service to pass to
 [`proximo errors --service`](#proximo-errors) and carries no command of its own:
 `status` is an inventory, and a command in it would read as a Remedy.
 
+A One-off — a container `docker compose run` started from a routed service — gets
+the same row, with `(one-off container)` in place of the label: it carries the
+service's labels but is [never routed](routing.md#round-robin-across-replicas), and
+is observed for Incidents all the same.
+
 ```
-CONTAINER       URL
-shop-web-1      https://app.test  + app.shop.test
-shop-worker-1   no route — observed for Incidents (proximo.transcript), service shop/worker
+CONTAINER           URL
+shop-web-1          https://app.test  + app.shop.test
+shop-worker-1       no route — observed for Incidents (proximo.transcript), service shop/worker
+shop-web-run-1a2b   no route — observed for Incidents (one-off container), service shop/web
 ```
 
 Under the table, `status` says where routed traffic is accepted, as Docker

@@ -46,6 +46,8 @@ const (
 	// ComposeServiceLabel is exported for the same reason RoleLabel is: a
 	// host-side reader recognises a stack service by its compose name too.
 	ComposeServiceLabel = "com.docker.compose.service"
+	// composeOneOffLabel is "True" on a container `docker compose run` started.
+	composeOneOffLabel = "com.docker.compose.oneoff"
 	// stackProject is the Compose project name of proximo's own stack. It is a
 	// Stack, not a Project, so its services (the observability ones carry plain
 	// routing labels and no proximo.role) get no Namespace and no qualified host.

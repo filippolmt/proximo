@@ -33,7 +33,7 @@ first: what it shows picks the branch.
 | --- | --- |
 | A last line saying the proximo stack is not running or degraded | Run `proximo doctor`. A Remedy of `proximo up` is yours to run; any other is the developer's. Then run `proximo status` again: until the line is gone the routes listed may not answer, so no other row applies |
 | A line `⚠ Listening on 0.0.0.0:…` (or `[::]`) | The stack predates the loopback-only Traefik: `proximo up` is yours to run, and it narrows it. A developer who wants a route reachable from another host has no setting for it; only a shared route is, on the mesh ([sharing](https://filippolmt.github.io/proximo/sharing.html)) |
-| No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md) |
+| No route for the container, or a route flagged with a warning | [`references/expose.md`](references/expose.md). A row `no route — observed for Incidents (…)` is inventory, not a fault: add no label to it. `(one-off container)` is a `docker compose run`, never routed by design — the route is served by `docker compose up` |
 | A route, but the host does not answer, answers 502/503, or the browser distrusts the certificate | [`references/routing.md`](references/routing.md) |
 | A route, the host answers, and the page itself is wrong | [`references/inspection.md`](references/inspection.md) |
 | A route, the host answers, and a request fails on the server — a 500, or an API call that comes back wrong | [`references/transcript.md`](references/transcript.md) |
@@ -73,7 +73,7 @@ hop came up in the last ten minutes.
 never what a container wrote. A worker that is alive and blocked on a slow query
 declares nothing, so an empty listing means *proximo saw nothing happen*, never
 *nothing is wrong*. Under `--service` the listing always ends with the
-**readings** — one per running container (running since when, healthcheck,
+**readings** — one per running container of the service, a one-off excepted (running since when, healthcheck,
 restarts, when its output last moved) — and deliberately draws no conclusion:
 identical readings come from a consumer with nothing to do and one that is stuck.
 A scaled service gives you one reading per replica; do not generalise one
