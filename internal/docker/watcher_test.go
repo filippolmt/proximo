@@ -9,7 +9,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -330,6 +332,55 @@ func TestRenderRouterRedirect(t *testing.T) {
 	// The web router reuses the websecure router's Host rule (one per router).
 	if n := strings.Count(out, "Host(`app.test`)"); n != 2 {
 		t.Errorf("redirect router should share the websecure Host rule, got %d occurrences\n%s", n, out)
+	}
+}
+
+// TestTraefikEntryPointsHardened: both entry points drop aliased header names and
+// reject %00, and the compose file pins a Traefik that knows aliasHeadersStrategy
+// (v3.7.12+): an older one refuses the whole config and serves no route.
+func TestTraefikEntryPointsHardened(t *testing.T) {
+	data, err := assets.ReadFile("assets/traefik/traefik.yml")
+	if err != nil {
+		t.Fatalf("read embedded traefik.yml: %v", err)
+	}
+	// web carries the settings under the &hardened anchor and websecure merges it
+	// (verified on Traefik v3.7.19, whose static loader honours `<<:`). Checked
+	// per entry-point block, so a setting moved out of the anchor is caught.
+	yml := string(data)
+	webAt, secureAt := strings.Index(yml, "\n  web:\n"), strings.Index(yml, "\n  websecure:\n")
+	if webAt < 0 || secureAt < webAt {
+		t.Fatalf("traefik.yml: want a web entry point followed by websecure")
+	}
+	web := yml[webAt:secureAt]
+	secure := yml[secureAt:]
+	if end := strings.Index(secure, "\n\n"); end >= 0 {
+		secure = secure[:end]
+	}
+	for _, want := range []string{"http: &hardened", "aliasHeadersStrategy: delete", "allowEncodedNullCharacter: false"} {
+		if !strings.Contains(web, want) {
+			t.Errorf("web entry point lacks %q:\n%s", want, web)
+		}
+	}
+	for _, want := range []string{"<<: *hardened", "tls: {}"} {
+		if !strings.Contains(secure, want) {
+			t.Errorf("websecure entry point lacks %q:\n%s", want, secure)
+		}
+	}
+
+	compose, err := assets.ReadFile("assets/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read embedded docker-compose.yml: %v", err)
+	}
+	m := regexp.MustCompile(`image: traefik:v(\d+)\.(\d+)\.(\d+)\s`).FindStringSubmatch(string(compose))
+	if m == nil {
+		t.Fatal("docker-compose.yml must pin Traefik to a patch release (vX.Y.Z), not a floating tag")
+	}
+	var v [3]int
+	for i := range v {
+		v[i], _ = strconv.Atoi(m[i+1])
+	}
+	if slices.Compare(v[:], []int{3, 7, 12}) < 0 {
+		t.Errorf("Traefik v%d.%d.%d predates aliasHeadersStrategy (v3.7.12)", v[0], v[1], v[2])
 	}
 }
 

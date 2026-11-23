@@ -29,19 +29,28 @@ entryPoints:
   # an HTTP->HTTPS redirect per host with the proximo.redirect label; the watcher
   # then writes a web-entrypoint router + redirectScheme middleware for it. A host
   # that has not opted in gets no web router (Traefik 404s its :80 requests).
-  # sanitizePath keeps v3's secure default (encoded-character path normalization,
-  # a path-traversal / split-view mitigation) explicit so Traefik does not log
-  # the "encoded characters in the request path" startup warning. No behavior
-  # change for RFC-3986-compliant backends.
+  # sanitizePath keeps v3's secure default (path normalization, a path-traversal
+  # / split-view mitigation) explicit.
+  # allowEncodedNullCharacter: false rejects a %00 in the path, which no backend
+  # needs; denying one encoded character is also what stops Traefik's "can
+  # reject some encoded characters" startup warning (v3.7).
+  # aliasHeadersStrategy: delete drops request headers whose name holds anything
+  # but letters, digits and '-' (X_Forwarded_For, X.Auth.User): PHP, nginx and
+  # CGI backends read them as X-Forwarded-For / X-Auth-User, so a client could
+  # spoof the headers Traefik sets or an upstream auth layer would. Needs the
+  # Traefik pinned in docker-compose.yml (TestTraefikEntryPointsHardened).
   web:
     address: ":80"
-    http:
+    http: &hardened
       sanitizePath: true
+      aliasHeadersStrategy: delete
+      encodedCharacters:
+        allowEncodedNullCharacter: false
   websecure:
     address: ":443"
     http:
+      <<: *hardened
       tls: {}
-      sanitizePath: true
 
 providers:
   # Routing: opt-in only. A container is routed when it sets `traefik.enable=true`

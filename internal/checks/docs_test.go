@@ -18,6 +18,7 @@ var unverifiable = map[string]string{
 	"traefik-logs-failed-to-find-any-pem-data":                    "a fixed race in an older version; the log line is the only trace",
 	"where-to-read-watcher-warnings":                              "a pointer to the logs, not a statement about the host",
 	"an-error-i-typed-in-the-browser-console-never-shows-up":      "browser behaviour proximo cannot observe",
+	"a-request-header-or-path-never-reaches-the-container":        "a property of each request, decided by Traefik before any route; the stack keeps no record of it",
 	"proximo-errors-shows-nothing-for-an-inspected-route":         "a checklist about one route's traffic, answered by `proximo errors` itself",
 	"an-inspected-route-404s-on-part-of-my-app":                   "a property of the project's own paths, which proximo does not know",
 	"502503-right-after-a-container-restarts":                     "cured by adding a healthcheck; until one exists there is nothing to read",

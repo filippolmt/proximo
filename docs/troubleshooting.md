@@ -276,6 +276,20 @@ healthy)` rather than as a working URL.
   indefinitely; `proximo.health=false` opts out and routes on running. See
   [proximo.health](routing.md#proximohealth--wait-for-the-container-to-be-healthy).
 
+## A request header or path never reaches the container
+
+Traefik's entry points drop and reject two request shapes before any route sees
+them:
+
+- **A header whose name holds anything but letters, digits and `-`** —
+  `X_Api_Key`, `X.Custom` — is removed. PHP, nginx and CGI backends read
+  `X_Api_Key` as `X-Api-Key`, so a client could otherwise spoof a header Traefik
+  or an auth layer sets. Send the dashed form (`X-Api-Key`).
+- **A path containing `%00`** answers `400 Bad Request`.
+
+Neither is configurable per route: both are entry-point settings in the stack's
+`traefik.yml`.
+
 ## An error I typed in the browser console never shows up
 
 It never will, and nothing is broken. An expression that throws in Chrome's

@@ -31,8 +31,11 @@ networks:
 
 services:
   traefik:
-    # v3.6+ negotiates a Docker API version supported by Engine 28/29.
-    image: traefik:v3.7
+    # v3.6+ negotiates a Docker API version supported by Engine 28/29. Pinned to
+    # a patch: traefik.yml sets aliasHeadersStrategy, which a Traefik before
+    # v3.7.12 rejects at startup ("field not found") — a floating tag lets an
+    # offline host start from an older cached image and lose every route.
+    image: traefik:v3.7.19
     restart: unless-stopped
     logging: *proximo-logging
     command:

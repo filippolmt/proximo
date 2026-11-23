@@ -205,6 +205,7 @@ Why a design is the way it is, and what was rejected on the way.
 [Container not routed](troubleshooting.md#container-not-routed) ·
 [A host collision is reported](troubleshooting.md#a-host-collision-is-reported) ·
 [502/503 right after a container restarts](troubleshooting.md#502503-right-after-a-container-restarts) ·
+[A request header or path never reaches the container](troubleshooting.md#a-request-header-or-path-never-reaches-the-container) ·
 [An error I typed in the browser console never shows up](troubleshooting.md#an-error-i-typed-in-the-browser-console-never-shows-up) ·
 [proximo errors shows nothing at all](troubleshooting.md#proximo-errors-shows-nothing-at-all) ·
 [proximo errors reports no Incident](troubleshooting.md#proximo-errors-reports-no-incident) ·
