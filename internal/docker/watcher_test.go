@@ -9,7 +9,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -330,6 +332,35 @@ func TestRenderRouterRedirect(t *testing.T) {
 	// The web router reuses the websecure router's Host rule (one per router).
 	if n := strings.Count(out, "Host(`app.test`)"); n != 2 {
 		t.Errorf("redirect router should share the websecure Host rule, got %d occurrences\n%s", n, out)
+	}
+}
+
+// TestTraefikEntryPointsHardened: both entry points drop aliased header names and
+// reject %00, and the compose file pins a Traefik that knows aliasHeadersStrategy
+// (v3.7.12+): an older one refuses the whole config and serves no route.
+func TestTraefikEntryPointsHardened(t *testing.T) {
+	data, err := assets.ReadFile("assets/traefik/traefik.yml")
+	if err != nil {
+		t.Fatalf("read embedded traefik.yml: %v", err)
+	}
+	for _, want := range []string{"aliasHeadersStrategy: delete", "allowEncodedNullCharacter: false"} {
+		// Settings only: the comment above the entry points names both.
+		if n := len(regexp.MustCompile(`(?m)^\s+`+want+`$`).FindAllIndex(data, -1)); n != 2 {
+			t.Errorf("traefik.yml has %q on %d entry points, want 2 (web, websecure)", want, n)
+		}
+	}
+	compose, err := assets.ReadFile("assets/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read embedded docker-compose.yml: %v", err)
+	}
+	m := regexp.MustCompile(`image: traefik:v3\.(\d+)\.(\d+)`).FindStringSubmatch(string(compose))
+	if m == nil {
+		t.Fatal("docker-compose.yml must pin Traefik to a v3 patch release, not a floating tag")
+	}
+	minor, _ := strconv.Atoi(m[1])
+	patch, _ := strconv.Atoi(m[2])
+	if minor < 7 || (minor == 7 && patch < 12) {
+		t.Errorf("Traefik v3.%d.%d predates aliasHeadersStrategy (v3.7.12)", minor, patch)
 	}
 }
 
