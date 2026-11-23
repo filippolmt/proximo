@@ -137,7 +137,8 @@ warning and no public ACME round-trip.
 ## The watcher
 
 The watcher (`internal/docker/watcher.go`) runs a reconcile loop — once at
-start, then on Docker events, with a 30s safety resync. Each reconcile:
+start, then on Docker events (except the `exec_*` a healthcheck probe emits,
+which change no routing), with a 30s safety resync. Each reconcile:
 
 1. **Finds Traefik** (the container labeled `proximo.role=traefik`).
 2. **Selects routed containers** — opted in via `proximo.hosts` (and not

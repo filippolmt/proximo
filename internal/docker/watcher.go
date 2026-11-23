@@ -286,8 +286,9 @@ type Watcher struct {
 	// peerFailing holds each peer service that will not start, so its
 	// failure is logged once rather than every 30 s.
 	peerFailing map[string]bool
-	// lastNotes holds the merge/collision lines the previous reconcile found,
-	// so each is logged when it appears rather than on every pass.
+	// lastNotes holds the replica-merge, collision and inspect-dropped lines the
+	// previous reconcile found, so each is logged when it appears rather than on
+	// every pass.
 	lastNotes map[string]bool
 	// defaultIssued records that this process issued the default certificate,
 	// so it is issued once per watcher start, under the CA it holds.
@@ -322,6 +323,7 @@ func NewWatcher() (*Watcher, error) {
 		lastHosts:    map[string]string{},
 		authHashes:   map[string]string{},
 		peerFailing:  map[string]bool{},
+		lastNotes:    map[string]bool{},
 		incidents:    NewIncidentStore(0, 0),
 	}
 
@@ -452,6 +454,9 @@ func (w *Watcher) reconcile(ctx context.Context) error {
 	if traefikID == "" {
 		// Traefik not running yet: the inventory says every route is down.
 		w.writeInventory(routesOf(ctx, inspect, containers, w.tld, PeerNames{}))
+		// No route is served, so the notes no longer hold: say them again
+		// when Traefik is back.
+		w.lastNotes = map[string]bool{}
 		return nil
 	}
 	// The hop needs the same reach as Traefik, but only into the projects it

@@ -622,10 +622,10 @@ func TestReconcileAttachesAndDetaches(t *testing.T) {
 	}
 }
 
-// TestReconcileLogsAReplicaJoinOnce: reconcile runs on every container event —
-// a healthcheck alone fires several a second — so a replica merge must be logged
-// when it happens, not on every pass that finds it still in place. A replica
-// that leaves and comes back has joined again, and says so.
+// TestReconcileLogsAReplicaJoinOnce: reconcile runs on every routing event and
+// on the 30 s resync, so a replica merge must be logged when it happens, not on
+// every pass that finds it still in place. A replica that leaves and comes back
+// has joined again, and says so — as does every replica once Traefik returns.
 func TestReconcileLogsAReplicaJoinOnce(t *testing.T) {
 	replica := func(id, name string) container.Summary {
 		return container.Summary{
@@ -662,6 +662,15 @@ func TestReconcileLogsAReplicaJoinOnce(t *testing.T) {
 	pass()
 	if n := joins(); n != 2 {
 		t.Fatalf("a replica that left and rejoined logged %d joins in total, want 2:\n%s", n, logs.String())
+	}
+
+	all := f.containers
+	f.containers = all[1:] // Traefik goes away
+	pass()
+	f.containers = all // and comes back
+	pass()
+	if n := joins(); n != 3 {
+		t.Fatalf("Traefik returning logged %d joins in total, want 3:\n%s", n, logs.String())
 	}
 }
 
@@ -752,26 +761,33 @@ func TestRunReconcilesOnEventAndStops(t *testing.T) {
 }
 
 // TestRunIgnoresExecEvents: a healthcheck probe is an exec — three events a
-// probe — and changes no routing, so it must not cost a reconcile each.
+// probe — and changes no routing, so it must not cost a reconcile each; the
+// health_status it leads to still does.
 func TestRunIgnoresExecEvents(t *testing.T) {
 	f := newFakeDocker()
+	// Unbuffered: each send returns only once Run has finished the event before
+	// it (and, for the first, its startup), so the counts need no sleep.
+	f.events = make(chan events.Message)
 	w := plainWatcher(t, f)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
-	time.Sleep(50 * time.Millisecond) // let the initial reconcile land
-	before := f.listCount()
-
-	for _, a := range []events.Action{"exec_create: true", "exec_start: true", events.ActionExecDie} {
+	send := func(a events.Action) {
 		f.events <- events.Message{Type: events.ContainerEventType, Action: a}
 	}
-	time.Sleep(50 * time.Millisecond)
+
+	send("exec_create: true")
+	before := f.listCount()
+	send("exec_start: true")
+	send(events.ActionExecDie)
+	send(events.ActionHealthStatusHealthy)
+	send(events.ActionExecDie) // returns once health_status was handled
 	cancel()
 	<-done
 
-	if got := f.listCount(); got != before {
-		t.Errorf("exec events triggered %d reconciles, want 0", got-before)
+	if got := f.listCount() - before; got != 1 {
+		t.Errorf("three execs and one health_status triggered %d reconciles, want 1", got)
 	}
 }
 
